@@ -177,16 +177,21 @@ job 在 **Install R packages** 一步就失败，`pak::repo_status()` 显示五�
 - 从 GEO SOFT 接口（base R `url()`，不依赖 Bioconductor）拉取 series 与 sample 元数据
 - **硬门禁**：物种必须为 `Homo sapiens`；类型必须为 array；样本数必须 < 10；两组样本数均 ≥ 3
 - 按 `group_field` 匹配 `group_values` 生成分组；一个样本命中多个组 → 报错退出
-- 输出：`data/group.csv`、`data/geo_metadata.json`
+- 输出：`data/group.csv`、`data/meta.csv`、`data/platform.txt`、`data/geo_metadata.json`
 
 ### 3.2 下载与清洗（`01_download_clean.R`）
 
-- `GEOquery::getGEO()` 下载表达矩阵与平台注释
-- 探针 → 基因 symbol；无 symbol 的探针丢弃
-- 过滤全零基因；KNN 填补缺失
+- `GEOquery::getGEO(..., getGPL = FALSE)` 只下载表达矩阵；平台注释单独用轻量 CGI
+  接口取（2.6 MB，而非 182 MB 的 family 文件），详见 §2.5
+- 原始强度自动识别：中位数 > 50 时执行 `log2(x + 1)`
+- 探针 → 基因 symbol：多级降级映射（§2.5）；全部途径覆盖率 < 50% 时退回探针层面
+- 同一 symbol 的多探针取方差最大者
+- 过滤全 NA / 无变异特征（有效值 < 2 或标准差为 0）
+- KNN 填补缺失（`impute::impute.knn`, k=10）
 - quantile 标准化
 - **一致性校验**：表达矩阵列名必须与 `group.csv` 的样本行完全对应，否则报错
-- 输出：`data/expr_raw.rds`、`data/expr_clean.rds`、`data/expr_clean.csv`
+- 输出：`data/expr_raw.rds`、`data/expr_clean.rds`、`data/expr_clean.csv`、
+  `data/clean_stats.json`、`data/feature_mode.json`
 
 ### 3.3 质控（`02_qc_pca_correlation.R`）
 
@@ -215,7 +220,7 @@ job 在 **Install R packages** 一步就失败，`pak::repo_status()` 显示五�
 
 ### 3.6 GO / KEGG 富集（`04_heatmap_enrichment.R`）
 
-- SYMBOL → ENTREZ（`org.Hs.eg.db::bitr`）
+- SYMBOL → ENTREZ（`clusterProfiler::bitr` + `org.Hs.eg.db`）
 - GO BP：`clusterProfiler::enrichGO`，`pAdjustMethod="BH"`，`pvalueCutoff=0.05`
 - KEGG：`clusterProfiler::enrichKEGG`，`organism="hsa"`
 - dotplot 展示 top 15 条目
