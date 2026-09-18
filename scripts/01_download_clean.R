@@ -85,64 +85,116 @@ lookup_symbols <- function(keys, keytype) {
   stats::setNames(as.character(hit$SYMBOL), as.character(hit[[keytype]]))
 }
 
+#' 基因名归一化：去括号内容、去所有非字母数字、转小写
+#'
+#' GPL16025 的 DESCRIPTION 是 2007 年前后的旧基因名，与今天的 GENENAME 经常只差
+#' 标点或一个括号补充。例如：
+#'   "SH3-domain binding protein 2"                      vs "SH3 domain binding protein 2"
+#'   "Rap guanine nucleotide exchange factor (GEF) 2"    vs "Rap guanine nucleotide exchange factor 2"
+#'   "solute carrier family 15 (oligopeptide transporter), member 1"
+#'                                                       vs "solute carrier family 15 member 1"
+#' 归一化后这三组都能对上，精确匹配则全部落空。
+normalize_gene_name <- function(x) {
+  x <- tolower(x)
+  x <- gsub("\\([^)]*\\)", " ", x)
+  gsub("[^a-z0-9]+", "", x)
+}
+
+.gene_name_cache <- new.env(parent = emptyenv())
+
+#' 构建 GENENAME -> SYMBOL 映射（精确 + 归一化），进程内只算一次
+genename_map <- function() {
+  if (!is.null(.gene_name_cache$map)) return(.gene_name_cache$map)
+  m <- tryCatch({
+    db <- org.Hs.eg.db::org.Hs.eg.db
+    gn_keys <- AnnotationDbi::keys(db, keytype = "GENENAME")
+    hit <- suppressWarnings(AnnotationDbi::select(db, keys = gn_keys, keytype = "GENENAME",
+                                                  columns = "SYMBOL"))
+    hit <- hit[!is.na(hit$SYMBOL) & !is.na(hit$GENENAME), , drop = FALSE]
+    exact <- stats::setNames(as.character(hit$SYMBOL), as.character(hit$GENENAME))
+    exact <- exact[!duplicated(names(exact))]
+
+    nk <- normalize_gene_name(names(exact))
+    keep <- nzchar(nk)
+    norm <- stats::setNames(unname(exact)[keep], nk[keep])
+    norm <- norm[!duplicated(names(norm))]
+
+    log_info(sprintf("GENENAME 映射表: %d 条精确 + %d 条归一化", length(exact), length(norm)))
+    list(exact = exact, norm = norm)
+  }, error = function(e) {
+    log_warn(sprintf("构建 GENENAME 映射表失败: %s", conditionMessage(e)))
+    list(exact = stats::setNames(character(0), character(0)),
+         norm  = stats::setNames(character(0), character(0)))
+  })
+  .gene_name_cache$map <- m
+  m
+}
+
 #' 三级探针 -> 基因 symbol 映射
 #'
-#' GPL16025（NimbleGen）这类平台只有 ID / GB_ACC / DESCRIPTION 三列，没有 symbol。
-#' 所以除了直接读 symbol 列，还要能走 GenBank accession（ACCNUM）和基因全名（GENENAME）。
-#' 三级都拿不到足够覆盖率时返回 probe 模式 —— 基因层面分析照常做，但下游必须
+#' GPL16025（NimbleGen）这类平台只有 ID / GB_ACC / DESCRIPTION 三列，没有 symbol，
+#' 也没有 GEO curated 注释（`GPL16025.annot.gz` 返回 404）。所以除了直接读 symbol 列，
+#' 还要能走 GenBank accession（ACCNUM）、RefSeq（REFSEQ）和基因全名（GENENAME）。
+#' 全部途径都拿不到足够覆盖率时返回 probe 模式 —— 基因层面分析照常做，但下游必须
 #' 跳过 GO/KEGG 并说明原因，而不是拿探针 ID 冒充基因去富集。
 map_features_to_symbols <- function(ids, fdata) {
   n <- length(ids)
   coverage <- function(v) sum(!is.na(v) & nzchar(v)) / n
-
   results <- list()
+  add <- function(symbols, method) {
+    results[[length(results) + 1L]] <<- list(symbols = symbols, method = method,
+                                             coverage = coverage(symbols))
+  }
+  blank <- function() rep(NA_character_, n)
 
   # ---- 途径 1：平台注释自带 symbol 列 ------------------------------------
   col <- pick_symbol_column(fdata)
   if (!is.null(col)) {
     s <- as.character(fdata[[col]])
     s[!nzchar(s) | s == "---"] <- NA
-    results[[length(results) + 1L]] <- list(
-      symbols = s, method = sprintf("platform annotation column '%s'", col), coverage = coverage(s)
-    )
+    add(s, sprintf("platform annotation column '%s'", col))
   }
 
-  need_db <- is.null(col) || coverage(results[[1L]]$symbols) < MIN_SYMBOL_COVERAGE
-  if (need_db && requireNamespace("org.Hs.eg.db", quietly = TRUE) &&
-      requireNamespace("AnnotationDbi", quietly = TRUE)) {
+  has_db <- requireNamespace("org.Hs.eg.db", quietly = TRUE) &&
+            requireNamespace("AnnotationDbi", quietly = TRUE)
+  if (has_db && (is.null(col) || coverage(results[[1L]]$symbols) < MIN_SYMBOL_COVERAGE)) {
 
-    # ---- 途径 2：GenBank accession -> ACCNUM ------------------------------
+    # ---- 途径 2/3：accession -> ACCNUM / REFSEQ --------------------------
     acc <- first_column(fdata, ACCESSION_COLUMNS)
     if (!is.null(acc)) {
       # org.Hs.eg.db 的 ACCNUM 不带版本号后缀
       keys <- sub("\\.[0-9]+$", "", trimws(acc$values))
       keys[!nzchar(keys) | keys == "---"] <- NA
-      m <- lookup_symbols(keys, "ACCNUM")
-      s <- unname(m[keys])
-      results[[length(results) + 1L]] <- list(
-        symbols = s, method = sprintf("GenBank accession '%s' -> ACCNUM", acc$column),
-        coverage = coverage(s)
-      )
+      add(unname(lookup_symbols(keys, "ACCNUM")[keys]),
+          sprintf("accession '%s' -> ACCNUM", acc$column))
+
+      is_refseq <- !is.na(keys) & grepl("^(NM_|NR_|XM_|XR_)", keys)
+      if (any(is_refseq)) {
+        s <- blank()
+        s[is_refseq] <- unname(lookup_symbols(keys[is_refseq], "REFSEQ")[keys[is_refseq]])
+        add(s, sprintf("RefSeq subset of '%s' -> REFSEQ", acc$column))
+      }
     }
 
-    # ---- 途径 3：基因全名 -> GENENAME ------------------------------------
+    # ---- 途径 4/5：基因全名 -> GENENAME（精确 / 归一化）------------------
     gn <- first_column(fdata, GENENAME_COLUMNS)
     if (!is.null(gn)) {
       keys <- trimws(gn$values)
       keys[!nzchar(keys) | keys == "---"] <- NA
-      m <- lookup_symbols(keys, "GENENAME")
-      s <- unname(m[keys])
-      results[[length(results) + 1L]] <- list(
-        symbols = s, method = sprintf("gene description '%s' -> GENENAME", gn$column),
-        coverage = coverage(s)
-      )
+      gm <- genename_map()
+      add(unname(gm$exact[keys]),
+          sprintf("gene name '%s' -> GENENAME (exact)", gn$column))
+      add(unname(gm$norm[normalize_gene_name(keys)]),
+          sprintf("gene name '%s' -> GENENAME (normalized)", gn$column))
     }
   }
 
   if (length(results) == 0L) {
-    return(list(mode = "probe", symbols = NULL, method = "none",
-                coverage = 0, reason = "平台注释中没有 symbol 列，也没有可用的 accession / 基因全名列"))
+    return(list(mode = "probe", symbols = NULL, method = "none", coverage = 0,
+                reason = "平台注释中没有 symbol 列，也没有可用的 accession / 基因全名列"))
   }
+
+  for (r in results) log_info(sprintf("  映射途径 %-52s 覆盖率 %5.1f%%", r$method, 100 * r$coverage))
 
   best <- results[[which.max(vapply(results, function(r) r$coverage, numeric(1)))]]
   if (best$coverage < MIN_SYMBOL_COVERAGE) {

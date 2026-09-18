@@ -110,20 +110,38 @@ AB000409      AB000409      MAP kinase interacting serine/threonine kinase 1
 
 没有 `GENE_SYMBOL`，也没有 GEO curated 注释（`GPL16025.annot.gz` 返回 404）。
 只写「取 symbol 列」的流水线会在下载完成后直接失败。因此 `01_download_clean.R`
-实现三级降级：
+实现多级降级，逐级实测覆盖率后取最好的一条：
 
 | 级别 | 途径 | 说明 |
 | --- | --- | --- |
 | 1 | 平台注释的 symbol 列 | 通用路径，GPL16025 上不可用 |
 | 2 | `GB_ACC` → `org.Hs.eg.db` 的 `ACCNUM` | GenBank accession，需剥掉 `.1` 之类的版本后缀 |
-| 3 | `DESCRIPTION` → `org.Hs.eg.db` 的 `GENENAME` | 注释里存的是**基因全名**而非 symbol，正好对应 GENENAME |
+| 3 | `GB_ACC` 中的 RefSeq 子集 → `REFSEQ` | `NM_` / `NR_` / `XM_` / `XR_` 开头的记录 |
+| 4 | `DESCRIPTION` → `GENENAME`（精确） | 注释里存的是**基因全名**而非 symbol，正好对应 GENENAME |
+| 5 | `DESCRIPTION` → `GENENAME`（归一化） | 见下 |
 
-三级都达不到 **50% 覆盖率**时，流水线**不报错**，而是退回探针层面：
+**第 5 级是必需的，不是锦上添花。** 该平台的设计年代是 2007 年前后，DESCRIPTION
+用的是当时的基因名，与今天的 GENENAME 经常只差标点或一个括号补充：
+
+| DESCRIPTION（平台） | GENENAME（当前） | 精确 | 归一化 |
+| --- | --- | --- | --- |
+| `SH3-domain binding protein 2` | `SH3 domain binding protein 2` | ✗ | ✓ |
+| `Rap guanine nucleotide exchange factor (GEF) 2` | `Rap guanine nucleotide exchange factor 2` | ✗ | ✓ |
+| `solute carrier family 15 (oligopeptide transporter), member 1` | `solute carrier family 15 member 1` | ✗ | ✓ |
+
+归一化 = 去括号内容 → 去所有非字母数字 → 转小写。所有级别的覆盖率都会打印到日志，
+最终采用哪条、覆盖率多少，记录在 `data/clean_stats.json` 与 `data/feature_mode.json`。
+
+**另外，不要用 GEOquery 的 `getGPL=TRUE` 取这个平台的注释。** 那条路会下载
+`GPL16025_family.soft.gz`（**182 MB**，含该平台上千个 GSM 的完整记录）并在 R 里解析；
+而 GEO 的 CGI `view=full` 返回**同样完整的 45,033 行**注释表，只有 **2.6 MB**。
+流水线走后者，并缓存为 RDS。
+
+全部途径都达不到 **50% 覆盖率**时，流水线**不报错**，而是退回探针层面：
 QC / PCA / 相关性 / limma DEG / 热图全部照常产出（这些不依赖基因身份），
 但 GO/KEGG 会被跳过，原因写入 `results/enrichment_status.json`；
 STRING 查询也跳过，PPI 直接走共表达回退，原因写入 `results/ppi_status.json`。
 
-实际采用的途径与覆盖率记录在 `data/clean_stats.json` 与 `data/feature_mode.json`。
 **报告结论前必须先看这两个文件** —— 「做了 GO 富集」和「因为映射不到 symbol 所以没做」
 是两个完全不同的结论。
 
