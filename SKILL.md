@@ -10,7 +10,7 @@ metadata:
 
 # /geo-brca-microarray-skill
 
-GEO 乳腺癌小样本芯片数据挖掘流水线。默认数据集 **GSE92252**（人源、Agilent 芯片、
+GEO 乳腺癌小样本芯片数据挖掘流水线。默认数据集 **GSE92252**（人源、NimbleGen 单色芯片、
 9 例 = 6 肿瘤 vs 3 正常乳腺组织）。
 
 完整实验设计见 [`EXPERIMENTAL_DESIGN.md`](EXPERIMENTAL_DESIGN.md) —— **改任何东西之前先读它**，

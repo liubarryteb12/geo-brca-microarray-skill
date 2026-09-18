@@ -5,7 +5,7 @@
 差异基因互作网络的**全部图表与表格**，并在 GitHub Actions 上运行后打包为 artifact。
 
 **默认数据集：[GSE92252](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE92252)**
-人源 · Agilent GPL16025 芯片 · 9 例（6 肿瘤 vs 3 正常乳腺组织）
+人源 · NimbleGen GPL16025 单色芯片 · 9 例（6 肿瘤 vs 3 正常乳腺组织）
 
 ---
 

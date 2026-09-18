@@ -35,20 +35,123 @@ local({
 
 # 不同平台注释里基因 symbol 的列名差异很大，按优先级依次尝试
 SYMBOL_COLUMNS <- c("GENE_SYMBOL", "Gene Symbol", "GeneSymbol", "GENE", "Symbol",
-                    "gene_symbol", "symbol", "GENE_NAME", "ILMN_Gene")
+                    "gene_symbol", "symbol", "ILMN_Gene")
+# 没有 symbol 列时的替代途径
+ACCESSION_COLUMNS <- c("GB_ACC", "GB_ACCESSION", "ACCESSION", "GenBank", "GB_LIST", "REFSEQ")
+GENENAME_COLUMNS  <- c("DESCRIPTION", "Gene Title", "GENE_NAME", "gene_assignment_name")
+
+# 映射覆盖率低于此值就不做基因层面的分析，退回探针层面
+MIN_SYMBOL_COVERAGE <- 0.5
 
 #' 从平台注释中挑出基因 symbol 列
 pick_symbol_column <- function(fdata) {
   for (col in SYMBOL_COLUMNS) {
     if (col %in% colnames(fdata)) {
       v <- as.character(fdata[[col]])
-      if (sum(nzchar(v) & !is.na(v)) > 100L) {
-        log_info(sprintf("使用平台注释列 '%s' 作为基因 symbol 来源", col))
-        return(col)
+      if (sum(nzchar(v) & !is.na(v)) > 100L) return(col)
+    }
+  }
+  NULL
+}
+
+#' 在 fdata 中按优先级找第一个可用列，返回其字符向量
+first_column <- function(fdata, candidates) {
+  for (col in candidates) {
+    if (col %in% colnames(fdata)) {
+      v <- as.character(fdata[[col]])
+      if (sum(nzchar(v) & !is.na(v) & v != "---") > 100L) {
+        return(list(column = col, values = v))
       }
     }
   }
   NULL
+}
+
+#' 用 org.Hs.eg.db 把一批 key 映射到 SYMBOL
+#' @return 命名向量 key -> symbol（只含成功映射的）
+lookup_symbols <- function(keys, keytype) {
+  keys <- unique(keys[!is.na(keys) & nzchar(keys)])
+  if (length(keys) == 0L) return(stats::setNames(character(0), character(0)))
+  hit <- suppressWarnings(tryCatch(
+    AnnotationDbi::select(org.Hs.eg.db::org.Hs.eg.db, keys = keys,
+                          keytype = keytype, columns = "SYMBOL"),
+    error = function(e) {
+      log_warn(sprintf("%s 映射失败: %s", keytype, conditionMessage(e)))
+      NULL
+    }
+  ))
+  if (is.null(hit) || nrow(hit) == 0L) return(stats::setNames(character(0), character(0)))
+  hit <- hit[!is.na(hit$SYMBOL), , drop = FALSE]
+  stats::setNames(as.character(hit$SYMBOL), as.character(hit[[keytype]]))
+}
+
+#' 三级探针 -> 基因 symbol 映射
+#'
+#' GPL16025（NimbleGen）这类平台只有 ID / GB_ACC / DESCRIPTION 三列，没有 symbol。
+#' 所以除了直接读 symbol 列，还要能走 GenBank accession（ACCNUM）和基因全名（GENENAME）。
+#' 三级都拿不到足够覆盖率时返回 probe 模式 —— 基因层面分析照常做，但下游必须
+#' 跳过 GO/KEGG 并说明原因，而不是拿探针 ID 冒充基因去富集。
+map_features_to_symbols <- function(ids, fdata) {
+  n <- length(ids)
+  coverage <- function(v) sum(!is.na(v) & nzchar(v)) / n
+
+  results <- list()
+
+  # ---- 途径 1：平台注释自带 symbol 列 ------------------------------------
+  col <- pick_symbol_column(fdata)
+  if (!is.null(col)) {
+    s <- as.character(fdata[[col]])
+    s[!nzchar(s) | s == "---"] <- NA
+    results[[length(results) + 1L]] <- list(
+      symbols = s, method = sprintf("platform annotation column '%s'", col), coverage = coverage(s)
+    )
+  }
+
+  need_db <- is.null(col) || coverage(results[[1L]]$symbols) < MIN_SYMBOL_COVERAGE
+  if (need_db && requireNamespace("org.Hs.eg.db", quietly = TRUE) &&
+      requireNamespace("AnnotationDbi", quietly = TRUE)) {
+
+    # ---- 途径 2：GenBank accession -> ACCNUM ------------------------------
+    acc <- first_column(fdata, ACCESSION_COLUMNS)
+    if (!is.null(acc)) {
+      # org.Hs.eg.db 的 ACCNUM 不带版本号后缀
+      keys <- sub("\\.[0-9]+$", "", trimws(acc$values))
+      keys[!nzchar(keys) | keys == "---"] <- NA
+      m <- lookup_symbols(keys, "ACCNUM")
+      s <- unname(m[keys])
+      results[[length(results) + 1L]] <- list(
+        symbols = s, method = sprintf("GenBank accession '%s' -> ACCNUM", acc$column),
+        coverage = coverage(s)
+      )
+    }
+
+    # ---- 途径 3：基因全名 -> GENENAME ------------------------------------
+    gn <- first_column(fdata, GENENAME_COLUMNS)
+    if (!is.null(gn)) {
+      keys <- trimws(gn$values)
+      keys[!nzchar(keys) | keys == "---"] <- NA
+      m <- lookup_symbols(keys, "GENENAME")
+      s <- unname(m[keys])
+      results[[length(results) + 1L]] <- list(
+        symbols = s, method = sprintf("gene description '%s' -> GENENAME", gn$column),
+        coverage = coverage(s)
+      )
+    }
+  }
+
+  if (length(results) == 0L) {
+    return(list(mode = "probe", symbols = NULL, method = "none",
+                coverage = 0, reason = "平台注释中没有 symbol 列，也没有可用的 accession / 基因全名列"))
+  }
+
+  best <- results[[which.max(vapply(results, function(r) r$coverage, numeric(1)))]]
+  if (best$coverage < MIN_SYMBOL_COVERAGE) {
+    return(list(mode = "probe", symbols = NULL, method = best$method, coverage = best$coverage,
+                reason = sprintf("最佳映射途径 '%s' 覆盖率仅 %.1f%%（阈值 %.0f%%）",
+                                 best$method, 100 * best$coverage, 100 * MIN_SYMBOL_COVERAGE)))
+  }
+  list(mode = "symbol", symbols = best$symbols, method = best$method,
+       coverage = best$coverage, reason = NA_character_)
 }
 
 #' 同一 symbol 的多探针取方差最大者
@@ -58,7 +161,7 @@ collapse_to_symbol <- function(expr, symbols) {
   symbols <- symbols[keep]
   if (nrow(expr) == 0L) stop("探针映射后没有任何基因，请检查平台注释")
 
-  vars <- matrixStats_rownanvar(expr)
+  vars <- row_variance(expr)
   ord <- order(symbols, -vars)
   expr <- expr[ord, , drop = FALSE]
   symbols <- symbols[ord]
@@ -71,7 +174,7 @@ collapse_to_symbol <- function(expr, symbols) {
 }
 
 #' base R 的按行方差（忽略 NA），避免额外依赖 matrixStats
-matrixStats_rownanvar <- function(m) {
+row_variance <- function(m) {
   apply(m, 1L, function(x) {
     x <- x[!is.na(x)]
     if (length(x) < 2L) 0 else stats::var(x)
@@ -111,7 +214,7 @@ run_01_download_clean <- function(cfg) {
   if (length(gsm) != ncol(expr)) stop("样本数与表达矩阵列数不一致")
   colnames(expr) <- gsm
 
-  # 双色 Agilent 芯片返回的是 log2 ratio；单色芯片若明显未取对数则补取
+  # 单色芯片返回的已是 log2 强度；若明显未取对数（中位数 > 50）则补取
   if (stats::median(expr, na.rm = TRUE) > 50) {
     log_warn("表达值中位数 > 50，判定为未取对数，执行 log2(x + 1)")
     expr[expr < 0] <- NA
@@ -120,14 +223,21 @@ run_01_download_clean <- function(cfg) {
 
   # ---- 3. 探针 -> 基因 symbol ---------------------------------------------
   fdata <- Biobase::fData(eset)
-  sym_col <- pick_symbol_column(fdata)
-  if (is.null(sym_col)) {
-    stop(sprintf(
-      "平台 %s 的注释中没有可用的基因 symbol 列（已尝试: %s）。\n  可用列: %s\n  GO/KEGG 富集需要 symbol，无法继续。",
-      Biobase::annotation(eset), paste(SYMBOL_COLUMNS, collapse = ", "),
-      paste(colnames(fdata), collapse = ", ")))
+  log_info(sprintf("平台 %s 注释列: %s", Biobase::annotation(eset),
+                   paste(colnames(fdata), collapse = ", ")))
+  mapping <- map_features_to_symbols(rownames(expr), fdata)
+  log_info(sprintf("特征映射途径: %s（覆盖率 %.1f%%）", mapping$method, 100 * mapping$coverage))
+
+  if (identical(mapping$mode, "symbol")) {
+    expr <- collapse_to_symbol(expr, mapping$symbols)
+    feature_ids <- rownames(expr)
+  } else {
+    # 拿不到 symbol 就退回探针层面：QC/PCA/相关性/DEG/热图仍然成立，
+    # 但下游 04b 必须跳过 GO/KEGG 并说明原因，不能拿探针 ID 冒充基因去富集。
+    log_warn(sprintf("无法映射到基因 symbol（%s）", mapping$reason))
+    log_warn("退回探针层面分析；GO/KEGG 富集将被跳过并在 enrichment_status.json 中说明原因")
+    feature_ids <- rownames(expr)
   }
-  expr <- collapse_to_symbol(expr, as.character(fdata[[sym_col]]))
 
   # ---- 4. 去全零 / 全 NA 基因 ---------------------------------------------
   before <- nrow(expr)
@@ -180,15 +290,28 @@ run_01_download_clean <- function(cfg) {
                    file.path(cfg$output$data_dir, "expr_clean.csv"), row.names = FALSE)
   write_json(file.path(cfg$output$data_dir, "clean_stats.json"), list(
     platform = Biobase::annotation(eset),
-    symbol_column = sym_col,
+    platform_annotation_columns = colnames(fdata),
+    feature_mode = mapping$mode,
+    feature_id_type = if (identical(mapping$mode, "symbol")) "gene symbol" else "platform probe ID",
+    mapping_method = mapping$method,
+    mapping_coverage = round(mapping$coverage, 4),
+    mapping_reason = mapping$reason,
     genes_final = nrow(expr),
     samples = ncol(expr),
     missing_imputed = n_missing,
     normalization = "quantile (limma::normalizeBetweenArrays)",
-    probe_collapse = "max variance per symbol"
+    probe_collapse = if (identical(mapping$mode, "symbol")) "max variance per symbol" else NA
   ))
 
-  log_info(sprintf("已写出 expr_raw.rds / expr_clean.rds / expr_clean.csv（%d 基因 x %d 样本）",
+  # 供 04b 判断能否做富集
+  write_json(file.path(cfg$output$data_dir, "feature_mode.json"), list(
+    mode = mapping$mode,
+    method = mapping$method,
+    coverage = round(mapping$coverage, 4),
+    reason = mapping$reason
+  ))
+
+  log_info(sprintf("已写出 expr_raw.rds / expr_clean.rds / expr_clean.csv（%d 个特征 x %d 样本）",
                    nrow(expr), ncol(expr)))
   invisible(expr)
 }

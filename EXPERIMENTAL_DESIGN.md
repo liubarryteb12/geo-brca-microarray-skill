@@ -1,6 +1,6 @@
 # GEO 乳腺癌小样本芯片数据挖掘 — 实验设计
 
-> 数据源：**GSE92252** ｜ 平台：**GPL16025**（Agilent-072363 SurePrint G3 Human GE v3 8×60K）
+> 数据源：**GSE92252** ｜ 平台：**GPL16025**（NimbleGen Homo sapiens Expression Array [100718_HG18_opt_expr]，45,033 探针）
 > 物种：*Homo sapiens* ｜ 类型：Expression profiling by array ｜ 样本量：**9**
 > 运行环境：GitHub Actions `ubuntu-latest` ｜ 语言：R / Bioconductor
 
@@ -13,11 +13,11 @@
 | 约束 | 要求 | GSE92252 实测 | 结论 |
 | --- | --- | --- | --- |
 | 物种 | Homo sapiens | `Homo sapiens` (taxid 9606) | ✅ |
-| 数据类型 | 基因芯片 | `Expression profiling by array` / GPL16025 Agilent 双色芯片 | ✅ |
+| 数据类型 | 基因芯片 | `Expression profiling by array` / GPL16025 单色 NimbleGen 芯片 | ✅ |
 | 疾病 | 乳腺癌 | AR+/ER−/PR− 乳腺癌组织 vs 正常乳腺组织 | ✅ |
 | 样本量 | < 10 | **9**（6 肿瘤 + 3 正常） | ✅ |
 | 分组可比 | 需两组 | tumor 6 vs normal 3，同一平台同一批次 | ✅ |
-| 本地算力 | 轻量 | 9×60K 矩阵，峰值内存 < 1 GB，全程 < 10 min | ✅ |
+| 本地算力 | 轻量 | 9×45K 矩阵，峰值内存 < 1 GB，全程 < 10 min | ✅ |
 
 ### 1.2 被否决的候选（这是本设计最关键的一步）
 
@@ -91,12 +91,61 @@ tumor 组内部还有 3 HER2+ vs 3 HER2− 的结构，看起来可以做次级�
 
 | 问题 | 决策 | 理由 |
 | --- | --- | --- |
-| 双色 vs 单色 | 按 GPL16025 的实际结构处理，取 log2 ratio | Agilent 双色芯片，GEOquery 返回的已是 log2 ratio |
-| 探针 → 基因 | 多探针取**表达方差最大**者 | 比取均值更能保留真实信号，且避免稀释 |
+| 单色 vs 双色 | 按单色处理：表达值中位数 > 50 时才补做 log2 | GPL16025 是 NimbleGen 单色芯片，`exprs()` 返回的是 log2 强度而非 ratio |
+| 探针 → 基因 | **三级降级映射**，见 §2.5 | 该平台注释只有 ID / GB_ACC / DESCRIPTION，没有 symbol 列 |
+| 多探针同基因 | 取**表达方差最大**者 | 比取均值更能保留真实信号，且避免稀释 |
 | 缺失值 | KNN 填补（`impute::impute.knn`, k=10） | 芯片常见；记录填补比例 |
 | 标准化 | `limma::normalizeBetweenArrays(method="quantile")` | 跨样本可比；QC 保留 before/after 对照 |
-| 过滤 | 去除全零/低表达基因（行中位数低于 25 分位） | 降低多重检验负担 |
+| 过滤 | 去除全 NA / 无变异特征（有效值 < 2 或标准差为 0） | 这类特征对任何下游统计都无贡献 |
 | 富集背景 | 默认**全基因组**（OrgDb），可切换为实测基因集 | 见 §3.6 |
+
+### 2.5 GPL16025 的注释现实与三级映射
+
+**这是本项目最容易踩空的地方。** GPL16025 的注释表只有三列：
+
+```text
+ID            GB_ACC        DESCRIPTION
+AB000409      AB000409      MAP kinase interacting serine/threonine kinase 1
+```
+
+没有 `GENE_SYMBOL`，也没有 GEO curated 注释（`GPL16025.annot.gz` 返回 404）。
+只写「取 symbol 列」的流水线会在下载完成后直接失败。因此 `01_download_clean.R`
+实现三级降级：
+
+| 级别 | 途径 | 说明 |
+| --- | --- | --- |
+| 1 | 平台注释的 symbol 列 | 通用路径，GPL16025 上不可用 |
+| 2 | `GB_ACC` → `org.Hs.eg.db` 的 `ACCNUM` | GenBank accession，需剥掉 `.1` 之类的版本后缀 |
+| 3 | `DESCRIPTION` → `org.Hs.eg.db` 的 `GENENAME` | 注释里存的是**基因全名**而非 symbol，正好对应 GENENAME |
+
+三级都达不到 **50% 覆盖率**时，流水线**不报错**，而是退回探针层面：
+QC / PCA / 相关性 / limma DEG / 热图全部照常产出（这些不依赖基因身份），
+但 GO/KEGG 会被跳过，原因写入 `results/enrichment_status.json`；
+STRING 查询也跳过，PPI 直接走共表达回退，原因写入 `results/ppi_status.json`。
+
+实际采用的途径与覆盖率记录在 `data/clean_stats.json` 与 `data/feature_mode.json`。
+**报告结论前必须先看这两个文件** —— 「做了 GO 富集」和「因为映射不到 symbol 所以没做」
+是两个完全不同的结论。
+
+### 2.6 为什么不用 spec 里写的 R 4.3.0
+
+spec 指定 `r-version: '4.3.0'`。首次实跑证明这个组合在 `ubuntu-latest` 上装不上包，
+job 在 **Install R packages** 一步就失败，`pak::repo_status()` 显示五个 Bioconductor
+仓库全部 `ok=FALSE`。根因有两条，都不是代码问题：
+
+| 问题 | 实测 | 后果 |
+| --- | --- | --- |
+| `ubuntu-latest` 现在是 noble (24.04)，而 P3M 的 Linux 二进制按**当前 R** 构建 | R 4.3 请求的二进制与 noble 上实际提供的版本对不上 | 全部退化为源码编译 |
+| P3M 的 Bioconductor 镜像已下线 3.18 | `bioconductor.posit.co/packages/3.18/bioc` → 404；3.19–3.24 正常 | Bioconductor 仓库不可用，安装直接失败 |
+
+修正：`r-version: 'release'`。这样 CRAN 依赖走 P3M 的 Linux 二进制，只有 Bioconductor
+包需要源码编译，而它们绝大多数是纯 R（只有 limma / impute / GOSemSim 带少量 C/Fortran），
+编译量可以忽略。`timeout-minutes: 20` 保持不变。
+
+> 附带结论：P3M 的 Bioconductor 镜像**只提供源码**（路径是 `src/contrib`，没有
+> `__linux__` 段），所以「Bioconductor 全二进制」这条路在 Posit 侧并不存在。
+> 想再快只能换成预装包的镜像，但 `bioconductor/bioconductor_docker` 官方镜像
+> 按自己的描述只装**系统依赖**、不含 R 包，换过去并不能省时间。
 
 ---
 

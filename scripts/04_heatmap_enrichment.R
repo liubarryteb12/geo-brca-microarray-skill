@@ -109,6 +109,20 @@ run_04b_enrichment <- function(cfg) {
 
   # ---- 富集分析 -----------------------------------------------------------
   status <- list(go = list(status = "not_run"), kegg = list(status = "not_run"))
+
+  # 富集需要基因 symbol；01 若只能拿到探针 ID，这里必须跳过而不是硬凑
+  feat_path <- file.path(cfg$output$data_dir, "feature_mode.json")
+  feat <- if (file.exists(feat_path)) {
+    tryCatch(jsonlite::fromJSON(feat_path, simplifyVector = FALSE), error = function(e) NULL)
+  } else NULL
+  if (!is.null(feat)) status$feature_mode <- feat$mode
+  if (!is.null(feat) && !identical(feat$mode, "symbol")) {
+    reason <- sprintf("特征无法映射到基因 symbol（%s）；GO/KEGG 需要基因 symbol，已跳过",
+                      feat$reason %||% "原因未知")
+    log_warn(reason)
+    write_empty_enrichment(cfg, status, reason)
+    return(invisible(NULL))
+  }
   sig_genes <- deg$gene[deg$adj.P.Val < cfg$thresholds$adj_p &
                         abs(deg$logFC) > cfg$thresholds$log2fc]
 

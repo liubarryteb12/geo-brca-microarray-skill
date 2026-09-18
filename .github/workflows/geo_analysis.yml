@@ -24,7 +24,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 芯片注释包与 STRINGdb 需要这些系统库才能编译
+      # 编译 Bioc 源码包与 STRINGdb 需要这些系统库
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
@@ -33,13 +33,17 @@ jobs:
             libfontconfig1-dev libfreetype6-dev libharfbuzz-dev \
             libfribidi-dev libpng-dev libtiff5-dev libjpeg-dev
 
+      # 注意：这里刻意不用 spec 里写的 r-version 4.3.0。
+      # P3M 的 Linux 二进制包是按当前 R 构建的，ubuntu-latest 现在是 noble(24.04)，
+      # R 4.3 + noble + 二进制根本对不上，会被迫全量源码编译；
+      # 而 P3M 的 Bioconductor 镜像又已下线 3.18（见 EXPERIMENTAL_DESIGN.md §2.6）。
+      # 用 release 才能让 CRAN 依赖走二进制，把时间压进 20 分钟。
       - name: Setup R
         uses: r-lib/actions/setup-r@v2
         with:
-          r-version: '4.3.0'
+          r-version: 'release'
           use-public-rspm: true
 
-      # pak 通过 Posit Package Manager 拉 Linux 二进制包，避免源码编译
       - name: Install R packages
         uses: r-lib/actions/setup-r-dependencies@v2
         with:
@@ -53,14 +57,17 @@ jobs:
             any::pheatmap
             any::ggplot2
             any::impute
-            any::dplyr
-            any::tibble
             any::igraph
             any::jsonlite
             any::yaml
             any::ggrepel
             any::statmod
           cache-version: 1
+
+      - name: Record environment
+        run: |
+          Rscript -e 'cat(R.version.string, "\n"); cat("Bioconductor:", as.character(BiocManager::version()), "\n"); cat("lib:", .libPaths()[1], "\n")'
+          Rscript -e 'for (p in c("GEOquery","limma","clusterProfiler","org.Hs.eg.db","enrichplot","STRINGdb","pheatmap","impute","igraph","yaml","ggrepel","statmod")) cat(sprintf("%-16s %s\n", p, if (requireNamespace(p, quietly=TRUE)) as.character(packageVersion(p)) else "MISSING"))'
 
       - name: Run analysis pipeline
         run: Rscript scripts/main_analysis.R --config assets/config.yml
@@ -74,6 +81,8 @@ jobs:
           path: |
             results/
             data/group.csv
+            data/clean_stats.json
+            data/feature_mode.json
           if-no-files-found: warn
           retention-days: 30
 

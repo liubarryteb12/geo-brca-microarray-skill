@@ -71,9 +71,21 @@ run_05_ppi <- function(cfg) {
   status$n_input_genes <- length(sig)
   log_info(sprintf("PPI 输入基因数: %d", length(sig)))
 
+  # 探针 ID 查不了 STRING，直接走共表达回退并写明原因
+  feat_path <- file.path(cfg$output$data_dir, "feature_mode.json")
+  feat <- if (file.exists(feat_path)) {
+    tryCatch(jsonlite::fromJSON(feat_path, simplifyVector = FALSE), error = function(e) NULL)
+  } else NULL
+  probe_mode <- !is.null(feat) && !identical(feat$mode, "symbol")
+  if (probe_mode) {
+    log_warn(sprintf("特征为探针 ID 而非基因 symbol（%s），跳过 STRING 查询，直接构建共表达网络",
+                     feat$reason %||% "原因未知"))
+    status$string_skipped <- "probe-level features cannot be queried against STRING"
+  }
+
   # ---- 主路径：STRINGdb ---------------------------------------------------
   string_ok <- FALSE
-  if (require_pkg("STRINGdb")) {
+  if (!probe_mode && require_pkg("STRINGdb")) {
     string_ok <- tryCatch({
       input_dir <- file.path(cfg$output$data_dir, "string_cache")
       if (!dir.exists(input_dir)) dir.create(input_dir, recursive = TRUE, showWarnings = FALSE)
