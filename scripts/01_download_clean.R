@@ -154,6 +154,47 @@ map_features_to_symbols <- function(ids, fdata) {
        coverage = best$coverage, reason = NA_character_)
 }
 
+#' 抓取平台注释表
+#'
+#' **不要用 GEOquery 的 getGPL=TRUE。** 对 GPL16025，那条路会下载 182 MB 的
+#' `GPL16025_family.soft.gz`（里面含该平台上千个 GSM 的完整记录），解析又慢又吃内存。
+#' 而 GEO 的 CGI `view=full` 返回**同样完整的 45,033 行**注释表，只有 2.6 MB。
+#'
+#' 结果缓存为 RDS，重复运行不再联网。
+fetch_platform_annotation <- function(gpl_id, cache_dir) {
+  cache <- file.path(cache_dir, sprintf("%s_annotation.rds", gpl_id))
+  if (file.exists(cache)) {
+    log_info(sprintf("使用缓存的平台注释: %s", cache))
+    return(readRDS(cache))
+  }
+
+  log_info(sprintf("抓取 %s 注释表（CGI view=full，约 2.6 MB）...", gpl_id))
+  lines <- fetch_geo_soft(gpl_id, targ = "self", view = "full")
+  begin <- grep("^!platform_table_begin", lines)
+  end   <- grep("^!platform_table_end", lines)
+  if (length(begin) == 0L || length(end) == 0L) {
+    stop(sprintf("%s 的 SOFT 中没有平台注释表", gpl_id))
+  }
+  header <- strsplit(lines[begin[1L] + 1L], "\t", fixed = TRUE)[[1L]]
+  body <- lines[(begin[1L] + 2L):(end[1L] - 1L)]
+  fields <- strsplit(body, "\t", fixed = TRUE)
+
+  # 少数行字段数不足，补 NA 保证能拼成矩形
+  ncol_expected <- length(header)
+  fields <- lapply(fields, function(f) {
+    length(f) <- ncol_expected
+    f
+  })
+  df <- as.data.frame(do.call(rbind, fields), stringsAsFactors = FALSE)
+  colnames(df) <- header
+  df[] <- lapply(df, function(x) { x[is.na(x)] <- ""; trimws(x) })
+
+  log_info(sprintf("平台注释: %d 行 x %d 列 (%s)", nrow(df), ncol(df),
+                   paste(header, collapse = ", ")))
+  saveRDS(df, cache)
+  df
+}
+
 #' 同一 symbol 的多探针取方差最大者
 collapse_to_symbol <- function(expr, symbols) {
   keep <- !is.na(symbols) & nzchar(symbols) & symbols != "---"
@@ -193,9 +234,10 @@ run_01_download_clean <- function(cfg) {
   if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
 
   # ---- 1. 下载 ------------------------------------------------------------
-  log_info(sprintf("从 GEO 下载 %s（含平台注释）...", cfg$dataset_id))
+  # getGPL=FALSE：平台注释单独用轻量接口取，见 fetch_platform_annotation()
+  log_info(sprintf("从 GEO 下载 %s 表达矩阵...", cfg$dataset_id))
   eset <- tryCatch(
-    GEOquery::getGEO(cfg$dataset_id, GSEMatrix = TRUE, getGPL = TRUE,
+    GEOquery::getGEO(cfg$dataset_id, GSEMatrix = TRUE, getGPL = FALSE,
                      destdir = cache_dir, AnnotGPL = FALSE),
     error = function(e) stop(sprintf("GEO 下载失败: %s", conditionMessage(e)))
   )
@@ -221,10 +263,40 @@ run_01_download_clean <- function(cfg) {
     expr <- log2(expr + 1)
   }
 
-  # ---- 3. 探针 -> 基因 symbol ---------------------------------------------
-  fdata <- Biobase::fData(eset)
-  log_info(sprintf("平台 %s 注释列: %s", Biobase::annotation(eset),
-                   paste(colnames(fdata), collapse = ", ")))
+  # ---- 3. 平台注释 -> 探针映射 -------------------------------------------
+  gpl_id <- Biobase::annotation(eset)
+  if (is.null(gpl_id) || !nzchar(gpl_id) || identical(gpl_id, "NA")) {
+    gpl_id <- unique(as.character(Biobase::pData(eset)$platform_id))[1L]
+  }
+  log_info(sprintf("平台: %s", gpl_id))
+
+  fdata <- tryCatch(
+    fetch_platform_annotation(gpl_id, cache_dir),
+    error = function(e) {
+      log_warn(sprintf("轻量注释抓取失败，回退到 GEOquery getGPL=TRUE（会下载大文件）: %s",
+                       conditionMessage(e)))
+      eset <<- GEOquery::getGEO(cfg$dataset_id, GSEMatrix = TRUE, getGPL = TRUE,
+                                destdir = cache_dir, AnnotGPL = FALSE)
+      if (is.list(eset)) eset <- eset[[1L]]
+      Biobase::fData(eset)
+    }
+  )
+
+  # 把注释对齐到表达矩阵的探针顺序
+  if ("ID" %in% colnames(fdata)) {
+    idx <- match(rownames(expr), as.character(fdata$ID))
+    hit <- sum(!is.na(idx))
+    log_info(sprintf("注释对齐: %d/%d 个探针在平台注释中找到", hit, nrow(expr)))
+    if (hit < 0.5 * nrow(expr)) {
+      log_warn("超过一半探针在平台注释中找不到，映射结果可能不可靠")
+    }
+    fdata <- fdata[idx, , drop = FALSE]
+    rownames(fdata) <- rownames(expr)
+  } else {
+    log_warn(sprintf("平台注释没有 ID 列（实际列: %s），按行号对齐",
+                     paste(colnames(fdata), collapse = ", ")))
+  }
+
   mapping <- map_features_to_symbols(rownames(expr), fdata)
   log_info(sprintf("特征映射途径: %s（覆盖率 %.1f%%）", mapping$method, 100 * mapping$coverage))
 
