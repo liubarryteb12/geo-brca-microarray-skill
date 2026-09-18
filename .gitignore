@@ -1,0 +1,17 @@
+# 运行产物
+results/
+data/
+
+# R 运行时
+.Rhistory
+.RData
+.Rproj.user/
+*.Rproj
+
+# 缓存
+.uv-cache/
+renv/library/
+
+# 系统
+.DS_Store
+Thumbs.db

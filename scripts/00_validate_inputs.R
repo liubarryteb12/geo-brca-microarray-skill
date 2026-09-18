@@ -1,0 +1,198 @@
+# ============================================================================
+# 00_validate_inputs.R — 前置校验与分组
+# ============================================================================
+# spec 的 validate_inputs 步骤 + fetch_geo 的 validate 部分。
+#
+# 这是整个流水线的硬门禁：数据集必须是人源、芯片、乳腺癌、样本数 < 10，
+# 且两组样本数均 >= 3。任一不满足直接 stop()，不进入任何分析。
+#
+# 只用 base R 抓 GEO SOFT 元数据，因此这一步在装任何 Bioconductor 包之前就能跑完。
+# 输出：data/group.csv, data/meta.csv, data/platform.txt, data/geo_metadata.json
+# ============================================================================
+
+suppressPackageStartupMessages({
+  library(jsonlite)
+})
+
+# ---- bootstrap: 定位并加载 lib/common.R（Rscript 与 source 两种方式都适用）--
+local({
+  if (exists("load_config", mode = "function")) return(invisible(NULL))
+  file_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+  here <- if (length(file_arg) > 0L) {
+    dirname(normalizePath(sub("^--file=", "", file_arg[[1L]])))
+  } else {
+    getwd()
+  }
+  cand <- c(file.path(here, "lib", "common.R"),
+            file.path(here, "scripts", "lib", "common.R"),
+            file.path(here, "..", "lib", "common.R"))
+  hit <- cand[file.exists(cand)]
+  if (length(hit) == 0L) stop("找不到 lib/common.R；请从仓库根目录运行")
+  source(hit[[1L]])
+})
+
+MIN_PER_GROUP <- 3L
+
+#' 把 SOFT 行按 ^SAMPLE 切成每样本一块
+split_soft_samples <- function(lines) {
+  starts <- grep("^\\^SAMPLE = ", lines)
+  if (length(starts) == 0L) return(list())
+  ends <- c(starts[-1L] - 1L, length(lines))
+  lapply(seq_along(starts), function(i) lines[starts[i]:ends[i]])
+}
+
+#' 判定一个样本属于哪个组；命中 0 个或多个组都返回相应诊断
+classify_sample <- function(values, group_values) {
+  haystack <- tolower(paste(values, collapse = " | "))
+  hit <- names(group_values)[vapply(group_values, function(pats) {
+    any(vapply(tolower(pats), function(p) grepl(p, haystack, fixed = TRUE), logical(1)))
+  }, logical(1))]
+  hit
+}
+
+run_00_validate_inputs <- function(cfg) {
+  log_info("=== 步骤 00：输入校验与分组 ===")
+  ensure_dirs(cfg)
+
+  gse <- cfg$dataset_id
+  log_info(sprintf("数据集: %s  分组字段: %s  对比: %s vs %s",
+                   gse, cfg$group_field, cfg$contrast[1], cfg$contrast[2]))
+
+  # ---- 1. series 级元数据 --------------------------------------------------
+  series_lines <- fetch_geo_soft(gse, targ = "self")
+  series_type  <- soft_value(series_lines, "Series_type")
+  platform_id  <- soft_value(series_lines, "Series_platform_id")
+  title        <- soft_value(series_lines, "Series_title")
+  sample_taxid <- soft_values(series_lines, "Series_sample_taxid")
+  design       <- soft_value(series_lines, "Series_overall_design", "")
+
+  if (is.na(series_type)) stop("GEO 未返回 Series_type，无法校验数据类型")
+  if (!is.na(cfg$platform_id) && nzchar(cfg$platform_id) &&
+      !is.na(platform_id) && !identical(platform_id, cfg$platform_id)) {
+    stop(sprintf("配置的 platform_id=%s 与 GEO 实际平台 %s 不一致",
+                 cfg$platform_id, platform_id))
+  }
+
+  # ---- 2. 硬门禁：数据类型必须为芯片 --------------------------------------
+  if (grepl("sequencing", series_type, ignore.case = TRUE)) {
+    stop(sprintf(
+      "数据类型不合规：%s 的类型是「%s」，属于测序而非基因芯片。\n  spec 要求 GES/GEO 基因芯片，本流水线不适用于 RNA-seq。",
+      gse, series_type))
+  }
+  if (!grepl("array", series_type, ignore.case = TRUE)) {
+    stop(sprintf("数据类型不合规：%s 的类型是「%s」，不是 expression profiling by array",
+                 gse, series_type))
+  }
+  log_info(sprintf("数据类型 OK: %s", series_type))
+
+  # ---- 3. 样本级元数据与分组 ----------------------------------------------
+  gsm_lines <- fetch_geo_soft(gse, targ = "gsm")
+  blocks <- split_soft_samples(gsm_lines)
+  if (length(blocks) == 0L) stop(sprintf("未能从 %s 解析出任何样本", gse))
+
+  meta <- do.call(rbind, lapply(blocks, function(b) {
+    data.frame(
+      gsm          = soft_value(b, "Sample_geo_accession"),
+      title        = soft_value(b, "Sample_title"),
+      source_name  = soft_value(b, "Sample_source_name_ch1", ""),
+      organism     = soft_value(b, "Sample_organism_ch1", ""),
+      taxid        = soft_value(b, "Sample_taxid_ch1", ""),
+      group_field  = paste(soft_values(b, paste0("Sample_", cfg$group_field)), collapse = " | "),
+      stringsAsFactors = FALSE
+    )
+  }))
+
+  # ---- 4. 硬门禁：物种必须为人源 ------------------------------------------
+  organisms <- unique(meta$organism[nzchar(meta$organism)])
+  if (length(organisms) == 0L) {
+    # 回退到 series 级 taxid
+    if (!any(grepl("9606", sample_taxid))) {
+      stop(sprintf("物种不合规：无法确认 %s 为人源（taxid 9606）", gse))
+    }
+    organisms <- "Homo sapiens"
+  }
+  if (!all(grepl("Homo sapiens", organisms, fixed = TRUE))) {
+    stop(sprintf("物种不合规：%s 包含非人源样本: %s", gse, paste(organisms, collapse = ", ")))
+  }
+  log_info(sprintf("物种 OK: %s (%d 个样本)", paste(organisms, collapse = ", "), nrow(meta)))
+
+  # ---- 5. 硬门禁：样本量 < 10 ---------------------------------------------
+  n <- nrow(meta)
+  if (n >= 10L) {
+    stop(sprintf(
+      "样本量不合规：%s 共 %d 个样本，spec 要求 < 10。\n  请更换数据集，或按 GSM 重新筛选子集后另存为新的 GSE。",
+      gse, n))
+  }
+  log_info(sprintf("样本量 OK: %d (< 10)", n))
+
+  # ---- 6. 分组 ------------------------------------------------------------
+  hits <- lapply(strsplit(meta$group_field, " \\| "), classify_sample, cfg$group_values)
+  meta$group <- vapply(hits, function(h) if (length(h) == 1L) h else NA_character_, character(1))
+
+  ambiguous <- which(vapply(hits, length, integer(1)) > 1L)
+  if (length(ambiguous) > 0L) {
+    stop(sprintf(
+      "分组歧义：以下样本同时命中多个组，请收紧 config 的 group_values 模式：\n  %s",
+      paste(sprintf("%s (%s) -> %s", meta$gsm[ambiguous], meta$title[ambiguous],
+                    vapply(hits[ambiguous], paste, character(1), collapse = "+")),
+            collapse = "\n  ")))
+  }
+  unmatched <- which(is.na(meta$group))
+  if (length(unmatched) > 0L) {
+    stop(sprintf(
+      "分组失败：以下样本未命中任何组，请检查 config 的 group_field / group_values：\n  %s\n  样本 %s 的实际取值: %s",
+      paste(sprintf("%s (%s)", meta$gsm[unmatched], meta$title[unmatched]), collapse = "\n  "),
+      cfg$group_field,
+      paste(unique(meta$group_field[unmatched]), collapse = " ;; ")))
+  }
+
+  counts <- table(factor(meta$group, levels = names(cfg$group_values)))
+  log_info(sprintf("分组结果: %s", paste(sprintf("%s=%d", names(counts), as.integer(counts)),
+                                          collapse = ", ")))
+
+  # ---- 7. 硬门禁：两组样本数均 >= 3 ---------------------------------------
+  thin <- names(counts)[as.integer(counts) < MIN_PER_GROUP]
+  if (length(thin) > 0L) {
+    stop(sprintf("分组样本数不足：组 %s 的样本数 < %d，limma 无法给出有意义的统计量",
+                 paste(thin, collapse = ", "), MIN_PER_GROUP))
+  }
+  if (!all(cfg$contrast %in% names(cfg$group_values))) {
+    stop("contrast 引用了未定义的组")
+  }
+
+  # ---- 8. 落盘 ------------------------------------------------------------
+  meta_out <- meta[, c("gsm", "title", "source_name", "organism", "taxid", "group", "group_field")]
+  utils::write.csv(meta_out, file.path(cfg$output$data_dir, "meta.csv"), row.names = FALSE)
+  utils::write.csv(meta_out[, c("gsm", "group")], file.path(cfg$output$data_dir, "group.csv"),
+                   row.names = FALSE)
+  writeLines(c(sprintf("platform_id\t%s", platform_id),
+               sprintf("platform_title\t%s", soft_value(series_lines, "Series_platform_title", "NA")),
+               sprintf("series_type\t%s", series_type),
+               sprintf("n_samples\t%d", n)),
+             file.path(cfg$output$data_dir, "platform.txt"))
+
+  write_json(file.path(cfg$output$data_dir, "geo_metadata.json"), list(
+    dataset_id = gse,
+    title = title,
+    series_type = series_type,
+    platform_id = platform_id,
+    n_samples = n,
+    organisms = organisms,
+    group_counts = as.list(as.integer(counts)),
+    group_names = names(counts),
+    overall_design = design,
+    contrast = cfg$contrast,
+    paired = cfg$paired,
+    validated = TRUE,
+    validated_at = format(Sys.time(), "%Y-%m-%dT%H:%M:%S")
+  ))
+
+  log_info(sprintf("已写出 %s/group.csv, meta.csv, platform.txt, geo_metadata.json",
+                   cfg$output$data_dir))
+  invisible(meta_out)
+}
+
+if (!GEO_ORCHESTRATED()) {
+  cfg <- load_config()
+  run_00_validate_inputs(cfg)
+}

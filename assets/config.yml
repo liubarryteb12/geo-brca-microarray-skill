@@ -1,0 +1,58 @@
+# ============================================================================
+# GEO 乳腺癌小样本芯片数据挖掘 — 分析配置
+# ============================================================================
+# 修改本文件即可切换数据集 / 分组 / 阈值，无需改任何 R 代码。
+# 所有字段都会被 scripts/00_validate_inputs.R 校验，缺失或矛盾直接退出。
+# ============================================================================
+
+# ---- 数据源 ----------------------------------------------------------------
+# GSE92252: 人源乳腺癌 Agilent 芯片，9 例（6 肿瘤 + 3 正常），GPL16025
+dataset_id: GSE92252
+platform_id: GPL16025          # 可留空，由 GEOquery 自动识别
+
+# ---- 分组 ------------------------------------------------------------------
+# group_field 是 phenoData / SOFT 中的字段名；对 GSE92252 是 characteristics_ch1，
+# 其值为 "gender: Female" 和 "tissue: ... breast tumor" / "tissue: Normal breast tissue"
+group_field: characteristics_ch1
+
+# 每个样本按「小写子串」匹配；命中多个组会直接报错退出，避免静默错分
+group_values:
+  tumor:  ["breast tumor"]
+  normal: ["normal breast tissue"]
+
+# 对比方向：[分子, 分母]。log2FC > 0 表示在 tumor 中上调
+contrast: ["tumor", "normal"]
+
+# GSE92252 不满足配对条件（正常组 N39/N40/N54 只有 T40/T54 有对应肿瘤样本），
+# 详见 EXPERIMENTAL_DESIGN.md §2.1
+paired: false
+
+# ---- 阈值 ------------------------------------------------------------------
+thresholds:
+  adj_p: 0.05                  # BH 校正后 p 值
+  log2fc: 1.0                  # |log2FC| 阈值
+  string_score: 400            # STRING PPI 置信度
+  outlier_cor: 0.8             # 样本相关性低于此值标记为离群
+
+# ---- 分析选项 --------------------------------------------------------------
+analysis:
+  top_heatmap_genes: 50        # 热图取 top N 个 DEG；不足时自动降级
+  impute_k: 10                 # KNN 填补的 k
+  pca_top_genes: 2000          # PCA 使用方差最大的 N 个基因（0 = 全部）
+  hub_gene_count: 10           # PPI hub 基因数量
+
+enrichment:
+  # genome   = 全基因组背景（spec 要求，OrgDb 默认）
+  # detected = 仅用芯片实测基因作背景（方法学上更严谨，结果会不同）
+  universe: genome
+  p_adjust: BH
+  pvalue_cutoff: 0.05
+  qvalue_cutoff: 0.2
+  top_terms: 15                # dotplot 展示条目数
+  ont: BP                      # GO 本体：BP / MF / CC
+  kegg_organism: hsa
+
+# ---- 输出 ------------------------------------------------------------------
+output:
+  results_dir: results
+  data_dir: data
