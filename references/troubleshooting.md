@@ -27,9 +27,13 @@ node scripts/find_dataset.mjs samples GSE64790 # 每个样本的完整 character
 node tools/check_sample_structure.mjs GSE64790 # 分组是否与批次效应混杂
 ```
 
-## GitHub Actions 在 20 分钟被杀掉
+## GitHub Actions 被杀掉
 
-`timeout-minutes: 20` 是 spec 的硬约束。超时几乎总是**包在源码编译**：
+`timeout-minutes: 30`。**实测（run 35438543496）**：Install R packages 66s
+（增量，`restore-keys` 命中旧缓存）、Run analysis GSE64790 244s / GSE42568 400s，
+暖缓存整轮 6m10s / 8m49s。全冷缓存下装包约 720s，整轮约 20 分钟。
+
+超时几乎总是**包在源码编译**：
 
 1. 看 job 日志里 `setup-r-dependencies` 阶段的耗时。
 2. 确认 `setup-r@v2` 的 `use-public-rspm: true` 生效 —— 它让 pak 从 Posit Package
@@ -38,6 +42,55 @@ node tools/check_sample_structure.mjs GSE64790 # 分组是否与批次效应混�
    （R 4.3 ↔ Bioc 3.18），版本错配会强制走源码。
 4. 最后的兜底：改用 `container: bioconductor/bioconductor_docker:RELEASE_3_18`，
    所有包已预装，job 通常 3–5 分钟跑完。代价是偏离 spec 里显式的 apt + setup-r 步骤。
+
+> 上限之所以写 30 而不是 20：被掐死的 job 存不下缓存，下一轮又是冷缓存，
+> 会变成"每次都超时"的死循环。
+
+## WGCNA 报 `unused arguments (weights.x = NULL, weights.y = NULL, cosine = FALSE)`
+
+`blockwiseModules` 内部算 KME 时用 `do.call(corFnc, ...)`，而 `corFnc` 来自包内
+常量 `.corFnc = c("cor", "bicor", "cor")` —— 是**字符串**，按名字查找。
+不 attach 任何包时它解析到 `stats::cor`，后者没有那三个参数。
+
+**传 `corFnc = WGCNA::cor` 没用**：`blockwiseModules` 形参表里没有 `corFnc`，
+参数掉进 `...`，而 KME 那段用包内常量、不看 `...`。
+
+处理：调用期间 `library("WGCNA")`，`on.exit` 立刻 `detach`。见 AGENTS.md 规则 23。
+
+> 注意别写成 `library(WGCNA, character.only = TRUE)` —— 那会去**求值** `WGCNA`
+> 这个符号，报 `object 'WGCNA' not found`，看着像"包没装"。
+
+## 步骤 06 / 07 没产物，但 CI 是绿的
+
+它们 `required = FALSE`，失败不让 job 变红。查
+`results/<GSE>/wgcna_status.json` 与 `lasso_status.json` 的 `status` 字段：
+
+- `ok` → 真跑了
+- `not_applicable` / `not_configured` / `too_few_events` / `too_few_samples`
+  / `package_missing` / `empty_signature` → 跳过，`reason` 里写明原因
+- **文件不存在，或 `status` 字段缺失** → 步骤崩了。
+  `check_acceptance()` 的 `settled()` 会记 FAIL，翻 `state.json` 找 `error`。
+
+## LASSO 的 `cindex_train` 明显低于 `cindex_cv`
+
+不该出现。两者互补（例如 0.121 对 0.793）说明**风险分方向反了** ——
+`survival::concordance()` 的公式接口在 `Surv(time, event) ~ risk` 下把预测子
+当成生存方向，返回 1 - Harrell C。
+
+本仓库用自己的 `harrell_c()`（`07_lasso.R`），定义写在注释里。
+**这类错误不会引起怀疑**：0.121 完全可能是一个真的很差但合理的模型。
+
+## 外部验证 `validation: failed`
+
+看 `validation_error` 的**前缀**，它标明是哪一步：
+
+- `getGEO:` / `exprs:` / `pData:` → 下载或解析
+- `fetch_platform_annotation:` → 平台注释抓取
+- `map_features_to_symbols:` → 探针映射
+- `collapse_to_symbol:` → 基因折叠
+- `clinical_table:` → SOFT 临床字段解析
+- `探针->基因映射长度 N != 探针数 M` → `map_features_to_symbols()`
+  返回的是 **list**，要用 `$symbols` / `$mode`，不能当向量（踩过）
 
 ## KEGG 没有结果
 

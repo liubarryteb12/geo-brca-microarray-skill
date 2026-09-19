@@ -500,9 +500,14 @@ run_07_lasso <- function(cfg) {
     if (nrow(coef_cap) > 0L) {
       utils::write.csv(coef_cap, file.path(res, "lasso_coefficients_epv.csv"), row.names = FALSE)
       risk_cap <- as.numeric(predict(fit_cap, newx = x, type = "link"))
+      # **基因名要留一份 character 向量给计算用。**
+      # `cap_info$genes` 是给 JSON 看的 list，拿它去 subset 矩阵会报
+      # "invalid subscript type 'list'" —— 而那个报错发生在外部验证那一段，
+      # 看起来像"验证队列有问题"，其实是这里类型存错了。
+      cap_genes <- as.character(coef_cap$gene)
       cap_info <- list(lambda = lam_cap, n_genes = nrow(coef_cap),
                        cindex_train = harrell_c(time, event, risk_cap),
-                       genes = as.list(coef_cap$gene))
+                       genes = as.list(cap_genes))
       status$epv_model <- cap_info
       log_info(sprintf("EPV 合规模型: lambda=%.4f, %d 个基因, 训练集 C-index %.3f（EPV>=10 判据）",
                        lam_cap, nrow(coef_cap), cap_info$cindex_train))
@@ -576,7 +581,7 @@ run_07_lasso <- function(cfg) {
           # EPV 合规模型也在同一个外部队列上打分 —— 只有这样才能回答
           # "少要 13 个基因换来多少外部性能"。
           if (!is.null(cap_info)) {
-            have_cap <- intersect(cap_info$genes, rownames(vexpr))
+            have_cap <- intersect(cap_genes, rownames(vexpr))
             if (length(have_cap) > 0L) {
               vxc <- t(vexpr[have_cap, vcommon, drop = FALSE])
               vxc <- scale(vxc, center = x_center[have_cap], scale = x_scale[have_cap])
