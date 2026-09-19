@@ -35,8 +35,8 @@
 #   results/<GSE>/tf_regulon_enrichment.csv   每个 TF 的 Fisher 检验
 #   results/<GSE>/tf_activity_by_sample.csv   每个样本 × TF 的活性分数
 #   results/<GSE>/tf_activity_group_test.csv  组间比较
-#   results/<GSE>/tf_regulon_enrichment.png        调控子富集条形图
-#   results/<GSE>/tf_activity_group_difference.png 调控子活性组间效应量
+#   results/<GSE>/tf_regulon_enrichment.pdf        调控子富集条形图（+ 同名 .png）
+#   results/<GSE>/tf_activity_group_difference.pdf 调控子活性组间效应量（+ .png）
 #   results/<GSE>/tf_status.json                   状态与方法学限定
 # ============================================================================
 
@@ -332,11 +332,33 @@ run_08_tf_regulation <- function(cfg) {
                      row.names = FALSE)
     log_info(sprintf("调控子活性: %d 个样本 x %d 个 TF", nrow(act), ncol(act)))
 
-    # 分组向量与表达矩阵的列对齐（**顺序错了不报错，只会算出错的组间差**）
-    g <- group$group[match(rownames(act), group$sample)]
-    if (any(is.na(g))) {
-      log_warn(sprintf("有 %d 个样本在 group.csv 里找不到分组，已剔除",
-                       sum(is.na(g))))
+    # 分组向量与表达矩阵的列对齐。
+    # **列名是 GSM 编号，group.csv 里的对应列叫 `gsm`**（不是 `sample`）。
+    # 实测用 `group$sample` 时 121 个样本**全部**匹配失败 —— 而代码只是
+    # 打了一行 warning 就把 act 清空，组间比较静默变成"什么都没做"。
+    # 这正是本仓库反复防的那类失败：产物文件照样产出，内容是空的。
+    if (!"gsm" %in% colnames(group)) {
+      stop(sprintf("group.csv 里没有 gsm 列（实际列：%s）",
+                   paste(colnames(group), collapse = "/")))
+    }
+    idx <- match(rownames(act), group$gsm)
+    g <- group$group[idx]
+    n_miss <- sum(is.na(g))
+    if (n_miss == nrow(act)) {
+      # **全部匹配不上就停下。** 一个 0 样本的"组间比较"不该产出文件。
+      stop(sprintf(
+        paste0("调控子活性：%d 个样本在 group.csv 里一个都没匹配上。\n",
+               "  表达矩阵列名例：%s\n",
+               "  group.csv$gsm 例：%s\n",
+               "  列名口径不一致 —— 这种情况必须停下来，",
+               "否则会产出一份空的组间比较而看起来一切正常。"),
+        nrow(act),
+        paste(utils::head(rownames(act), 3L), collapse = ", "),
+        paste(utils::head(group$gsm, 3L), collapse = ", ")))
+    }
+    if (n_miss > 0L) {
+      log_warn(sprintf("有 %d/%d 个样本在 group.csv 里找不到分组，已剔除",
+                       n_miss, nrow(act)))
       keep <- !is.na(g)
       act <- act[keep, , drop = FALSE]
       g <- g[keep]
@@ -347,6 +369,10 @@ run_08_tf_regulation <- function(cfg) {
                        row.names = FALSE)
       log_info(sprintf("组间比较: %d 个 TF，BH<0.05 的 %d 个",
                        nrow(act_test), sum(act_test$p_adj_bh < 0.05, na.rm = TRUE)))
+    } else {
+      log_warn(sprintf(
+        "组间比较跳过：分组水平数不是 2（实际 %d 个）—— 写了 tf_status 说明",
+        length(unique(g))))
     }
   } else {
     log_warn("调控子活性：没有 TF 满足最小靶基因数要求")
@@ -355,6 +381,13 @@ run_08_tf_regulation <- function(cfg) {
   # ---- 出图 ---------------------------------------------------------------
   # **绘图单独兜住，不让画图错误影响方法本身的记录**（AGENTS.md 规则 14）。
   # 两张图分开写，不用 patchwork —— 少一个依赖，两张图本来也回答两个问题。
+  #
+  # `figs_written` 收集**实际落盘成功**的图名。写 status 时按它填
+  # `figures`，而不是按"代码走到过这个分支"。上一版就是因为按分支填了
+  # `figure_written = TRUE` 的兄弟逻辑不严谨（实际报的是 FALSE 但验收
+  # 没看它），图没了而验收全绿。
+  figs_written <- character(0)
+  plot_err <- NULL
   plot_ok <- tryCatch({
     n_show <- min(20L, if (!is.null(enr)) nrow(enr) else 0L)
     if (n_show >= 1L) {
@@ -378,10 +411,13 @@ run_08_tf_regulation <- function(cfg) {
                          length(deg_sig)))),
           x = NULL, y = expression(-log[10](italic(p)))) +
         theme_paper()
-      ggplot2::ggsave(file.path(res, "tf_regulon_enrichment.png"), p1,
-                      width = 7.0, height = 6.0,
-                      dpi = cfg$analysis$figure_dpi, bg = "white")
-
+      # 走仓库自己的 save_pdf()（同时写 PDF 与 PNG，自己管设备与 dpi）。
+      # **不要用 ggsave + cfg$analysis$figure_dpi** —— 那个字段不存在，
+      # 传 NULL 给 dpi 会报 "`dpi` must be a single number or string"，
+      # 被下面的 tryCatch 接住，于是图静默消失、status 里 figure_written=false。
+      save_pdf(file.path(res, "tf_regulon_enrichment.pdf"),
+               print(p1), width = 7.0, height = 6.0)
+      figs_written <- c(figs_written, "tf_regulon_enrichment.pdf")
       if (!is.null(act_test) && nrow(act_test) >= 2L) {
         tt <- utils::head(act_test[order(-abs(act_test$cohens_d)), ], 20L)
         tt$tf <- factor(tt$tf, levels = rev(tt$tf))
@@ -407,18 +443,34 @@ run_08_tf_regulation <- function(cfg) {
               act_test$group2[1], act_test$group1[1], min(table(g)))),
             x = NULL, y = "Cohen's d", fill = NULL) +
           theme_paper()
-        ggplot2::ggsave(file.path(res, "tf_activity_group_difference.png"), p2,
-                        width = 7.0, height = 6.0,
-                        dpi = cfg$analysis$figure_dpi, bg = "white")
+        save_pdf(file.path(res, "tf_activity_group_difference.pdf"),
+                 print(p2), width = 7.0, height = 6.0)
+        figs_written <- c(figs_written, "tf_activity_group_difference.pdf")
       }
       TRUE
     } else {
       FALSE
     }
   }, error = function(e) {
-    log_warn(sprintf("TF 图绘制失败（方法本身不受影响）: %s", conditionMessage(e)))
+    plot_err <<- conditionMessage(e)
+    log_warn(sprintf("TF 图绘制失败（方法本身不受影响）: %s", plot_err))
     FALSE
   })
+
+  # 再核一遍：文件真的在磁盘上才算数。
+  # **`save_pdf` 自己会兜住 PNG 失败**（PDF 拿到就不中断），所以
+  # "没报错"不等于"图在"。以文件系统为准。
+  figs_written <- figs_written[
+    file.exists(file.path(res, figs_written))]
+  figs_missing <- setdiff(
+    c("tf_regulon_enrichment.pdf",
+      if (!is.null(act_test) && nrow(act_test) >= 2L)
+        "tf_activity_group_difference.pdf"),
+    figs_written)
+  if (length(figs_missing) > 0L) {
+    log_warn(sprintf("TF 图缺失: %s", paste(figs_missing, collapse = ", ")))
+  }
+  plot_ok <- length(figs_written) > 0L && length(figs_missing) == 0L
 
   # ---- 状态 ---------------------------------------------------------------
   n_sig_enr <- if (!is.null(enr)) sum(enr$p_adj_bh < 0.05, na.rm = TRUE) else 0L
@@ -446,7 +498,11 @@ run_08_tf_regulation <- function(cfg) {
     n_tfs_activity_tested = if (!is.null(act_test)) nrow(act_test) else 0L,
     n_tfs_activity_bh05 = n_sig_act,
     n_per_group = n_per_group,
+    # 按**实际落盘的文件**填，不按"代码走到过这个分支"
     figure_written = plot_ok,
+    figures = as.list(figs_written),
+    figures_missing = as.list(figs_missing),
+    plot_error = plot_err,
     method = paste(
       "调控子富集 = Fisher 精确检验（背景集 = 检测到的基因）；",
       "调控子活性 = 靶基因 z-score 的 mor 加权均值"),
@@ -470,8 +526,7 @@ run_08_tf_regulation <- function(cfg) {
       "靶基因集合之间大量重叠（一个基因受多个 TF 调控），",
       "所以各 TF 的 p 值**不独立**，BH 校正偏保守。"),
     outputs = c("tf_regulon_enrichment.csv", "tf_activity_by_sample.csv",
-                "tf_activity_group_test.csv", "tf_regulon_enrichment.png",
-                "tf_activity_group_difference.png")))
+                "tf_activity_group_test.csv", figs_written)))
 
   log_info("TF 调控分析完成")
   invisible(NULL)

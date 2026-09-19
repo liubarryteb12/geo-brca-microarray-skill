@@ -189,6 +189,21 @@ check_acceptance <- function(cfg) {
     # 没有 dorothea 又没有回退表时写 not_done + reason 也算定论，
     # 但**文件不存在或 status 缺失就是 FAIL**（AGENTS.md 规则 24）。
     list(name = "TF 调控（结果或不可得原因）", ok = settled(tf), required = FALSE),
+    # **验收不等于验图。** 上一版只检查 tf_status.json 在不在，而那次
+    # `figure_written` 其实是 FALSE（ggsave 收到 dpi=NULL 报错被 tryCatch 接住），
+    # 图一张没出，验收却全绿。所以这里读 status 里的真实字段，
+    # 并且**核对文件真的在磁盘上**。
+    list(name = "TF 图确实产出（status 与磁盘一致）",
+         ok = local({
+           if (is.null(tf)) return(FALSE)          # 没有状态文件 = FAIL
+           if (!identical(tf$status, "ok")) return(TRUE)  # 有理由地没做 = 通过
+           figs <- unlist(tf$figures)
+           # status=ok 就必须真有图，而且文件要在磁盘上
+           isTRUE(tf$figure_written) && length(figs) > 0L &&
+             all(vapply(figs, function(f) file.exists(file.path(res, f)),
+                        logical(1)))
+         }),
+         required = FALSE),
     # 有了 TF 结果就必须说明它**不是**什么。这条是 honesty 类：
     # 一个 TF 富集表很容易被读成"这个 TF 在调控这些基因"，而
     # bulk 的 TF mRNA 水平与其蛋白活性经常不相关。
