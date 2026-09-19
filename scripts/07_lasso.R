@@ -55,6 +55,46 @@ local({
 
 EPV_MIN <- 10   # 每个变量至少 10 个事件
 
+#' Harrell's C-index，定义写死在代码里
+#'
+#' **不用 `survival::concordance()` 的公式接口。** 实测它在
+#' `Surv(time, event) ~ risk` 下给出的是 1 - Harrell C：训练集报 **0.121**，
+#' 而同一个模型 `cv.glmnet(type.measure="C")` 报 **0.793** —— 两者正好互补。
+#'
+#' 这个方向约定藏在函数的默认参数里，读调用点看不出来；而错的 C-index
+#' 又**看着像个正常数字**（0.121 完全可能是一个真的很差但合理的模型），
+#' 所以它不会引起任何怀疑。这正是本仓库一直在防的那类失败。
+#'
+#' 定义（Harrell 1982，与 `cv.glmnet` 的 `type.measure="C"` 同口径）：
+#'   * 可比对的一对 (i, j)：生存时间短的那个**发生了事件**；
+#'   * 一致：生存时间短的那个风险分**更高**（Cox 的线性预测子是 log 风险比，
+#'     越大越危险）；
+#'   * 风险分打平算 0.5；
+#'   * C = (一致 + 0.5 x 打平) / 可比对总数。
+#'
+#' @return 数值；没有可比对样本对时返回 NA
+harrell_c <- function(time, event, risk) {
+  n <- length(time)
+  if (n < 2L) return(NA_real_)
+  conc <- 0; tied <- 0; cmp <- 0
+  for (i in seq_len(n - 1L)) {
+    for (j in (i + 1L):n) {
+      # 只有"较早发生事件"的那一对才可比对；两个都删失、或较晚的那个先事件，都不可比
+      if (time[i] < time[j] && event[i] == 1L) {
+        a <- risk[i]; b <- risk[j]
+      } else if (time[j] < time[i] && event[j] == 1L) {
+        a <- risk[j]; b <- risk[i]
+      } else {
+        next
+      }
+      cmp <- cmp + 1
+      if (a > b) conc <- conc + 1 else if (a == b) tied <- tied + 1
+    }
+  }
+  if (cmp == 0L) return(NA_real_)
+  (conc + 0.5 * tied) / cmp
+}
+
 #' 从 clinical.csv 读出随访时间与事件
 #'
 #' 列名由 config 显式给出；事件取值也显式给出（`event_value`）。
@@ -178,15 +218,31 @@ load_external_cohort <- function(cfg, gse, platform_id) {
   cache_dir <- file.path(cfg$output$data_dir, paste0("external_", gse))
   if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
 
-  eset <- tryCatch(
-    GEOquery::getGEO(gse, GSEMatrix = TRUE, getGPL = FALSE, destdir = cache_dir, AnnotGPL = FALSE),
-    error = function(e) NULL)
-  if (is.null(eset)) return(list(err = sprintf("GEO 下载 %s 失败", gse)))
-  if (is.list(eset)) eset <- eset[[1L]]
+  # **每一步都打标签。** 第一次实跑时这一步报了 "argument lengths differ" ——
+  # 一条没有任何上下文的 R 错误，既不说哪个函数、也不说哪个对象，
+  # 而候选有 getGEO / 探针映射 / 基因折叠 / 临床解析四段。
+  # 加标签之后同一个错误会写成 "collapse_to_symbol: argument lengths differ"，
+  # 一眼就知道去哪看。这类"错误信息本身没信息量"的情况不值得再猜第二次。
+  stage <- function(label, expr) {
+    tryCatch(expr, error = function(e)
+      stop(sprintf("%s: %s", label, conditionMessage(e)), call. = FALSE))
+  }
 
-  expr <- Biobase::exprs(eset)
-  pd <- Biobase::pData(eset)
+  eset <- stage("getGEO", {
+    e <- tryCatch(
+      GEOquery::getGEO(gse, GSEMatrix = TRUE, getGPL = FALSE, destdir = cache_dir, AnnotGPL = FALSE),
+      error = function(e) NULL)
+    if (is.null(e)) stop(sprintf("GEO 下载 %s 失败", gse))
+    if (is.list(e)) e <- e[[1L]]
+    e
+  })
+
+  expr <- stage("exprs", Biobase::exprs(eset))
+  pd <- stage("pData", Biobase::pData(eset))
   gsm <- if ("geo_accession" %in% colnames(pd)) as.character(pd$geo_accession) else rownames(pd)
+  if (length(gsm) != ncol(expr)) {
+    return(list(err = sprintf("样本 ID 数 %d 与表达矩阵列数 %d 不一致", length(gsm), ncol(expr))))
+  }
   colnames(expr) <- gsm
   if (stats::median(expr, na.rm = TRUE) > 50) {
     expr[expr < 0] <- NA
@@ -197,21 +253,34 @@ load_external_cohort <- function(cfg, gse, platform_id) {
   if (is.null(gpl_id) || !nzchar(gpl_id) || identical(gpl_id, "NA")) {
     gpl_id <- unique(as.character(pd$platform_id))[1L]
   }
-  fdata <- tryCatch(fetch_platform_annotation(gpl_id, cache_dir), error = function(e) NULL)
-  if (is.null(fdata)) return(list(err = sprintf("平台注释 %s 抓取失败", gpl_id)))
+  fdata <- stage("fetch_platform_annotation", fetch_platform_annotation(gpl_id, cache_dir))
+  if (is.null(fdata) || nrow(fdata) == 0L) {
+    return(list(err = sprintf("平台注释 %s 为空", gpl_id)))
+  }
   if ("ID" %in% colnames(fdata)) {
     idx <- match(rownames(expr), as.character(fdata$ID))
     fdata <- fdata[idx, , drop = FALSE]
     rownames(fdata) <- rownames(expr)
+  } else if (nrow(fdata) != nrow(expr)) {
+    # 没有 ID 列时必须按行号对齐 —— 行数不同还继续走，
+    # map_features_to_symbols 会拿到一个长度不对的注释表，
+    # 而它的 coverage() 用 length(ids) 当分母，长度不对只会算出 >1 的覆盖率，
+    # 不会报错。宁可在这里停下。
+    return(list(err = sprintf(
+      "平台注释没有 ID 列且行数 %d != 探针数 %d，无法对齐", nrow(fdata), nrow(expr))))
   }
-  sym <- map_features_to_symbols(rownames(expr), fdata)
-  expr <- collapse_to_symbol(expr, sym)
+  sym <- stage("map_features_to_symbols", map_features_to_symbols(rownames(expr), fdata))
+  if (length(sym) != nrow(expr)) {
+    return(list(err = sprintf("探针->基因映射长度 %d != 探针数 %d", length(sym), nrow(expr))))
+  }
+  expr <- stage("collapse_to_symbol", collapse_to_symbol(expr, sym))
 
   # 临床：复用与 step 00 完全相同的解析器
-  gsm_lines <- fetch_geo_soft(gse, targ = "gsm")
+  gsm_lines <- stage("fetch_geo_soft", fetch_geo_soft(gse, targ = "gsm"))
   blocks <- split_soft_samples(gsm_lines)
-  clinical <- clinical_table(blocks, vapply(blocks, function(b)
-    soft_value(b, "Sample_geo_accession"), character(1)))
+  if (length(blocks) == 0L) return(list(err = sprintf("%s 的 SOFT 里没有样本块", gse)))
+  block_gsm <- vapply(blocks, function(b) soft_value(b, "Sample_geo_accession"), character(1))
+  clinical <- stage("clinical_table", clinical_table(blocks, block_gsm))
   list(expr = expr, clinical = clinical, platform = gpl_id)
 }
 
@@ -370,6 +439,18 @@ run_07_lasso <- function(cfg) {
   status$lambda_1se <- final_cv$lambda.1se
   status$n_signature_genes <- nrow(coef_df)
   status$exceeds_epv <- nrow(coef_df) > epv_cap
+
+  # **签名稳不稳定，是比"选出了哪些基因"更重要的一件事。**
+  # 实测 GSE42568 的 5 轮重复 CV 选出 [16, 3, 3, 22, 3] 个基因 ——
+  # 同一个数据集、同一份代码、只换 foldid，基因数差 7 倍。
+  # 这时候报"最终签名有 16 个基因"而不报这个分布，等于把不稳定性藏起来。
+  status$signature_stable <- length(unique(stab$genes)) == 1L
+  if (!status$signature_stable) {
+    log_warn(sprintf(
+      "签名不稳定：%d 轮重复 CV 各选出 %s 个基因（不同 foldid）—— 最终签名只是其中一轮，不是稳定解",
+      repeats, paste(stab$n_selected, collapse = "/")))
+  }
+
   if (nrow(coef_df) == 0L) {
     status$status <- "empty_signature"
     status$reason <- "lambda.1se 下所有系数被压为 0，没有可用签名"
@@ -384,11 +465,42 @@ run_07_lasso <- function(cfg) {
     log_info(sprintf("签名 %d 个基因（EPV 上限 %d）", nrow(coef_df), epv_cap))
   }
 
+  # ---- 4b. EPV 合规的替代模型 --------------------------------------------
+  #
+  # **lambda.1se 不保证满足 EPV。** 实测它给了 16 个基因配 35 个事件
+  # （EPV 2.2），远低于通行判据的 10。文献里这种签名到处都是，
+  # 但它在独立队列上几乎必然缩水。
+  #
+  # 所以再给一个**显式满足 EPV 的版本**：取"非零系数 <= epv_cap"的
+  # **最大 lambda**（正则化最强的那一端）。两个都落盘、都报 C-index，
+  # 让读者自己看代价：少要基因换来多少外部验证性能。
+  cap_info <- NULL
+  idx_cap <- which(final_cv$nzero <= epv_cap)
+  if (length(idx_cap) > 0L && nrow(coef_df) > epv_cap) {
+    lam_cap <- final_cv$lambda[max(idx_cap)]   # lambda 递减，max(idx) = 最强正则
+    fit_cap <- glmnet::glmnet(x, y, family = "cox", alpha = 1, lambda = lam_cap)
+    b_cap <- as.matrix(stats::coef(fit_cap))
+    coef_cap <- data.frame(gene = rownames(b_cap), coef = b_cap[, 1L], stringsAsFactors = FALSE)
+    coef_cap <- coef_cap[coef_cap$coef != 0, , drop = FALSE]
+    coef_cap <- coef_cap[order(-abs(coef_cap$coef)), , drop = FALSE]
+    rownames(coef_cap) <- NULL
+    if (nrow(coef_cap) > 0L) {
+      utils::write.csv(coef_cap, file.path(res, "lasso_coefficients_epv.csv"), row.names = FALSE)
+      risk_cap <- as.numeric(predict(fit_cap, newx = x, type = "link"))
+      cap_info <- list(lambda = lam_cap, n_genes = nrow(coef_cap),
+                       cindex_train = harrell_c(time, event, risk_cap),
+                       genes = as.list(coef_cap$gene))
+      status$epv_model <- cap_info
+      log_info(sprintf("EPV 合规模型: lambda=%.4f, %d 个基因, 训练集 C-index %.3f（EPV>=10 判据）",
+                       lam_cap, nrow(coef_cap), cap_info$cindex_train))
+    }
+  }
+
   # ---- 5. 训练集风险分与 C-index ------------------------------------------
   risk_train <- as.numeric(predict(fit, newx = x, type = "link"))
   names(risk_train) <- common
-  c_train <- survival::concordance(y ~ risk_train)
-  status$cindex_train <- unname(c_train$concordance)
+  c_train <- harrell_c(time, event, risk_train)
+  status$cindex_train <- c_train
 
   # 交叉验证得到的 C-index 是**乐观程度更小**的那个，一并报出来
   # 用 which.min(abs(...)) 而不是 which(lambda == lambda.1se)：
@@ -441,13 +553,30 @@ run_07_lasso <- function(cfg) {
           b <- coef_df$coef[match(have, coef_df$gene)]
           risk_val <- as.numeric(vx %*% b)
           vi <- match(vcommon, vs$gsm)
-          vy <- survival::Surv(vs$time[vi], vs$event[vi])
-          c_val <- survival::concordance(vy ~ risk_val)
+          c_val <- harrell_c(vs$time[vi], vs$event[vi], risk_val)
           status$validation <- "ok"
-          status$cindex_validation <- unname(c_val$concordance)
+          status$cindex_validation <- c_val
           log_info(sprintf("外部验证 %s: n=%d, %d 个事件, C-index = %.3f（训练集 %.3f）",
                            val_gse, length(vcommon), status$validation_n_events,
-                           status$cindex_validation, status$cindex_train))
+                           c_val, status$cindex_train))
+
+          # EPV 合规模型也在同一个外部队列上打分 —— 只有这样才能回答
+          # "少要 13 个基因换来多少外部性能"。
+          if (!is.null(cap_info)) {
+            have_cap <- intersect(cap_info$genes, rownames(vexpr))
+            if (length(have_cap) > 0L) {
+              vxc <- t(vexpr[have_cap, vcommon, drop = FALSE])
+              vxc <- scale(vxc, center = x_center[have_cap], scale = x_scale[have_cap])
+              vxc[!is.finite(vxc)] <- 0
+              bc <- coef_cap$coef[match(have_cap, coef_cap$gene)]
+              risk_cap_val <- as.numeric(vxc %*% bc)
+              c_cap <- harrell_c(vs$time[vi], vs$event[vi], risk_cap_val)
+              status$epv_model$cindex_validation <- c_cap
+              status$epv_model$genes_found_in_validation <- length(have_cap)
+              log_info(sprintf("EPV 合规模型外部验证 C-index = %.3f（%d/%d 个基因在验证队列中找到）",
+                               c_cap, length(have_cap), length(cap_info$genes)))
+            }
+          }
           risk_df <- rbind(risk_df,
                            data.frame(gsm = vcommon, time = vs$time[vi], event = vs$event[vi],
                                       risk = risk_val, set = val_gse, stringsAsFactors = FALSE))

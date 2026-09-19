@@ -33,18 +33,20 @@ jobs:
       fail-fast: false
       matrix:
         dataset: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.event.inputs.dataset)) || fromJSON('["GSE64790","GSE42568"]') }}
-    # spec 要求单次运行 < 20 分钟。实测（bioc-v2，无 WGCNA/LASSO）冷缓存整轮
-    # 14m58s，其中 Install R packages 722s、分析流水线 115s。
+    # spec 要求单次运行 < 20 分钟。**实测（run 35438543496，bioc-v3）**：
     #
-    # **加入 WGCNA + LASSO + 外部验证后临时放宽到 35 分钟**，理由是这两件事
-    # 各带来一段新的、还没测过的开销：WGCNA 的依赖树（fastcluster /
-    # dynamicTreeCut / Hmisc / GO.db）要新装，外部验证要另下一整个队列
-    # （GSE20685，327 个样本）。等测出真实耗时后再收紧回 20 分钟以内，
-    # 并把实测值写在这里 —— 不写死一个"应该够"的值。
+    #                     Install R packages   Run analysis   job 总计
+    #   GSE64790                66s              244s          6m10s
+    #   GSE42568                66s              400s          8m49s
     #
-    # 之所以不写更紧的值：冷缓存下装包要十几分钟，留给分析的时间很薄，
-    # 超时被掐死的 job 往往存不下缓存，会变成"每次都超时"的死循环。
-    timeout-minutes: 35
+    # 但那次的 Install 只有 66s —— 因为 bioc-v3 是新键，`restore-keys: rlib-Linux-`
+    # 命中了 bioc-v2 的缓存，只做了增量安装。**全冷缓存下装包实测约 720s**，
+    # 整轮会到 20 分钟左右，正好压在 spec 上限上。
+    #
+    # 所以超时写 30 分钟，而不是 20：被掐死的 job 存不下缓存，
+    # 下一轮又是冷缓存，会变成"每次都超时"的死循环 —— 多留 10 分钟比这个便宜。
+    # 走的是暖缓存时整轮 9 分钟内结束，这个上限平时用不到。
+    timeout-minutes: 30
 
     # **把 BLAS 线程数钉死为 1，否则数值结果不是逐位可复现的。**
     #

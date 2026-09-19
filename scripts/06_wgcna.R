@@ -269,11 +269,19 @@ run_06_wgcna <- function(cfg) {
   # ---- 5. 模块识别 --------------------------------------------------------
   # randomSeed 必须显式传：blockwiseModules 内部有随机初始化，
   # 不传的话同一份输入两轮给出不同模块（见 AGENTS.md 规则 11）。
+  #
+  # **corFnc 必须传函数对象，不能让它用默认的字符串 "cor"。**
+  # blockwiseModules 的 corFnc 默认值是字符串 "cor"，内部走 match.fun("cor")；
+  # 而本仓库不 attach 任何包（scripts/ 下没有一处 library()），所以按名字查找
+  # 解析到的是 stats::cor —— 它没有 weights.x / weights.y / cosine 参数。
+  # 实测报错：unused arguments (weights.x = NULL, weights.y = NULL, cosine = FALSE)。
+  # 传 WGCNA::cor 这个**函数对象**就绕开了按名字查找这一步。
   min_mod <- as.integer(cfg$analysis$wgcna_min_module_size %||% 30L)
   net <- WGCNA::blockwiseModules(
     datExpr, power = pw$power, networkType = "signed", TOMType = "signed",
     minModuleSize = min_mod, mergeCutHeight = 0.25,
     numericLabels = TRUE, pamRespectsDendro = FALSE,
+    corFnc = WGCNA::cor,
     randomSeed = if (is.null(seed)) 12345L else as.integer(seed),
     verbose = 0)
 
@@ -282,6 +290,12 @@ run_06_wgcna <- function(cfg) {
   status$n_modules <- length(unique(module_label))
   status$n_modules_nongrey <- sum(unique(module_label) != 0L)
   status$min_module_size <- min_mod
+  # **状态在这里就定成 ok。** 后面每一段（没有 clinical.csv、没有可用性状、
+  # 只有 grey 模块）都是"网络建成了、只是关联做不了"，它们会覆写
+  # `module_trait` 字段说明原因，但不该把整个步骤降级成"没跑"——
+  # 验收项看的是 `status$status`，漏了这一行会让一个真的跑完的 WGCNA
+  # 在验收日志里显示成 FAIL。
+  status$status <- "ok"
   log_info(sprintf("WGCNA: 识别出 %d 个模块（其中 %d 个非 grey），最小模块 %d 个基因",
                    status$n_modules, status$n_modules_nongrey, min_mod))
 

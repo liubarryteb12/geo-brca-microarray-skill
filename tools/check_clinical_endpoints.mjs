@@ -184,13 +184,26 @@ async function inspect(acc) {
 }
 
 const accs = process.argv.slice(2).filter(a => /^GSE\d+$/i.test(a))
+// **默认退出码是 0，只要"查清楚了"就算成功。**
+//
+// 原来"没有可用终点 -> 1"，本意是给人工选数据集时一个信号。但它进了 CI，
+// 而 CI 里这一步是 `continue-on-error: true` —— 于是 job 是绿的，
+// 却挂了一条红色的 `##[error]Process completed with exit code 1` 注解。
+// 实测 GSE64790（本来就没有随访）就是这样：**绿 job + 红注解**，
+// 下次真出问题时那条注解已经不值得看了。
+//
+// "这个数据集做不了预后模型"是一个**结论**，不是工具失败。
+// 工具失败（网络、解析）才该是非零。要当门禁用就加 --strict。
+const strict = process.argv.includes('--strict')
 if (accs.length === 0) {
-  console.error(`用法: node tools/check_clinical_endpoints.mjs GSE42568 [GSE...]
+  console.error(`用法: node tools/check_clinical_endpoints.mjs GSE42568 [GSE...] [--strict]
 
 查 GEO 数据集有没有可用的临床终点（生存 / 复发 / 转移），
 并把事件数换算成 LASSO/Cox 签名的基因数上限（EPV >= ${EPV_TARGET}）。
 
-退出码: 至少一个数据集有可用终点 -> 0，否则 -> 1`)
+退出码: 默认 0（只要查询成功，无论有没有终点）；
+        --strict 时至少一个数据集有可用终点 -> 0，否则 -> 1；
+        用法错误 -> 2。`)
   process.exit(2)
 }
 
@@ -203,4 +216,4 @@ for (const acc of accs) {
   }
   await new Promise(r => setTimeout(r, 400))   // 对 GEO 客气一点
 }
-process.exit(any ? 0 : 1)
+process.exit(strict && !any ? 1 : 0)
