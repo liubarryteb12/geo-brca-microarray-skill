@@ -23,6 +23,22 @@ jobs:
     # 超时被掐死的 job 往往存不下缓存，会变成"每次都超时"的死循环。
     timeout-minutes: 20
 
+    # **把 BLAS 线程数钉死为 1，否则数值结果不是逐位可复现的。**
+    #
+    # 实测两轮 CI 的 deg_table.csv 在浮点末位分叉：
+    #   A: P.Value=6.00193941779545e-05   adj.P.Val=0.394010725208314
+    #   B: P.Value=6.00193941779546e-05   adj.P.Val=0.394010725208312
+    # t 统计量在 15 位有效数字上看着一样，但残差平方和走的是多线程 BLAS 归约，
+    # 线程调度不同 -> 累加顺序不同 -> 末位不同 -> 极小的 P 值把这个差异放大到可见。
+    #
+    # 这跟前面四个随机源（impute.knn / fgsea / igraph 布局 / ggrepel）不是一类问题：
+    # 那些是"没设种子"，这个是"设了种子也没用"，只有限制并行度才能消除。
+    # 之前几轮 CI 报"逐字节一致"其实是运气 —— 线程调度恰好相同。
+    env:
+      OMP_NUM_THREADS: 1
+      OPENBLAS_NUM_THREADS: 1
+      MKL_NUM_THREADS: 1
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
