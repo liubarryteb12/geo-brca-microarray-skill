@@ -67,6 +67,8 @@ STEPS <- list(
 check_acceptance <- function(cfg) {
   res <- cfg$output$results_dir
   has <- function(f) file.exists(file.path(res, f))
+  # 有些验收项针对 data/（输入侧的记录，不是分析产物）
+  has_data <- function(f) file.exists(file.path(cfg$output$data_dir, f))
 
   read_status <- function(f) {
     p <- file.path(res, f)
@@ -166,6 +168,10 @@ check_acceptance <- function(cfg) {
          ok = has("PPI_network_caption.txt") || !has("PPI_network.png"),
          required = FALSE),
     list(name = "WGCNA（结果或不适用原因）", ok = settled(wgcna), required = FALSE),
+    # 批次与分组的混杂评估。**判据是"有记录"，不是"有批次"** ——
+    # 找不到批次字段也是一个结论（说明查过），必须落盘；静默跳过才是问题。
+    list(name = "batch_assessment.json（批次与分组混杂评估）",
+         ok = has_data("batch_assessment.json"), required = FALSE),
     # PH 假设检验。**判据要分三种情况**，否则会在绿 job 上印出误导性的 FAIL：
     #   - 有 cox_zph.csv            -> 真跑了
     #   - ph_assumption 有终态      -> 跑了但失败/不适用，有理由

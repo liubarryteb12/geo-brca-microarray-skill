@@ -737,6 +737,82 @@ detect_expr_scale <- function(expr) {
     base)
 }
 
+#' 从临床/特征表里识别候选批次字段
+#'
+#' **为什么不能"没找到批次就直接往下跑"。** 用户文档那条警告是对的：
+#' 批次与分组共线时做 ComBat 会把真实信号一起抹掉。但反过来的错误更常见 ——
+#' **根本不查批次**，于是把"分组本身就是一个批次"当成生物学差异报出去。
+#' 所以这里必须留下"查过、结论是什么"的记录，而不是静默跳过。
+#'
+#' 候选来自列名（GEO 的 characteristics 解析后列名形如 `batch`、`plate`、
+#' `scan_date`）。**常量列被排除** —— 只有一个取值的列不是批次，是元数据噪声。
+#'
+#' @return 列名（character(1)）或 NULL
+detect_batch_field <- function(clinical) {
+  if (is.null(clinical) || ncol(clinical) == 0L) return(NULL)
+  cand <- grep("batch|plate|chip|slide|scan|sentrix|hyb|process|run|date|center|site",
+               colnames(clinical), ignore.case = TRUE, value = TRUE)
+  if (length(cand) == 0L) return(NULL)
+  cand <- cand[vapply(cand, function(cn) {
+    v <- clinical[[cn]]
+    length(unique(v[!is.na(v)])) > 1L
+  }, logical(1))]
+  if (length(cand) == 0L) return(NULL)
+  cand[1L]
+}
+
+#' 评估批次与分组的混杂程度
+#'
+#' **判据是"每个组是否跨了多个批次"，不是相关系数。**
+#' 完全共线（每组恰好落在一个批次里，且各组批次不重叠）时，
+#' 批次效应与分组效应在数学上不可分离 —— 此时做批次校正等于
+#' 把要检验的效应本身减掉，得到"校正后无差异"，而流程全绿。
+#'
+#' Cramér's V 作为辅助指标一并给出（V 越接近 1 关联越强），
+#' 但**结论以"每组批次数"为准**：小样本下 V 的估计本身不稳。
+#'
+#' @return list(n_batch, n_group, batches_per_group, groups_per_batch,
+#'              cramers_v, confounded, verdict, reason)
+assess_batch_confounding <- function(batch, group) {
+  keep <- !is.na(batch) & !is.na(group)
+  batch <- as.character(batch[keep]); group <- as.character(group[keep])
+  tb <- table(batch, group)
+  n_batch <- nrow(tb); n_group <- ncol(tb)
+  batches_per_group <- apply(tb, 2L, function(cc) sum(cc > 0L))
+  groups_per_batch  <- apply(tb, 1L, function(rr) sum(rr > 0L))
+
+  # Cramér's V：手算，不用 chisq.test —— 小样本/稀疏列联表下它会警告或报错，
+  # 而那种报错会被当成"检查失败"，掩盖真正要看的结构。
+  n <- sum(tb)
+  v <- NA_real_
+  if (n > 0L && n_batch > 1L && n_group > 1L) {
+    e <- outer(rowSums(tb), colSums(tb)) / n
+    ok <- e > 0
+    chi2 <- sum((tb[ok] - e[ok])^2 / e[ok])
+    v <- sqrt(chi2 / (n * min(n_batch - 1L, n_group - 1L)))
+  }
+
+  # 完全共线：没有任何一个组跨了 2 个以上批次
+  confounded <- n_batch > 1L && n_group > 1L && all(batches_per_group <= 1L)
+  list(
+    n_batch = n_batch, n_group = n_group,
+    batches_per_group = as.list(batches_per_group),
+    groups_per_batch = as.list(groups_per_batch),
+    cramers_v = if (is.na(v)) NA_real_ else round(v, 4),
+    confounded = confounded,
+    verdict = if (n_batch < 2L) "no_batch_variation"
+              else if (confounded) "fully_confounded"
+              else "partially_crossed",
+    reason = if (n_batch < 2L)
+      "只有一个批次（或没有批次信息），无从校正"
+    else if (confounded)
+      sprintf("完全共线：%d 个组各自只落在一个批次里 —— 批次与分组不可分离，校正会抹掉真实效应",
+              n_group)
+    else
+      sprintf("可分离：至少一个组跨了 %d 个批次", max(batches_per_group))
+  )
+}
+
 #' 按行 Z-score（用于热图）
 row_zscore <- function(m) {
   t(scale(t(as.matrix(m))))

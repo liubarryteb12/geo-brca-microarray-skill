@@ -3,15 +3,20 @@
 # ============================================================================
 # spec 的 validate_inputs 步骤 + fetch_geo 的 validate 部分。
 #
-# 这是整个流水线的硬门禁：数据集必须是人源、芯片、乳腺癌，且满足
+# 这是整个流水线的硬门禁：数据集必须是人源、芯片，且满足
 # config 里 design_mode 对应的样本量判据：
 #   small_sample  总样本 < 10，每组 >= 3
 #   cohort        总样本 >= 15，每组 >= 10
 # 任一不满足直接 stop()，不进入任何分析。
 #
+# **门禁里没有"疾病"这一项，这是有意的。** 疾病特异性全部落在 config 的
+# `group_field` / `group_values` 里（用样本自身的 characteristics 取值分组），
+# 所以同一份代码可以跑任意疾病 —— 加一个疾病白名单只会让它又变成单疾病工具。
+# 疾病与分组取值的一致性由 `node scripts/find_dataset.mjs check <GSE>` 预检。
+#
 # 只用 base R 抓 GEO SOFT 元数据，因此这一步在装任何 Bioconductor 包之前就能跑完。
-# 输出：data/group.csv, data/meta.csv, data/platform.txt,
-#       data/clinical.csv, data/clinical_fields.json, data/geo_metadata.json
+# 输出：data/group.csv, data/meta.csv, data/platform.txt, data/clinical.csv,
+#       data/clinical_fields.json, data/batch_assessment.json, data/geo_metadata.json
 # ============================================================================
 
 suppressPackageStartupMessages({
@@ -242,6 +247,41 @@ run_00_validate_inputs <- function(cfg) {
   log_info(sprintf("临床字段: %d 个（%s）", length(field_profile),
                    paste(utils::head(names(field_profile), 6), collapse = ", ")))
 
+  # ---- 8b. 批次与分组的混杂评估 ------------------------------------------
+  #
+  # **这一步原来完全没有。** 用户文档那条警告是对的：批次与分组共线时
+  # 做批次校正会把真实信号一起抹掉。但更常见的错误是**根本不查批次** ——
+  # 于是把"分组本身就是一个批次"（比如两组在不同时间/不同中心做的）
+  # 当成生物学差异报出去，而且流程全绿。
+  #
+  # 所以无论查不查得到批次字段，都要留下记录：
+  # 找不到就记 `not_available` 并说明找过什么，不是静默跳过。
+  # 评估结果供 step 01 决定是否做校正 —— 校正需要表达矩阵，在 step 01。
+  batch_field <- detect_batch_field(clinical)
+  if (is.null(batch_field)) {
+    batch_info <- list(
+      status = "not_available",
+      reason = sprintf("clinical.csv 的 %d 个字段里没有批次类列名（batch/plate/chip/slide/scan/sentrix/hyb/process/run/date/center/site），或候选列只有单一取值",
+                       ncol(clinical)),
+      columns_seen = as.list(colnames(clinical)))
+    log_info("批次评估: 未找到批次字段（已记录，非静默跳过）")
+  } else {
+    ba <- assess_batch_confounding(clinical[[batch_field]], meta$group)
+    batch_info <- c(list(status = "assessed", field = batch_field), ba)
+    log_info(sprintf("批次评估: 字段「%s」，%d 个批次 x %d 个组，Cramér's V = %s -> %s",
+                     batch_field, ba$n_batch, ba$n_group,
+                     if (is.na(ba$cramers_v)) "NA" else sprintf("%.3f", ba$cramers_v),
+                     ba$verdict))
+    if (isTRUE(ba$confounded)) {
+      log_warn(sprintf("批次与分组**完全共线**：%s", ba$reason))
+      log_warn("  含义：批次效应与分组效应在数学上不可分离。若做批次校正，减掉的就是要检验的效应本身。")
+      log_warn("  本流水线**不会**对这种情况做校正；分组差异里有多少来自批次，数据本身答不了。")
+    } else if (identical(ba$verdict, "partially_crossed")) {
+      log_info(sprintf("  可分离，%s", ba$reason))
+    }
+  }
+  write_json(file.path(cfg$output$data_dir, "batch_assessment.json"), batch_info)
+
   # ---- 9. 落盘 ------------------------------------------------------------
   meta_out <- meta[, c("gsm", "title", "source_name", "organism", "taxid", "group", "group_field")]
   group_out <- data.frame(gsm = meta_out$gsm, group = meta_out$group, stringsAsFactors = FALSE)
@@ -272,7 +312,7 @@ run_00_validate_inputs <- function(cfg) {
     validated_at = format(Sys.time(), "%Y-%m-%dT%H:%M:%S")
   ))
 
-  log_info(sprintf("已写出 %s/group.csv, meta.csv, platform.txt, clinical.csv, clinical_fields.json, geo_metadata.json",
+  log_info(sprintf("已写出 %s/group.csv, meta.csv, platform.txt, clinical.csv, clinical_fields.json, batch_assessment.json, geo_metadata.json",
                    cfg$output$data_dir))
   invisible(meta_out)
 }
