@@ -30,10 +30,23 @@
 8. **不要报 post-hoc observed power。** 要报就报固定 n 下的 MDE（敏感性分析）。
    `n < 10` 时必须看 `pvalue_histogram`：峰在 1 或 U 形说明设计有问题，
    那时候连排序表都不能用。判据来自 K-Dense `bulk-rnaseq` / `statistical-power`。
-9. **引入任何随机调用都必须紧挨着它 `set.seed(cfg$analysis$seed)`。** 已知三个源：
+9. **引入任何随机调用都必须紧挨着它 `set.seed(cfg$analysis$seed)`。** 已知四个源：
    `impute.knn`、`fgsea`（`gseGO(seed=)` **不可靠**，必须自己设 RNG）、
-   `layout_with_fr`。`analysis.seed` 不可删。**验证方式是连跑两轮比对 SHA256**，
+   `layout_with_fr`、**`ggrepel::geom_text_repel`**（`seed` 默认是 `NA` 不是 `NULL`）。
+   `analysis.seed` 不可删。**验证方式是连跑两轮比对 SHA256**，
    不是看一眼日志说"应该没问题"。
+10. **不要靠设种子解决一切。** 多线程 BLAS 的归约顺序会让浮点末位分叉，
+    设种子无用，只能把 `OMP_NUM_THREADS` / `OPENBLAS_NUM_THREADS` /
+    `MKL_NUM_THREADS` 钉为 1。实测 `deg_table.csv` 曾出现
+    `6.00193941779545e-05` vs `...546e-05`。**报"逐字节一致"之前先确认
+    是什么机制在保证它** —— 之前几轮的一致有一半是运气。
+11. **颜色只能有一个含义，且判据是量化的：色相相差 15° 以内视为同一颜色。**
+    改任何色值前先跑 `node tools/check_palette.mjs`，它从 `common.R` 解析实际值重算。
+    不要在某个脚本里就地写 `"#C1443C"` 之类的字面量 —— 一律走 `PAL$*`。
+12. **出图代码的错误不得逃逸到方法级的 `tryCatch`。** 实测踩过：画图代码因为
+    图缺 `weight` 边属性而报错，被 STRING 分支的 `tryCatch` 当成"STRING 失败"接住，
+    **一个画图 bug 静默换掉了分析方法**，而状态 JSON 里看着一切正常。
+    绘图要单独兜住，方法本身如实记录。
 
 ## 代码约定
 
@@ -58,6 +71,9 @@ node tools/check_sample_structure.mjs GSE64790
 
 # 图不是空白的（独立解码 PNG 像素，不需要 R）
 node tools/check_figures.mjs results
+
+# 配色仍然"一个颜色一个含义"（解析 common.R 的实际色值重算，不需要 R）
+node tools/check_palette.mjs
 
 # 端到端（需要 R + Bioconductor）
 Rscript scripts/main_analysis.R --config assets/config.yml

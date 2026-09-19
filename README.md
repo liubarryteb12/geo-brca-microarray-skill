@@ -58,17 +58,30 @@ artifact `geo-results`。
 | `correlation_heatmap.pdf` / `.png` | 样本间 Pearson 相关热图 |
 | `correlation_matrix.csv` | Pearson + Spearman 矩阵 + 离群标记 |
 | `deg_table.csv` | 全基因 limma 结果（gene/logFC/P.Value/adj.P.Val） |
-| `volcano_plot.pdf` / `.png` | 火山图（标注 top 基因） |
+| `volcano_plot.pdf` / `.png` | 火山图。四档：FDR 上/下调 + **名义显著**（raw P<0.05 但未过 FDR，橙色标注）+ 不显著。纵轴统一 raw P |
 | `top50_heatmap.pdf` / `.png` | top DEG 聚类热图（行 Z-score，euclidean + complete） |
 | `pvalue_histogram.pdf` / `.png` | DE 后 QC：p 值分布（区分"功效不足"与"模型设定错"） |
 | `GSEA_GO_dotplot.pdf` / `.png` + `GSEA_GO_table.csv` | **preranked GSEA / GO BP（主力方法）** |
 | `GSEA_KEGG_dotplot.pdf` / `.png` + `GSEA_KEGG_table.csv` | preranked GSEA / KEGG |
 | `GO_dotplot.pdf` / `.png` + `GO_table.csv` | ORA GO BP（含 `direction` 列，上/下调分开） |
 | `KEGG_dotplot.pdf` / `.png` + `KEGG_table.csv` | ORA KEGG（含 `direction` 列） |
-| `PPI_network.png` + `hub_genes.csv` + `ppi_edges.csv` | STRING PPI 网络与 hub 基因 |
+| `PPI_network.pdf` / `.png` + `hub_genes.csv` + `ppi_edges.csv` | STRING PPI 网络与 hub 基因。**图做过可读性过滤**（最大连通分量 → degree 前 200 → 最强 700 条边 → 最大 4 个 Louvain 模块上色），完整网络见 `ppi_edges.csv` |
 | `enrichment_status.json` | 富集模式（`fdr` / `ranked_fallback`）、GSEA 参数、去冗余阈值与原因 |
-| `ppi_status.json` | PPI 方法、节点边数与回退原因 |
-| `state.json` | 每步执行状态 + 验收结果 |
+| `ppi_status.json` | PPI 方法、节点边数、绘图过滤参数与回退原因 |
+| `state.json` | 每步执行状态 + 验收结果（唯一逐字节不可复现的产物：含耗时与时间戳） |
+
+### 配色
+
+所有图共用 `scripts/lib/common.R` 里的一套语义化色板，**红 = 上调 / tumor、
+蓝 = 下调 / normal**，显著性用紫色单色相序列色（刻意避开红蓝，否则深色会被误读成上调）。
+
+色值是**算出来的**，判据是"色相相差 15° 以内视为同一个颜色"。按这条算，
+之前有三处凭眼睛看不出来的问题：p 值直方图的 `firebrick` 与 up 红只差 0.4°、
+分类色板的棕在 protanopia 下与 up 红距离 0.002、magma 序列色中段与 up 红只差 2.9°。
+
+```bash
+node tools/check_palette.mjs   # 从 common.R 解析实际色值重算，CI 里是门禁
+```
 
 > 每张图都同时出 **PDF（矢量，放大不失真）** 和 **PNG（150 dpi，可直接预览）**。
 > artifact 是 zip，PDF 在里面看不了，PNG 是为了打开就能看到。
