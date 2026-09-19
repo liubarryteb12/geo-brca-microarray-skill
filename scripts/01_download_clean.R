@@ -531,6 +531,22 @@ run_01_download_clean <- function(cfg) {
     normalization_note = paste(
       "从 GEO series matrix 出发，非原始 CEL/IDAT；",
       "RMA/neqc 需要原始文件，在本流水线上没有输入可跑，故未执行"),
+    # **把"没做的 QC"也写下来。** 用户文档把 3'/5' 比值和 RNA 降解曲线列为
+    # 芯片 QC 必产出项。它们需要**探针级**原始数据（affy::AffyRNAdeg 读 CEL、
+    # 降解曲线看 3' 探针相对 5' 的系统性位移），而 series matrix 只有
+    # 基因级汇总值 —— 3'/5' 的信息在提交者做 RMA/MAS5 时就已经被合并掉了，
+    # 事后无法还原。
+    #
+    # 不写这段的后果：读者以为"该做的 QC 都做了"，而实际缺了一整类。
+    # 与其编一个代理指标冒充，不如写明它为什么不可得、以及需要什么才能做。
+    qc_not_applicable = list(
+      rna_degradation_3prime_5prime = paste(
+        "3'/5' 比值与降解曲线需要探针级原始数据（affy::AffyRNAdeg 读 CEL）；",
+        "series matrix 只有基因级汇总值，探针位置信息已被提交者的 RMA/MAS5 合并掉"),
+      probe_level_background = "背景校正与探针级诊断同样需要原始 CEL/IDAT",
+      raw_data_path = paste(
+        "若要这些 QC，需另走 GEOquery::getGEOSuppFiles 下载原始文件并单独做 RMA；",
+        "那是另一条流水线，本仓库不做")),
     probe_collapse = if (identical(mapping$mode, "symbol")) "max variance per symbol" else NA
   ))
 
