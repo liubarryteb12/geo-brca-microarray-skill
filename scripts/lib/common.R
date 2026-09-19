@@ -137,11 +137,55 @@ record_step <- function(cfg, id, status, seconds = NA_real_, message = "", requi
 
 # ---- 绘图 ------------------------------------------------------------------
 
-#' 把绘图表达式写进 PDF，保证设备一定关闭
-save_pdf <- function(path, expr, width = 8, height = 6) {
-  grDevices::pdf(path, width = width, height = height)
-  on.exit(grDevices::dev.off(), add = TRUE)
-  force(expr)
+#' 把绘图表达式同时写进 PDF 和 PNG，保证设备一定关闭
+#'
+#' **为什么要同时出 PNG：** 产物是打包成 artifact zip 下载的，PDF 在 zip 里
+#' 不能直接预览 —— 拿到 artifact 的人得先解压再找 PDF 阅读器。PNG 可以直接看。
+#' PDF 保留是因为它是矢量图，放大不失真；PNG 是为了能一眼看到。
+#'
+#' **实现要点：** 绘图代码要跑两遍（一次 PDF、一次 PNG），所以必须用
+#' `substitute()` 抓住**未求值**的表达式再 `eval()` 两次。
+#' 不能写成 `force(expr); force(expr)` —— R 的 promise 有记忆，
+#' 第二次 force 直接返回缓存值，**PNG 设备会开了又关、什么都不画**，得到一张空白图。
+#'
+#' 每次绘图都用一个独立的 `render()` 开关设备，`on.exit` 才精确对应这一次开设备；
+#' 若在 `save_pdf` 主体里 `on.exit(add = TRUE)` 两次，退出时会多关一次设备，
+#' 可能把调用方的设备一起关掉。
+#'
+#' PNG 走 `ragg`（若装了）或 `png(type="cairo")`，两者抗锯齿都更好；
+#' 都没有时退回默认设备，仍然出图，不因为画质问题中断流程。
+#'
+#' @param path  PDF 输出路径；同名 `.png` 会写在旁边
+#' @param expr  绘图表达式，会在调用者的环境里求值两次
+save_pdf <- function(path, expr, width = 8, height = 6, dpi = 150) {
+  code <- substitute(expr)
+  env  <- parent.frame()
+
+  render <- function(open_dev) {
+    open_dev()
+    on.exit(grDevices::dev.off(), add = TRUE)
+    eval(code, envir = env)
+  }
+
+  render(function() grDevices::pdf(path, width = width, height = height))
+
+  png_path <- sub("\\.pdf$", ".png", path)
+  tryCatch(
+    render(function() {
+      if (requireNamespace("ragg", quietly = TRUE)) {
+        ragg::agg_png(png_path, width = width, height = height, units = "in", res = dpi)
+      } else if (capabilities("cairo")) {
+        grDevices::png(png_path, width = width, height = height, units = "in",
+                       res = dpi, type = "cairo")
+      } else {
+        grDevices::png(png_path, width = width * dpi, height = height * dpi, res = dpi)
+      }
+    }),
+    error = function(e) {
+      # 出图失败不能中断分析：PDF 已经拿到了，PNG 只是方便预览
+      log_warn(sprintf("PNG 输出失败（PDF 已生成）: %s", conditionMessage(e)))
+    }
+  )
   invisible(path)
 }
 
