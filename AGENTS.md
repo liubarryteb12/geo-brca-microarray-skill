@@ -124,6 +124,47 @@
     于是画成"白描边 + 无填充"，在白底上**完全隐形**（实测图例只剩标题）。
     用 `override.aes = list(fill = ...)` 补回来。
     `pretty()` 还会给出数据范围外的断点（degree 从 2 起却标 0），要过滤。
+21. **标签放不放得下是算出来的，不是看出来的。** 一行标签要 `fontsize + min_gap`
+    点的垂直空间，画布能给 `height_in * 72 * panel_frac` 点 —— 走
+    `common.R` 的 `fits_labels()` / `label_budget()` / `decide_rownames()`，
+    **决定和算式一起进日志**。放不下就整张不显示行名，不缩字号硬塞。
+    实测 `top50_heatmap` 原来写的是硬编码的 `length(genes) <= 60`，和画布高度
+    毫无关系：50 个基因、5pt 字号、5.75in 高时每行只剩约 3.6px 间隙。
+    **行名一旦隐藏，基因身份就只剩表能提供** —— 必须同时落盘
+    `top50_heatmap_genes.csv`，而且要是**显示顺序**（行聚类自己算再传给
+    pheatmap，保证两边同一棵树）。规则 16 在热图上同样适用。
+22. **WGCNA 只用肿瘤组；LASSO 的终点必须由 config 显式指定。**
+    - 带上正常样本的话，第一个模块必然是"肿瘤 vs 正常"轴，而 DEG 已经答过
+      那件事了。WGCNA 要回答的是癌组织**内部**的异质性。
+    - 终点自动配对在字段名不规整时一定配错，而配错不报错，只会算出错的
+      C-index。实测 GSE20685 是 `event_death` 和 `follow_up_duration (years)`，
+      名字里没有共同词。
+    - **不要用 `survival::concordance()` 的公式接口报 C-index。** 实测它在
+      `Surv(time, event) ~ risk` 下返回 1 - Harrell C（训练集 0.121 vs 交叉验证
+      0.793，正好互补），而 0.121 看着像个正常数字，不会引起怀疑。
+      用 `07_lasso.R` 里的 `harrell_c()`，定义写在注释里。
+    - 报 C-index 要报三个：训练集、交叉验证、**外部验证**。
+      只报训练集等于没验证。
+    - 重复 CV 选出多少个基因的**分布**要报（实测 [16, 3, 3, 22, 3]，
+      只换 foldid 就差 7 倍）。只报"最终签名 N 个基因"是把不稳定性藏起来。
+23. **`blockwiseModules` 必须在临时挂载 WGCNA 的情况下调用 —— 这是本仓库唯一
+    一处 `library()`，且必须 `on.exit` 立刻 detach。**
+    `blockwiseModules` 内部用 `do.call(corFnc, ...)` 算 KME，而 `corFnc` 来自
+    包内常量 `.corFnc = c("cor", "bicor", "cor")` —— 是个**字符串**，按名字查找。
+    不 attach 任何包时它解析到 `stats::cor`，后者没有 `weights.x` / `weights.y` /
+    `cosine` 参数。实测报错：
+    `unused arguments (weights.x = NULL, weights.y = NULL, cosine = FALSE)`。
+    **传 `corFnc = WGCNA::cor` 没用** —— 读 1.74 源码确认 `blockwiseModules`
+    形参表里没有 `corFnc`（只有 `corType`），参数掉进 `...`，而 KME 那段用包内
+    常量、不看 `...`，报错一字不变。从外面没有参数能改。
+    挂载前先记 `"package:WGCNA" %in% search()`，避免把调用方原有状态拆掉。
+    脚本其余所有调用仍然写全名。
+24. **可选步骤失败不等于"这一步不适用"。** 06/07 是 `required = FALSE`，
+    但它们失败时 job 仍然是绿的 —— 实测第一次跑 WGCNA 崩了，CI 全绿。
+    所以两个脚本在**每一条退出路径**上都要写状态文件：
+    真跑了写 `status = "ok"`，不适用写 `not_applicable` / `not_configured` /
+    `too_few_events` 加 `reason`。验收项 `settled()` 检查的就是这份记录，
+    文件不存在或 `status` 缺失 = FAIL。
 
 ## 代码约定
 
@@ -159,8 +200,11 @@ node tools/check_palette.mjs
 Rscript scripts/main_analysis.R --config assets/config.GSE42568.yml
 ```
 
-CI 在 GitHub Actions 上跑 `geo_analysis.yml`，`timeout-minutes: 20` 是硬上限。
-实测：冷缓存 14m58s，暖缓存 3m33s（R 库由 `actions/cache` 缓存）。
+CI 在 GitHub Actions 上跑 `geo_analysis.yml`，`timeout-minutes: 30` 是硬上限。
+**实测（run 35438543496）**：Install R packages 66s（增量）、Run analysis
+GSE64790 244s / GSE42568 400s，暖缓存整轮 6m10s / 8m49s。
+全冷缓存下装包约 720s，整轮约 20 分钟 —— 所以上限写 30 而不是 20：
+被掐死的 job 存不下缓存，下一轮又是冷缓存，会变成"每次都超时"的死循环。
 
 > **push 时两个数据集各跑一个 job**（矩阵），手动触发时只跑指定的那个。
 > 产物 artifact 名带数据集（`geo-results-GSE42568`），下载下来不会混。
@@ -168,8 +212,9 @@ CI 在 GitHub Actions 上跑 `geo_analysis.yml`，`timeout-minutes: 20` 是硬�
 
 > **改 `packages` 列表必须同时把缓存键 `rlib-<os>-bioc-vN` 递增。**
 > `actions/cache` 的 key 一旦存在就不再写回，沿用旧 key 会让新装的包每次运行都被丢掉、
-> 重新装一遍。当前是 `bioc-v2`（加入 `fgsea`）。
-> 递增后第一次运行会因为 `restore-keys` 前缀命中旧缓存而只增量安装，约 6 分钟；
+> 重新装一遍。当前是 **`bioc-v3`**（v2 加了 `fgsea`；v3 加了 `WGCNA` /
+> `glmnet` / `survival` / `matrixStats`）。
+> 递增后第一次运行会因为 `restore-keys` 前缀命中旧缓存而只增量安装（实测 66s）；
 > 之后恢复暖缓存速度。
 
 > **验收不等于验图。** `check_acceptance()` 只看文件在不在，看不出图是不是空白。
@@ -181,3 +226,7 @@ CI 在 GitHub Actions 上跑 `geo_analysis.yml`，`timeout-minutes: 20` 是硬�
 - 提交 API key、token 或任何凭据
 - 在 `results/` 或 `data/` 里提交运行产物（`.gitignore` 已排除）
 - 把上游 k-dense `scientific-agent-skills` 库的内容复制进本仓库
+- **`library()` / `require()` / `attach()`** —— 唯一例外是规则 23 里
+  `blockwiseModules` 那次，且必须 `on.exit` 立刻 detach。
+  其余一律 `pkg::fun()` 写全名：attach 会遮蔽 `stats::filter` / `stats::lag` /
+  `dplyr::filter` 之类的同名函数，而遮蔽**不报错**，只是让某个调用悄悄换了实现。

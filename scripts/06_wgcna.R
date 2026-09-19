@@ -267,21 +267,40 @@ run_06_wgcna <- function(cfg) {
            width = 8, height = 4.5)
 
   # ---- 5. 模块识别 --------------------------------------------------------
+  #
+  # **这是本仓库唯一一处 `library()` 调用，必须临时挂载。**
+  #
+  # `blockwiseModules` 内部用 `do.call(corFnc, ...)` 计算 KME，而 `corFnc` 来自
+  # 包内常量 `.corFnc = c("cor", "bicor", "cor")` —— 是个**字符串**，按名字查找。
+  # 本仓库不 attach 任何包，于是它解析到 `stats::cor`，而后者没有
+  # `weights.x` / `weights.y` / `cosine` 参数。实测报错：
+  #   unused arguments (weights.x = NULL, weights.y = NULL, cosine = FALSE)
+  #
+  # **试过传 `corFnc = WGCNA::cor`，没用。** 读了 WGCNA 1.74 源码：
+  # `blockwiseModules` 的形参表里根本没有 `corFnc`（只有 `corType`），
+  # 我的参数掉进 `...`；而 KME 那段用的是包内常量，不看 `...`。报错一字不变。
+  # 这是包内部按字符串查函数的行为，**从外面没有任何参数能改**。
+  #
+  # 所以只能在调用期间把 WGCNA 挂到搜索路径上，让它按名字能查到自己的 `cor`。
+  # `on.exit` 立刻 detach，遮蔽窗口仅限这一次调用；本脚本其余所有调用
+  # （包括下面的 `moduleEigengenes` / `labels2colors`）仍然写全名。
+  # 挂载前先记下它是否已经在搜索路径上，避免把调用方原有的状态拆掉。
+  wgcna_attached <- "package:WGCNA" %in% search()
+  if (!wgcna_attached) {
+    suppressPackageStartupMessages(
+      library(WGCNA, character.only = TRUE, warn.conflicts = FALSE))
+    on.exit({
+      try(detach("package:WGCNA", unload = FALSE, character.only = TRUE), silent = TRUE)
+    }, add = TRUE)
+  }
+
   # randomSeed 必须显式传：blockwiseModules 内部有随机初始化，
   # 不传的话同一份输入两轮给出不同模块（见 AGENTS.md 规则 11）。
-  #
-  # **corFnc 必须传函数对象，不能让它用默认的字符串 "cor"。**
-  # blockwiseModules 的 corFnc 默认值是字符串 "cor"，内部走 match.fun("cor")；
-  # 而本仓库不 attach 任何包（scripts/ 下没有一处 library()），所以按名字查找
-  # 解析到的是 stats::cor —— 它没有 weights.x / weights.y / cosine 参数。
-  # 实测报错：unused arguments (weights.x = NULL, weights.y = NULL, cosine = FALSE)。
-  # 传 WGCNA::cor 这个**函数对象**就绕开了按名字查找这一步。
   min_mod <- as.integer(cfg$analysis$wgcna_min_module_size %||% 30L)
   net <- WGCNA::blockwiseModules(
     datExpr, power = pw$power, networkType = "signed", TOMType = "signed",
     minModuleSize = min_mod, mergeCutHeight = 0.25,
     numericLabels = TRUE, pamRespectsDendro = FALSE,
-    corFnc = WGCNA::cor,
     randomSeed = if (is.null(seed)) 12345L else as.integer(seed),
     verbose = 0)
 
