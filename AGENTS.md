@@ -30,6 +30,10 @@
 8. **不要报 post-hoc observed power。** 要报就报固定 n 下的 MDE（敏感性分析）。
    `n < 10` 时必须看 `pvalue_histogram`：峰在 1 或 U 形说明设计有问题，
    那时候连排序表都不能用。判据来自 K-Dense `bulk-rnaseq` / `statistical-power`。
+9. **引入任何随机调用都必须紧挨着它 `set.seed(cfg$analysis$seed)`。** 已知三个源：
+   `impute.knn`、`fgsea`（`gseGO(seed=)` **不可靠**，必须自己设 RNG）、
+   `layout_with_fr`。`analysis.seed` 不可删。**验证方式是连跑两轮比对 SHA256**，
+   不是看一眼日志说"应该没问题"。
 
 ## 代码约定
 
