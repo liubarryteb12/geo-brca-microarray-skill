@@ -238,11 +238,13 @@ run_03_deg <- function(cfg) {
   # p 值直方图能把这两者区分开 —— 0 附近有峰说明信号真实、只是检不出；
   # 峰在 1 或 U 形说明模型设定错了，那时候连排序表都不能用。
   pv <- tt$P.Value[!is.na(tt$P.Value)]
+  # 直方图用中性灰、参考线用墨色：这张图里颜色**不承载方向语义**，
+  # 用方向色会凭空暗示"蓝色 = 下调"。灰色恰好与 ns 的含义一致（零假设下的主体）。
   p_hist <- ggplot2::ggplot(data.frame(p = pv), ggplot2::aes(x = p)) +
-    ggplot2::geom_histogram(bins = 40, boundary = 0, fill = PAL$down,
+    ggplot2::geom_histogram(bins = 40, boundary = 0, fill = PAL$ns,
                             colour = "white", linewidth = 0.2) +
     ggplot2::geom_hline(yintercept = length(pv) / 40, linetype = "dashed",
-                        colour = PAL$nominal, linewidth = 0.6) +
+                        colour = PAL$ink, linewidth = 0.6) +
     ggplot2::labs(
       title = sprintf("P value distribution: %s vs %s (%s)", numerator, denominator,
                       cfg$dataset_id),

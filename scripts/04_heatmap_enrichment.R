@@ -467,12 +467,9 @@ make_gsea_dotplot <- function(df, cfg, title) {
                              levels = keep$Description[order(keep$NES)])
   arms <- as.character(cfg$contrast)
   ggplot2::ggplot(keep, ggplot2::aes(x = NES, y = Description)) +
-    # 背景按方向着色：左侧（normal 一侧）淡蓝、右侧（tumor 一侧）淡红，
-    # 与火山图同一套语义
-    ggplot2::annotate("rect", xmin = -Inf, xmax = 0, ymin = -Inf, ymax = Inf,
-                      fill = PAL$down, alpha = 0.06) +
-    ggplot2::annotate("rect", xmin = 0, xmax = Inf, ymin = -Inf, ymax = Inf,
-                      fill = PAL$up, alpha = 0.06) +
+    # **不加红/蓝背景分区。** 加了会在同一张图里出现两种"红"：
+    # 背景红表示方向，点的红表示显著性，读者无法区分。
+    # 方向由 NES 的符号承载，轴标签已经写明哪边是哪个条件。
     ggplot2::geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.3,
                         colour = PAL$ink) +
     ggplot2::geom_point(ggplot2::aes(size = setSize, colour = -log10(p.adjust))) +

@@ -83,12 +83,16 @@ run_02_qc_pca_correlation <- function(cfg) {
   # 按**分组**上色（不是按样本），这样密度图和 PCA 用的是同一套条件色，
   # 一眼能看出某一组的分布是否整体偏移
   long$group <- groups[match(long$sample, group$gsm)]
-  p_density <- ggplot(long, aes(x = expression, colour = group, group = sample)) +
+  # 线型同样编码分组（颜色不是唯一载体）
+  p_density <- ggplot(long, aes(x = expression, colour = group, linetype = group,
+                                group = sample)) +
     geom_density(linewidth = 0.4, alpha = 0.85) +
     facet_wrap(~stage, ncol = 1, scales = "free_y") +
     scale_colour_condition(levels(groups), name = NULL) +
+    scale_linetype_manual(values = c("solid", "dashed", "dotted", "dotdash")[seq_along(levels(groups))],
+                          name = NULL) +
     labs(title = "Expression density before / after normalization",
-         subtitle = sprintf("coloured by group; one curve per sample (%s)", cfg$dataset_id),
+         subtitle = sprintf("coloured and styled by group; one curve per sample (%s)", cfg$dataset_id),
          x = "log2 expression", y = "density") +
     theme_paper(9)
   save_pdf(file.path(res, "density_plot.pdf"), print(p_density), width = 8, height = 7)
@@ -111,12 +115,18 @@ run_02_qc_pca_correlation <- function(cfg) {
     PC2 = pca$x[, 2L],
     group = groups
   )
-  p_pca <- ggplot(pca_df, aes(x = PC1, y = PC2, colour = group, label = sample)) +
-    geom_point(size = 3.4) +
+  # 颜色**不是唯一的语义载体**：形状也编码分组。
+  # 色盲读者、以及黑白打印时，仍然能分出两组。
+  p_pca <- ggplot(pca_df, aes(x = PC1, y = PC2, colour = group, shape = group,
+                              label = sample)) +
+    geom_point(size = 3.6, stroke = 0.9) +
     geom_text(vjust = -1, size = 2.4, show.legend = FALSE, colour = PAL$ink) +
     scale_colour_condition(levels(groups), name = NULL) +
+    scale_shape_manual(values = c(16, 17, 15, 18, 8)[seq_along(levels(groups))],
+                       name = NULL) +
     labs(title = sprintf("PCA of %s", cfg$dataset_id),
-         subtitle = sprintf("top %d variable genes", nrow(pca_input)),
+         subtitle = sprintf("top %d variable genes; group encoded by colour AND shape",
+                            nrow(pca_input)),
          x = sprintf("PC1 (%.1f%% variance)", var_explained[1L]),
          y = sprintf("PC2 (%.1f%% variance)", var_explained[2L])) +
     theme_paper(10)

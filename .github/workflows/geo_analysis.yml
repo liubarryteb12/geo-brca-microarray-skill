@@ -94,6 +94,18 @@ jobs:
       - name: Run analysis pipeline
         run: Rscript scripts/main_analysis.R --config assets/config.yml
 
+      # 静态检查不依赖 R，可以在装包之前就拦下来，但放在这里是为了让
+      # "分析跑通了" 与 "代码/配色合格" 在同一段日志里能对照着看。
+      - name: Check R syntax and structure
+        run: node tools/check_r_syntax.mjs
+
+      # "一个颜色一个含义"是条不变量，但没有东西守着它。
+      # 实测本仓库曾经同时存在三种红（其中 firebrick 与 up 红只差 0.4°）、
+      # 一套在 protanopia 下 up 红与分类棕距离 0.002 的色板。
+      # 这些凭眼睛看不出来，只能算。所以把判据固化成门禁。
+      - name: Check the palette is still one-colour-one-meaning
+        run: node tools/check_palette.mjs
+
       # 验收只判断文件**存在**，不判断图**有没有画出来**。
       # 出图代码有一类静默失败：设备开了、绘图没执行、设备关了 —— 文件在、大小正常、
       # 就是白图（本仓库真踩过：save_pdf 里 force(expr) 两次只跑一遍绘图代码）。

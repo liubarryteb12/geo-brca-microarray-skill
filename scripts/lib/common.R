@@ -142,51 +142,85 @@ record_step <- function(cfg, id, status, seconds = NA_real_, message = "", requi
 # p 值直方图的参考线是第三种红（firebrick）；dotplot 用 viridis plasma，
 # 与红蓝体系毫无关系。读者要重新学一遍每张图的配色。
 #
+# **这套色值是算出来的，不是挑出来的。** 判据取自 better-colors skill：
+#   * 色相相差 15° 以内视为**同一个颜色** —— 承载不同含义的颜色必须拉开 15° 以上
+#   * 颜色从不是唯一的语义载体（见各图的 shape / 位置编码）
+#   * 报告任何对比度之前先测量，不要估
+#
+# 实测（`_palette_audit.py`）暴露了三个凭眼睛看不出的问题：
+#   1. 旧 p 值直方图用的 `firebrick` 与 up 红**只差 0.4°** —— 按上述判据就是同一个颜色
+#   2. 旧分类色板**不是色盲安全的**：protanopia 下 up 红与 cat brown 距离 0.002
+#      （几乎完全重合），deuteranopia 下 up 红与 cat green 距离 0.043
+#   3. magma 序列色的中段 #F1605D 色相 24.3°，**距 up 红仅 2.9°** ——
+#      序列色的中段就是"上调红"，深色点会被误读成上调
+#
 # 约定：
-#   * **方向 / 条件**：红 = 上调 / tumor，蓝 = 下调 / normal。
-#     红蓝是发散轴的两端，热图、火山、PCA、dotplot 的方向轴全部沿用。
-#   * **序列（显著性、强度）**：magma。刻意避开红与蓝 —— 红色已经被"方向"占了，
-#     序列色再用红就会让人以为深色代表上调。
-#   * **分类（模块、多组）**：色盲友好的定性色板，前两个仍是红蓝，
-#     这样二分类退化为方向色，超过两类时自动扩展。
+#   * **方向 / 条件**：红 = 上调 / tumor，蓝 = 下调 / normal
+#   * **序列（显著性、强度）**：紫色单色相 ramp。刻意避开红与蓝 ——
+#     红色已经被"方向"占了。magma 的色相跨度 171.7°，本 ramp 只有 9.8°，
+#     亮度步长也更均匀（最大 0.122 vs 0.157），彩度峰值落在中段。
+#   * **分类（模块、多组）**：Okabe-Ito 的色盲安全子集，
+#     剔除 orange（距 nominal 仅 10°）与 blue（距 down 仅 13°）。
+#     三种色盲下两两最小 OKLab 距离 0.076，阈值 0.05。
 PAL <- list(
-  up       = "#C1443C",   # 上调 / tumor 一侧
-  down     = "#2E5FA3",   # 下调 / normal 一侧
-  ns       = "#BFBFBF",   # 不显著
-  nominal  = "#E0A03C",   # 名义显著但未过 FDR（单独一档，不能用方向色）
+  up       = "#C1443C",   # 上调 / tumor 一侧      h=27.2
+  down     = "#2E5FA3",   # 下调 / normal 一侧     h=257.2
+  ns       = "#BFBFBF",   # 不显著（近中性灰，不承载色相语义）
+  nominal  = "#C07A1E",   # 名义显著但未过 FDR（h=67.1，距 up 红 40°，白底 3.5:1）
   mid      = "#F5F5F5",   # 发散色中点
-  ink      = "#333333",   # 文字 / 参考线
+  ink      = "#333333",   # 文字 / 参考线（白底 12.6:1）
   grid     = "#E5E5E5"
 )
 
 #' 发散色板：低 = 蓝 → 中 = 近白 → 高 = 红
-#' 用于 Z-score 热图、相关性热图、logFC 类连续量
+#' 用于 Z-score 热图、logFC 类连续量
 pal_diverging <- function(n = 100) {
   grDevices::colorRampPalette(c(PAL$down, PAL$mid, PAL$up))(n)
 }
 
-#' 序列色板（magma）：用于显著性 / 强度
-#' 刻意不用红蓝色系，避免与"方向"的语义打架
+#' 序列色板：紫色单色相 ramp，用于显著性 / 强度
+#'
+#' **刻意不用 magma。** 实测 magma 中段 #F1605D 的色相是 24.3°，
+#' 而 up 红是 27.2° —— 只差 2.9°，按 15° 判据就是同一个颜色。
+#' 也就是说 magma 中段的点会被读成"上调"。本 ramp 色相跨度 9.8°，
+#' 亮度单调递减且步长均匀，彩度峰值在中段，距 up 红 70°、距 down 蓝 50°。
 pal_sequential <- function(n = 256) {
   grDevices::colorRampPalette(
-    c("#FCFDBF", "#FEC98D", "#FE9F6D", "#F1605D", "#C03A83", "#8C2981", "#3B0F70"))(n)
+    c("#F4ECF7", "#DDC8E8", "#C09FD6", "#9E74BE", "#7B4E9E", "#5A3279", "#3B1F52"))(n)
 }
 
-#' 分类色板：前两个是方向色，之后依次扩展（色盲友好）
+#' 分类色板（模块 / 多组）：经计算验证的色盲安全四色
+#'
+#' 这四个不是挑的，是搜出来的（`_palette_search.py`）：在候选池里贪心挑选，
+#' 同时满足三条约束 ——
+#'   * 与 up 红 / down 蓝 / nominal 橙 / 序列紫 的色相都拉开 15° 以上
+#'   * 与它们、以及彼此之间，在 protanopia / deuteranopia / tritanopia 下
+#'     OKLab 距离都 >= 0.05
+#'   * 白底对比度 >= 2.0（实心圆点仍清晰可见的底线）
+#'
+#' 被剔除的典型：`#E69F00`（距 nominal 仅 10°）、`#0072B2`（距 down 仅 13°）、
+#' `#007A59` `#14606D` `#4A4E8C`（都撞 down）、`#A65A2E`（撞 up）、
+#' `#F0E442`（白底仅 1.32:1，小圆点看不见）。
+#'
+#' **超过 4 个模块时降级**：在四色之间插值。插出来的颜色**没有**经过上面的
+#' 验证，可能色盲下不可分。实测 GSE64790 的 PPI 是 4 个模块，正好用满。
 pal_categorical <- function(k) {
-  base <- c(PAL$up, PAL$down, "#3E8E5A", "#8A6BBE", "#D08C34", "#4C9BB5", "#7A5C3E")
-  if (k <= length(base)) base[seq_len(k)] else grDevices::colorRampPalette(base)(k)
+  base <- c("#009E73", "#56B4E9", "#C9B800", "#6E7B8B")
+  if (k <= length(base)) return(base[seq_len(k)])
+  grDevices::colorRampPalette(base)(k)
 }
 
 #' 按对比的两端给条件上色
 #'
-#' 两端时 tumor/上调 = 红、normal/下调 = 蓝；超过两类时退回分类色板。
+#' 两端时 tumor/上调 = 红、normal/下调 = 蓝；超过两类时前两个仍是方向色，
+#' 其余从分类色板补（>2 组的回退路径，本数据集用不到）。
 #' **这是修掉"PCA 蓝、火山红"那个不一致的地方** —— 条件色必须由
 #' `cfg$contrast` 决定，不能由分组出现的先后顺序决定。
 pal_condition <- function(arms) {
   arms <- as.character(arms)
   if (length(arms) == 2L) return(stats::setNames(c(PAL$up, PAL$down), arms))
-  stats::setNames(pal_categorical(length(arms)), arms)
+  stats::setNames(c(PAL$up, PAL$down, pal_categorical(max(0L, length(arms) - 2L)))[seq_along(arms)],
+                  arms)
 }
 
 #' 分组配色：按 `cfg$contrast` 的两端排序后再上色

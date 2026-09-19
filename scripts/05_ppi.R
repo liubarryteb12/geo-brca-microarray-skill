@@ -285,16 +285,31 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
                        length(comps$csize), igraph::vcount(g)))
     }
     # 2. 节点上限
+    #
+    # **注意：只按 degree 截节点是反效果的。** 实测取 degree 前 200 个节点后，
+    # 边数反而从 3284 涨到 4906 —— 因为高 degree 的节点彼此高度互联，
+    # 取它们等于取网络最密的核，比全图还乱。
+    # 所以真正的密度控制要落在**边**上：按置信度保留最强的若干条。
     max_nodes <- cfg$analysis$ppi_plot_max_nodes
-    if (is.null(max_nodes) || max_nodes <= 0) max_nodes <- 200L
+    if (is.null(max_nodes) || max_nodes <= 0) max_nodes <- 150L
+    max_edges <- cfg$analysis$ppi_plot_max_edges
+    if (is.null(max_edges) || max_edges <= 0) max_edges <- 700L
+
     n_before <- igraph::vcount(g)
+    e_before <- igraph::ecount(g)
     if (n_before > max_nodes) {
       d <- igraph::degree(g)
       keep <- names(sort(d, decreasing = TRUE))[seq_len(max_nodes)]
       g <- igraph::induced_subgraph(g, keep)
-      log_info(sprintf("网络图：按 degree 截取前 %d 个节点（原 %d），边 %d 条",
-                       max_nodes, n_before, igraph::ecount(g)))
     }
+    # 3. 按边权保留最强的 max_edges 条，再丢掉因此变成孤立的节点
+    if (igraph::ecount(g) > max_edges) {
+      w <- igraph::E(g)$weight
+      strong <- order(w, decreasing = TRUE)[seq_len(max_edges)]
+      g <- igraph::subgraph.edges(g, strong, delete.vertices = TRUE)
+    }
+    log_info(sprintf("网络图：%d 节点 / %d 边 → 过滤后 %d 节点 / %d 边",
+                     n_before, e_before, igraph::vcount(g), igraph::ecount(g)))
     if (igraph::vcount(g) < 2L || igraph::ecount(g) == 0L) {
       status$plot_error <- "过滤后网络为空，跳过绘图"
       log_warn(status$plot_error)
@@ -358,10 +373,10 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
         title = sprintf("%s network - %s",
                         if (identical(method, "string_ppi")) "STRING PPI" else "Co-expression (FALLBACK)",
                         cfg$dataset_id),
-        subtitle = sprintf(paste0("%d nodes / %d edges shown (largest component, top %d by degree); ",
-                                  "node colour = Louvain module, size = degree, ",
-                                  "edge opacity = interaction confidence"),
-                           igraph::vcount(g), igraph::ecount(g), max_nodes),
+        subtitle = sprintf(paste0("%d nodes / %d edges shown (largest component, top %d nodes by degree, ",
+                                  "then the %d strongest edges); node colour = Louvain module, ",
+                                  "size = degree, edge opacity = interaction confidence"),
+                           igraph::vcount(g), igraph::ecount(g), max_nodes, max_edges),
         x = NULL, y = NULL) +
       ggplot2::coord_fixed() +
       ggplot2::theme_void(base_size = 10) +
@@ -383,8 +398,9 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
       status$plot_modules <- n_comm
       status$plot_filtered <- igraph::vcount(g) < igraph::vcount(g_full)
       status$plot_note <- sprintf(
-        "图为可读性做过过滤：最大连通分量 + degree 前 %d 个节点。完整网络见 ppi_edges.csv（%d 节点 %d 边）。",
-        max_nodes, igraph::vcount(g_full), igraph::ecount(g_full))
+        paste0("图为可读性做过过滤：最大连通分量 → degree 前 %d 个节点 → 最强的 %d 条边。",
+               "完整网络见 ppi_edges.csv（%d 节点 %d 边）。"),
+        max_nodes, max_edges, igraph::vcount(g_full), igraph::ecount(g_full))
       log_info(sprintf("已生成 PPI_network.png（%d 节点 / %d 边 / %d 个模块）",
                        igraph::vcount(g), igraph::ecount(g), n_comm))
     } else {
