@@ -397,8 +397,16 @@ run_01_download_clean <- function(cfg) {
     if (!requireNamespace("impute", quietly = TRUE)) {
       stop(sprintf("存在 %d 个缺失值但 impute 包不可用，无法按 spec 做 KNN 填补", n_missing))
     }
-    log_info(sprintf("KNN 填补 %d 个缺失值 (%.2f%%)，k=%d",
-                     n_missing, 100 * n_missing / length(expr), cfg$analysis$impute_k))
+    # **必须在调用前设种子。** impute.knn 内部用 sample() 处理并列近邻，
+    # 不固定种子的话每次运行的插补值都略有不同 —— 下游 t 统计量、GSEA 排序、
+    # 富集 p 值全部跟着变。实测未设种子时两轮 CI 的 GSEA 显著条目数
+    # 是 1059 和 1110，看起来像"随机波动"，实际是插补不可复现。
+    # 种子紧挨着随机调用设置，这样它与上游消耗了多少随机数无关。
+    seed <- cfg$analysis$seed
+    if (!is.null(seed)) set.seed(seed)
+    log_info(sprintf("KNN 填补 %d 个缺失值 (%.2f%%)，k=%d，seed=%s",
+                     n_missing, 100 * n_missing / length(expr), cfg$analysis$impute_k,
+                     if (is.null(seed)) "未设置（结果不可复现）" else as.character(seed)))
     expr <- impute::impute.knn(expr, k = cfg$analysis$impute_k)$data
   } else {
     log_info("无缺失值，跳过 KNN 填补")

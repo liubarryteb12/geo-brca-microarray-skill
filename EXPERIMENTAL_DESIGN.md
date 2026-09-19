@@ -451,11 +451,24 @@ tumor-vs-normal 的差异基因表里，**分不清多少来自恶性转化、�
 - 探针 → 基因 symbol：多级降级映射（§2.6）；覆盖率与基因数**都不够**时才退回探针层面
 - 同一 symbol 的多探针取方差最大者
 - 过滤全 NA / 无变异特征（有效值 < 2 或标准差为 0）
-- KNN 填补缺失（`impute::impute.knn`, k=10）
+- KNN 填补缺失（`impute::impute.knn`, k=10），**调用前 `set.seed(cfg$analysis$seed)`**
 - quantile 标准化
 - **一致性校验**：表达矩阵列名必须与 `group.csv` 的样本行完全对应，否则报错
 - 输出：`data/expr_raw.rds`、`data/expr_clean.rds`、`data/expr_clean.csv`、
   `data/clean_stats.json`、`data/feature_mode.json`
+
+#### 3.2.1 随机种子（可复现性）
+
+`impute.knn` 内部用 `sample()` 处理并列近邻。**不固定种子时每次运行的插补值都略有不同**，
+下游的 t 统计量、GSEA 排序、富集 p 值会全部跟着变。
+
+实测（未设种子时）：连续两轮 CI 的 GSEA 显著 GO 条目数是 **1059** 和 **1110** ——
+初看像蒙特卡洛的随机波动，实际根因在插补，而不在 GSEA。
+（`gseGO`/`gseKEGG` 的 `seed=123` 确实生效了，日志里没有退回警告，
+但它管不住上游已经分叉的输入。）
+
+因此 `config.yml` 的 `analysis.seed`（默认 `20260919`）**不可删除**，
+且种子紧挨着 `impute.knn` 调用设置，与上游消耗了多少随机数无关。
 
 ### 3.3 质控（`02_qc_pca_correlation.R`）
 
