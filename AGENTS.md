@@ -182,28 +182,43 @@
 
 ## 验证
 
+**R 代码只在云端跑 —— 开发机不装 R 是设计，不是障碍。**
+本地能跑的都是静态检查；真正的执行、出图、验收在 GitHub Actions。
+所以改完 R 代码的循环是：**本地静态检查 → 推 → 看日志 → 改 → 再推**。
+
 ```bash
-# R 语法与括号配平 + 副标题折行 + 配置字段引用一致性（不需要 R 运行时）
+# —— 本地（都不需要 R 运行时）——
+
+# R 语法与括号配平 + 副标题折行 + 配置字段引用一致性
 node tools/check_r_syntax.mjs
 
 # GEO 数据集合规性（门禁 + 真实分组取值）
 node scripts/find_dataset.mjs check GSE42568
 
-# 样本相关结构（是否分组与全局表达位移混杂，不需要 R）
+# 样本相关结构（是否分组与全局表达位移混杂）
 node tools/check_sample_structure.mjs GSE42568
 
-# 有没有随访终点、有多少个事件、EPV 换算出的签名基因数上限（不需要 R）
+# 有没有随访终点、有多少个事件、EPV 换算出的签名基因数上限
 node tools/check_clinical_endpoints.mjs GSE42568
 
-# 图不是空白的（独立解码 PNG 像素，不需要 R）；参数是**数据集目录**
+# 图不是空白的（独立解码 PNG 像素）；参数是**数据集目录**
 node tools/check_figures.mjs results/GSE42568
 
-# 配色仍然"一个颜色一个含义"（解析 common.R 的实际色值重算，不需要 R）
+# 配色仍然"一个颜色一个含义"（解析 common.R 的实际色值重算）
 node tools/check_palette.mjs
 
-# 端到端（需要 R + Bioconductor）。没有默认配置，必须显式指定。
-Rscript scripts/main_analysis.R --config assets/config.GSE42568.yml
+# —— 云端（真正的端到端）——
+gh workflow run geo_analysis.yml -f dataset=GSE42568
+gh run watch --repo liubarryteb12/geo-brca-microarray-skill
 ```
+
+**本地静态检查不等于能跑通。** `check_r_syntax.mjs` 自己的输出就写着这句话。
+它挡得住语法错和漏折行的副标题，挡不住"参数传错类型"和"返回的是 list 不是
+向量"—— 这两类都实测发生过，只有在云端才暴露。
+
+**每轮只解决日志明确指出的那件事。** 不要凭"看起来可能有问题"改代码：
+曾把浮点末位漂移误判成 commit 引起的，白改一轮（见规则 12）。
+`references/troubleshooting.md` 有完整的云端循环与排查表。
 
 CI 在 GitHub Actions 上跑 `geo_analysis.yml`，`timeout-minutes: 30` 是硬上限。
 **实测（run 35438543496）**：Install R packages 66s（增量）、Run analysis

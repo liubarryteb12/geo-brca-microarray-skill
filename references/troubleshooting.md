@@ -133,7 +133,55 @@ STRINGdb 首次运行要下载约 100 MB 网络文件，超时或网络受限时
 spec 要求 KNN 填补。若存在缺失值而 `impute` 未安装，脚本会直接 `stop()` 而不是
 静默跳过 —— 静默跳过会让下游统计建立在缺失值上。装上它，或确认数据本身无缺失。
 
-## 本地没有 R
+## 本地没有 R —— 这是正常状态，不是缺陷
 
-`find_dataset.mjs` 和 `tools/check_r_syntax.mjs` 都不需要 R。完整流水线需要 R 4.3+ 与
-Bioconductor，本地跑不了时直接推送到 GitHub Actions。
+**本仓库的 R 代码只在云端跑。** 开发机不装 R 是设计，不是待解决的障碍 ——
+所以"本地没验证过"不该被当成风险反复声明，它是默认前提。
+
+分工是明确的：
+
+| 在哪 | 能查什么 |
+|---|---|
+| 本地（不需要 R） | `check_r_syntax.mjs`（语法/括号/副标题折行/配置字段引用）、`check_palette.mjs`、`check_figures.mjs`、`find_dataset.mjs`、`check_sample_structure.mjs`、`check_clinical_endpoints.mjs` |
+| 云端（GitHub Actions） | 真正的执行：装包、下数据、跑分析、出图、验收 |
+
+**注意本地这几项都是静态的**：`check_r_syntax.mjs` 自己的输出就写着
+"这不等于 R 能跑通，仍需真实执行验证"。它挡得住语法错和漏折行的副标题，
+挡不住"参数传错类型"和"返回的是 list 不是向量"。
+
+### 云端循环
+
+```bash
+# 1. 改代码，本地只跑静态检查
+node tools/check_r_syntax.mjs
+
+# 2. 推，然后盯
+git push origin main
+gh run watch --repo liubarryteb12/geo-brca-microarray-skill
+
+# 3. 红了就抓日志（jq 表达式不支持 .Substring()，用 ConvertFrom-Json）
+gh run view <run-id> --log --job <job-id> | Out-File -FilePath $env:TEMP\ci.log -Encoding utf8
+Get-Content $env:TEMP\ci.log | Select-String -Pattern "ERROR|步骤 0"
+
+# 4. 改完回到第 1 步
+```
+
+**每一轮只解决日志里明确指出的那件事。** 实测四个真 bug 都是这样一轮一个
+逼出来的（`weights.x` 参数 → `corFnc` 是字符串 → 映射返回 list →
+`as.list()` 的字段被拿去做子集）。**不要凭"看起来可能有问题"改代码** ——
+这个仓库吃过一次亏：曾把浮点末位漂移误判成 commit 引起的，白改一轮。
+
+### 加错误上下文比加检查更值钱
+
+原始报错 `argument lengths differ` 什么都没说 —— 不说哪个函数、哪个对象。
+包一层阶段标签后变成 `探针->基因映射长度 6 != 探针数 54627`，
+那个 `6` 就是 list 的元素个数，一眼看出是类型用错。
+
+**所以脚本里每个可能失败的阶段都要带名字**（见 `07_lasso.R` 的 `stage()` 包装）。
+一次投入，之后每一轮 CI 都少猜一次。
+
+### 可选步骤失败不会让 job 变红
+
+06/07 是 `required = FALSE`。**实测第一次跑 WGCNA 崩了，两个 job 全绿。**
+所以不能只看 job 颜色：查 `results/<GSE>/wgcna_status.json` /
+`lasso_status.json` 的 `status`，以及日志里的 `[FAIL]` 行。
