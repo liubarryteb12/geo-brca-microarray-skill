@@ -10,12 +10,15 @@
 | `物种不合规` | 非人源 | 换数据集 |
 | `样本量不合规` | ≥ 10 例 | 换数据集，或按 GSM 筛选子集另存为新的 GSE |
 | `分组失败` / `分组歧义` | `group_field` / `group_values` 与数据不匹配 | 用 `node scripts/find_dataset.mjs samples GSEXXXXX` 看样本真实字段值 |
+| `pairs[[k]] 必须...` | `paired: true` 但 `pairs` 里有样本不属于本数据集 / 重复 / 不成对 | 逐对核对 GSM，每对必须一例 numerator 一例 denominator |
+| 样本未配对 | `paired: true` 但有样本没出现在 `pairs` 里 | 补齐 `pairs`，或改 `paired: false` |
 
 排查分组问题：
 
 ```bash
-node scripts/find_dataset.mjs check GSE92252   # 会列出识别到的候选组
-node scripts/find_dataset.mjs samples GSE92252 # 每个样本的完整 characteristics
+node scripts/find_dataset.mjs check GSE64790   # 会列出识别到的候选组
+node scripts/find_dataset.mjs samples GSE64790 # 每个样本的完整 characteristics
+node tools/check_sample_structure.mjs GSE64790 # 分组是否与批次效应混杂
 ```
 
 ## GitHub Actions 在 20 分钟被杀掉

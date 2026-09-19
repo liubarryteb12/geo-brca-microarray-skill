@@ -1,6 +1,6 @@
 ---
 name: geo-brca-microarray-skill
-description: Run an end-to-end GEO gene-expression microarray data-mining pipeline for human breast cancer with fewer than 10 samples - download and clean, QC, PCA, sample correlation, limma differential expression, clustered heatmap, GO/KEGG enrichment, and STRING PPI - and ship it as a GitHub Actions workflow that uploads results as an artifact. Use when the user asks for GEO data mining, a GEO/GSE microarray analysis, a breast cancer expression analysis, a small-sample limma DEG workflow, GO/KEGG enrichment on GEO data, a GitHub Actions bioinformatics pipeline, or asks to reproduce or extend GSE92252.
+description: Run an end-to-end GEO gene-expression microarray data-mining pipeline for human breast cancer with fewer than 10 samples - download and clean, QC, PCA, sample correlation, limma differential expression, clustered heatmap, GO/KEGG enrichment, and STRING PPI - and ship it as a GitHub Actions workflow that uploads results as an artifact. Use when the user asks for GEO data mining, a GEO/GSE microarray analysis, a breast cancer expression analysis, a small-sample limma DEG workflow, GO/KEGG enrichment on GEO data, a GitHub Actions bioinformatics pipeline, or asks to reproduce or extend GSE64790.
 license: MIT
 compatibility: R 4.3+ with Bioconductor (GEOquery, limma, clusterProfiler, org.Hs.eg.db, enrichplot, STRINGdb, pheatmap, impute, igraph). Node 18+ for the dataset pre-flight tool. Needs outbound HTTPS to NCBI GEO, STRINGdb and KEGG. Designed to fit GitHub Actions ubuntu-latest in under 20 minutes.
 metadata:
@@ -10,18 +10,18 @@ metadata:
 
 # /geo-brca-microarray-skill
 
-GEO 乳腺癌小样本芯片数据挖掘流水线。默认数据集 **GSE92252**（人源、NimbleGen 单色芯片、
-9 例 = 6 肿瘤 vs 3 正常乳腺组织）。
+GEO 乳腺癌小样本芯片数据挖掘流水线。默认数据集 **GSE64790**（人源、Agilent lncRNA 芯片
+GPL19612、6 例 = 3 TNBC vs 3 配对正常乳腺组织）。
 
 完整实验设计见 [`EXPERIMENTAL_DESIGN.md`](EXPERIMENTAL_DESIGN.md) —— **改任何东西之前先读它**，
-尤其是 §2.2 关于 n=9 的统计功效边界。
+尤其是 §2.2 关于 n=6 的统计功效边界（**没有任何基因能通过 FDR**）和 §2.10 的降级路径。
 
 ## 触发场景
 
 - 「用 GEO 数据做乳腺癌差异表达分析」「GSE 芯片数据挖掘」
 - 「小样本（<10）芯片怎么做 limma + GO/KEGG」
 - 「搭一个 GitHub Actions 生信流水线，跑完上传 artifact」
-- 「复现/扩展 GSE92252」
+- 「复现/扩展 GSE64790」
 - 任何要求「清洗 + QC + PCA + 相关性 + 差异基因 + 热图 + 富集 + PPI」全流程的任务
 
 ## 工作流
@@ -29,7 +29,7 @@ GEO 乳腺癌小样本芯片数据挖掘流水线。默认数据集 **GSE92252**
 ### 1. 先验证数据集，不要相信标题
 
 ```bash
-node scripts/find_dataset.mjs check GSE92252
+node scripts/find_dataset.mjs check GSE64790
 node scripts/find_dataset.mjs search --disease "breast cancer" --max-samples 10
 ```
 
@@ -40,11 +40,15 @@ GSE197894 被描述为"表达谱芯片"，实际 `gdstype` 是 RNA-seq，样本 
 然后查样本相关结构，确认分组没有被批次效应混杂：
 
 ```bash
-node tools/check_sample_structure.mjs GSE92252
+node tools/check_sample_structure.mjs GSE64790
 ```
 
 这一步同样是"先花 10 秒，省掉 15 分钟"：等 R 流水线跑完才发现分组与一个全局表达位移
-共线，DEG 结果就已经不可用了。GSE92252 正是在这里被查出问题的（见 Gotchas 第一条）。
+共线，DEG 结果就已经不可用了。第一版用的 GSE92252 正是在这里被查出问题并换掉的
+（见 Gotchas 第一条）。
+
+**还要查平台注释列有没有基因 symbol。** 形式条件全过的数据集可能根本没有基因注释
+（GSE112848 的平台只有 5 列，无任何 symbol/accession），那样富集和 PPI 会全部跳过。
 
 ### 2. 改配置，不改代码
 
@@ -77,11 +81,18 @@ gh workflow run geo_analysis.yml
   里就存在（原始强度簇内 0.986 / 簇间 0.602），不是 log2 或 quantile 引入的。
   后果：tumor-vs-normal 的差异分不清多少来自恶性转化、多少来自这个位移。
   `results/qc_summary.json` 的 `group_confounded_with_global_shift` 为 `true` 时，
-  结论只能按假设生成写，不能按肿瘤特异事件写。
+  结论只能按假设生成写，不能按肿瘤特异事件写。**换数据集时用
+  `tools/check_sample_structure.mjs` 提前拦掉。** 换到 GSE64790 后这三项是
+  0.9082 / 0.894 / **false**。
 - **`min Pearson < 阈值 即离群` 这条规则会整体失效。** 它假设所有样本是同一组织的
   技术重复；一旦分组自带全局位移，**每个**样本都会与另一组的样本低相关，
   于是报出"9 个样本全是离群"。这时要看 `mean_within_group_pearson` vs
   `mean_between_group_pearson`，而不是离群样本个数。
+- **注释覆盖率低不等于不能做基因层面分析。** lncRNA / 外显子芯片上大部分探针
+  **本来就是非编码的**，覆盖率天然上不去：GPL19612 只有 33.3% 的探针带 `GeneSymbol`，
+  但那是 **16,487 个基因**，做 GO/KEGG/STRING 绰绰有余。判据要**覆盖率与基因数取「或」**
+  （`< 50%` **且** `< 5000 个`才退回探针模式），只卡覆盖率会把这类平台误判成探针模式，
+  下游全部跳过。
 - **不要用 `STRINGdb::get_interactions()`。** 实测 v12.0 上 1321/1423 个基因映射成功、
   links 文件也下好了，但它**返回 0 行且不报错**，流程被静默推进到共表达回退。
   本流水线直接读 `protein.links` 文件自己取子图。
@@ -91,15 +102,24 @@ gh workflow run geo_analysis.yml
 - **先落状态 JSON，再出图。** 出图是最后一步，画不出来时如果状态还没写，
   就会同时丢掉图和状态文件（本仓库踩过：`PPI_network.png` 和 `ppi_status.json`
   一起消失，只剩 `hub_genes.csv`）。
+- **验收检查要能处理两种状态文件形状。** `enrichment_status.json` 是
+  `{"go": {...}, "kegg": {...}}`，而 `ppi_status.json` 把 `status` 放在**顶层**。
+  无条件写 `s[[key]]$status` 会在后者上抛 `$ operator is invalid for atomic vectors`，
+  而且是在**所有分析步骤都成功之后**才崩，看起来像流程失败。
+- **`<<-` 在 `tryCatch` 表达式里会跳过当前帧。** 表达式在调用函数的帧里求值，
+  `<<-` 从**外层**环境开始找，于是本地变量没被赋值、外层环境被悄悄创建了一个同名变量。
+  本仓库踩过：配对设计实际生效（残差 df = 2），摘要却报 `paired: false`。
+  要在 `tryCatch` 里改本地变量，就把赋值挪到 `tryCatch` 外面。
 - **`GES` 不是真实的 GEO 前缀。** 正确的是 `GSE`（GEO Series）。用户说 GES 时按 GSE 处理。
 - **分组模式不要凭直觉写。** GSE92252 的 `tissue` 字段里，HER2− 肿瘤写的是
   `... HER2-negative breast tumor`，而 HER2+ 肿瘤写的是 `... HER2-positive tumor`
   —— **没有 "breast"**。用 `"breast tumor"` 作模式会漏掉 3 个样本，第 00 步直接报
-  「分组失败」。判别子串要用 `"tumor"`。改任何数据集前先跑
+  「分组失败」。判别子串要用 `"tumor"`。GSE64790 则是 `TNBC  tissue`（**两个空格**）
+  与 `matched normal breast tissues`。改任何数据集前先跑
   `node scripts/find_dataset.mjs samples GSEXXXXX` 看真实取值。
 - **样本量 < 10 且要两组对比，几乎排除了所有组织样本数据集。** 人源乳腺癌芯片里
-  n<10 的绝大多数是细胞系加药实验，没有"肿瘤 vs 正常"两组。GSE92252 是少数例外
-  （6 肿瘤 + 3 正常）。若用户给的数据集是细胞系，分组字段应改为 treatment/control，
+  n<10 的绝大多数是细胞系加药实验，没有"肿瘤 vs 正常"两组。约 200 个候选里只有
+  4 个是真正的组织两组设计。若用户给的数据集是细胞系，分组字段应改为 treatment/control，
   而不是硬套 tumor/normal。
 - **20 分钟不是宽裕的预算。** `clusterProfiler` + `STRINGdb` + `enrichplot` +
   `org.Hs.eg.db` 从源码编译要 25–40 分钟。workflow 用
@@ -111,15 +131,20 @@ gh workflow run geo_analysis.yml
 - **STRINGdb 首次运行要下载约 100 MB 网络文件。** 失败时本流水线回退到基于表达谱的
   **共表达网络**（Spearman |r| ≥ 0.9），`ppi_status.json` 会标记 `coexpression_fallback`。
   共表达不是物理互作，**不得当作 PPI 证据引用**。
-- **显著 DEG 可能少于 50 个。** 热图会自动降级（全部显著基因 → top 20 by P），
-  `enrichment_status.json` 的 `heatmap_mode` 会记录实际用了什么。这是 n=9 的正常表现，
-  不是 bug。
+- **n<10 时几乎不可能有基因通过 FDR，这不是 bug。** GSE64790（3 vs 3 配对）实测：
+  1,456 个基因 `raw P < 0.05` 且 `|log2FC| > 1`，但最小 `adj.P` 是 **0.394** ——
+  在 16,487 个基因上做 BH，最小 raw P 要到 ~3e-6 才够，实测最好只有 6e-5。
+  富集与 PPI 因此走 `ranked_fallback`（raw P 前 500 个），`deg_mode` 会写进两个
+  status JSON。**此时只能说"在最显著的 N 个基因里富集到……"**，
+  不能说"显著差异基因富集到……"。这是 spec 里"样本 < 10"的固有限制。
 - **背景集选择会改变富集结果。** `enrichment.universe: genome`（默认，spec 要求）
   与 `detected`（仅实测基因）结果不同，报告中必须写明用了哪个。
 - **不要为 tumor/normal 差异编造机制解释。** 肿瘤 vs 全组织正常的差异主要来自
   组织成分（上皮/脂肪/基质/免疫），不是肿瘤特异驱动事件。见设计文档 §2.2。
-- **GSE92252 不做配对分析。** 正常组 N39/N40/N54 中只有 T40/T54 有对应肿瘤样本，
-  3 对里只有 2 对成立。`paired: false` 是有依据的，不要"优化"成配对。
+- **配对关系要显式声明，不要解析标题后缀。** GSE64790 是"同一患者肿瘤 + 正常组织"
+  配对设计（年龄 72/72、41/41、52/52），`paired: true` 且 `pairs` 在 config 里逐对写死。
+  猜后缀的做法换数据集就失效，而且**猜错了不会报错**，只会让配对分析静默变错。
+  第 00 步会校验：每个 GSM 只出现一次、每对一例 numerator 一例 denominator、无落单样本。
 
 ## 文件结构
 

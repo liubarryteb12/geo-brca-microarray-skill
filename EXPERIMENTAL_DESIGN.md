@@ -1,27 +1,72 @@
 # GEO 乳腺癌小样本芯片数据挖掘 — 实验设计
 
-> 数据源：**GSE92252** ｜ 平台：**GPL16025**（NimbleGen Homo sapiens Expression Array [100718_HG18_opt_expr]，45,033 探针）
-> 物种：*Homo sapiens* ｜ 类型：Expression profiling by array ｜ 样本量：**9**
+> 数据源：**GSE64790** ｜ 平台：**GPL19612**（Agilent-062918 OE Human lncRNA Microarray V4.0，111,088 探针）
+> 物种：*Homo sapiens* ｜ 类型：Expression profiling by array ｜ 样本量：**6**（3 例 TNBC + 3 例配对正常）
 > 运行环境：GitHub Actions `ubuntu-latest` ｜ 语言：R / Bioconductor
 
 ---
 
-## 1. 为什么是 GSE92252
+## 1. 为什么是 GSE64790
 
 ### 1.1 合规性核验（来自 GEO 元数据，非推测）
 
-| 约束 | 要求 | GSE92252 实测 | 结论 |
+| 约束 | 要求 | GSE64790 实测 | 结论 |
 | --- | --- | --- | --- |
 | 物种 | Homo sapiens | `Homo sapiens` (taxid 9606) | ✅ |
-| 数据类型 | 基因芯片 | `Expression profiling by array` / GPL16025 单色 NimbleGen 芯片 | ✅ |
-| 疾病 | 乳腺癌 | AR+/ER−/PR− 乳腺癌组织 vs 正常乳腺组织 | ✅ |
-| 样本量 | < 10 | **9**（6 肿瘤 + 3 正常） | ✅ |
-| 分组可比 | 需两组 | tumor 6 vs normal 3，同一平台同一批次 | ✅ |
-| 本地算力 | 轻量 | 9×45K 矩阵，峰值内存 < 1 GB，全程 < 10 min | ✅ |
+| 数据类型 | 基因芯片 | `Expression profiling by array` / GPL19612 | ✅ |
+| 疾病 | 乳腺癌 | 三阴性乳腺癌（TNBC）组织 vs 配对正常乳腺组织 | ✅ |
+| 样本量 | < 10 | **6**（3 肿瘤 + 3 正常） | ✅ |
+| 每组样本数 | ≥ 3 | 3 vs 3 | ✅ |
+| 分组可比 | 需两组 | 同平台、同批次，全部 6 例两两 r = 0.914–0.967 | ✅ |
+| 本地算力 | 轻量 | 6×65K 矩阵，全程约 106 s | ✅ |
 
-### 1.2 被否决的候选（这是本设计最关键的一步）
+### 1.2 候选筛选过程（这是本设计最关键的一步）
 
-最初提出的四个数据集**全部不合规**，若直接使用，流水线会在第一步 `validate_inputs` 就终止：
+**"样本 < 10 + 乳腺癌 + 人源 + 芯片"这四个条件本身很容易满足，难的是找到一个
+分组没有被批次效应混杂的数据集。** 第一版选的 GSE92252 满足全部形式条件，
+实跑后才发现三个分组恰好是三个表达批次（簇间 r 低到 0.11），
+DEG 结果无法解释 —— 详见 §2.9。
+
+所以这次先写筛选器，对 GEO 中所有"人源 + 乳腺癌 + 芯片 + 4 ≤ n ≤ 9"的 series
+逐个拉 GSM 元数据，要求：恰好两组、每组 ≥ 3 例、组织样本（排除细胞系）、
+无处理/转染。约 200 个候选里只剩 **4 个**是真正的组织样本两组设计：
+
+| 数据集 | 分组 | 平台 | 实测结论 |
+| --- | --- | --- | --- |
+| **GSE64790** | TNBC 3 vs 配对正常 3 | GPL19612 | ✅ **采用**。6 例两两 r = 0.914–0.967，单一相关簇 |
+| GSE112848 | DCIS 3 vs 良性组织 3 | GPL16956 | ❌ 平台是 Arraystar lncRNA V3，注释**只有 5 列**（ID/类型/BUILD/序列/SPOT_ID），**没有任何基因注释**，无法做富集 |
+| GSE73613 | 浸润性癌 2 vs 正常 2 | GPL570 | ❌ 每组只有 2 例，达不到"每组 ≥ 3"的硬门禁 |
+| GSE207304 | 乳腺癌细胞外泌体 3 vs 正常 3 | GPL26963 | ❌ 外泌体，非组织 |
+
+> 教训一：**形式合规 ≠ 可用。** 类型、物种、样本量都能过门禁，但如果分组与批次
+> 共线，产出的 DEG 表就是不可解释的。选数据集时必须先查相关结构，
+> `tools/check_sample_structure.mjs` 就是干这个的。
+>
+> 教训二：**平台注释要先查。** GSE112848 看着完美（3 vs 3、组织、配对），
+> 但 GPL16956 根本没有基因注释列，流水线会退回探针模式，GO/KEGG/STRING 全部跳过。
+
+### 1.3 样本构成
+
+| GSM | 标题 | 分组 | 患者 | 年龄 |
+| --- | --- | --- | --- | --- |
+| GSM1580581 | TNBC tissue 1 | tumor | pair01 | 72y |
+| GSM1580582 | TNBC tissue 2 | tumor | pair02 | 41y |
+| GSM1580583 | TNBC tissue 3 | tumor | pair03 | 52y |
+| GSM1580584 | matched normal breast tissues 1 | normal | pair01 | 72y |
+| GSM1580585 | matched normal breast tissues 2 | normal | pair02 | 41y |
+| GSM1580586 | matched normal breast tissues 3 | normal | pair03 | 52y |
+
+配对依据是**年龄一一对应**（72/72、41/41、52/52），且提交者在 `Series_overall_design`
+里明确写了 "matched histological normal breast tissues"。
+配对关系在 `assets/config.yml` 里**显式声明**，不靠解析标题后缀。
+
+分组依据 `characteristics_ch1` 的 `tissue:` 字段：肿瘤含 `TNBC  tissue`，
+正常含 `matched normal breast tissues`。
+
+### 1.4 被否决的初始候选
+
+最初提出的四个数据集**全部不合规**，若直接使用，流水线会在第一步
+`validate_inputs` 就终止：
 
 | 数据集 | 物种 | 数据类型 | 样本数 | 否决原因 |
 | --- | --- | --- | --- | --- |
@@ -34,94 +79,119 @@
 > `Expression profiling by high throughput sequencing`。**分组与类型必须以 GEO 的
 > `gdstype` / `GPL` 字段为准，不能采信标题或二手描述。**
 
-### 1.3 样本构成
-
-| GSM | 标题 | 分组 | 特征 |
-| --- | --- | --- | --- |
-| GSM2424491 | BreastCancerTissue-HER2negative-B13 | tumor | HER2− |
-| GSM2424492 | BreastCancerTissue-HER2negative-B29 | tumor | HER2− |
-| GSM2424493 | BreastCancerTissue-HER2negative-B32 | tumor | HER2− |
-| GSM2424494 | BreastCancerTissue-HER2positive-T32 | tumor | HER2+ |
-| GSM2424495 | BreastCancerTissue-HER2positive-T40 | tumor | HER2+ |
-| GSM2424496 | BreastCancerTissue-HER2positive-T54 | tumor | HER2+ |
-| GSM2424497 | NormalBreastTissue-Normal-N39 | normal | 正常乳腺 |
-| GSM2424498 | NormalBreastTissue-Normal-N40 | normal | 正常乳腺 |
-| GSM2424499 | NormalBreastTissue-Normal-N54 | normal | 正常乳腺 |
-
-分组依据 `characteristics_ch1` 的 `tissue:` 字段：肿瘤样本含 `breast tumor`，正常样本含
-`Normal breast tissue`。全部 9 例均为女性。
-
 ---
 
 ## 2. 设计决策与理由
 
-### 2.1 主对比：tumor (6) vs normal (3)，非配对
+### 2.1 主对比：tumor (3) vs normal (3)，**配对**
 
 `contrast = ["tumor", "normal"]`，limma 中 tumor 为分子、normal 为分母，
 即 **log2FC > 0 表示肿瘤中上调**。
 
-**为什么不做配对分析**：提交者的实验记录写明正常组为 N39/N40/N54，肿瘤组为
-T39/T40/T54，但实际入库的肿瘤样本是 **T32**/T40/T54。仅 T40、T54 能与正常样本按患者
-编号对应，N39 无配对肿瘤样本。3 对中只有 2 对成立，配对设计不成立，因此
-`paired: false`。
+该数据集是"同一患者的肿瘤 + 正常组织"配对设计，所以做配对分析：
+设计矩阵 `~ 0 + groups + patient`，患者作为阻断因子。
+
+**为什么必须配对**：患者间差异往往比肿瘤/正常差异还大。不阻断的话，这部分方差
+全部落进残差，真正的信号会被埋掉。配对后残差 df = 6 − 4 = **2**。
+
+配对关系显式写在 `assets/config.yml` 的 `pairs` 里，`00_validate_inputs.R` 会校验：
+每个 GSM 只出现一次、每对必须一例 tumor 一例 normal、不允许有样本落单。
+`03_deg.R` 若发现配对设计不可用（秩不足等）会**自动退回非配对**并把原因写进
+`deg_summary.json` 的 `paired_fallback_reason`，绝不让它拖垮整条流水线。
 
 ### 2.2 统计功效：这是本设计必须写在最前面的限制
 
-6 vs 3 是一个**极小样本设计**，必须明确它意味着什么：
+3 vs 3 配对（残差 df = 2）是一个**极小样本设计**，实跑结果把它的边界暴露得非常清楚：
 
-- limma 的 `eBayes` 经验贝叶斯收缩依赖足够多的基因-样本组合来稳定方差估计。
-  n=9 时 moderation 仍然有效（比普通 t 检验强），但**自由度极低**。
-- 在 `adj.P < 0.05` 且 `|log2FC| > 1` 下，本设计**只能检出效应量很大的基因**。
-  这对"肿瘤 vs 正常乳腺组织"是可行的 —— 两者在组织构成上差异巨大，效应量本就很大。
-- **但这也正是最大的解释陷阱**：肿瘤组织与正常乳腺组织的差异，绝大部分来自
-  **组织成分差异**（上皮比例、脂肪、基质、浸润免疫细胞），而非肿瘤特异性驱动事件。
-  因此 DEG 列表会强烈富集于细胞外基质、免疫应答、脂肪代谢等通路。
+| 指标 | GSE64790 实测 |
+| --- | --- |
+| 检验基因数 | 16,487 |
+| `raw P < 0.05` 且 `\|log2FC\| > 1` | **1,456** 个 |
+| `raw P < 0.001` | 36 个 |
+| 最小 `raw P` | 6.0e-5（KRT14） |
+| 最小 `adj.P` | **0.394** |
+| `adj.P < 0.05` 且 `\|log2FC\| > 1` | **0 个** |
+
+**信号是真实的**：1,456 个基因在 raw P < 0.05 水平上显著，远超随机预期的 5%；
+top 命中（KRT14、SPARCL1、TAGLN、SDPR、PPARG、PGR）也全是教科书级的
+肿瘤 vs 正常乳腺组织基因。**但全基因组 BH 校正过不去** ——
+在 16,487 个基因上做 BH，最小的 raw P 需要达到约 3e-6 才能得到 adj.P < 0.05，
+而实测最小值是 6e-5，差了 20 倍。
+
+> **这是"样本 < 10"这个要求本身的固有限制，不是分析错误。**
+> 任何 n < 10 的乳腺癌全基因组芯片数据集都会撞上同一堵墙。
+
+因此下游（富集、PPI）走**明确标注的降级路径**，见 §2.10。
+
+**解释陷阱**：肿瘤组织与正常乳腺组织的差异，绝大部分来自
+**组织成分差异**（上皮比例、脂肪、基质、浸润免疫细胞），而非肿瘤特异性驱动事件。
 
 > **判读边界**：本流水线产出的是**探索性假设**，不是肿瘤发生机制结论。
 > 任何"某基因驱动乳腺癌"的表述都超出了本设计能支持的范围。
 > 若要区分"肿瘤特异"与"组织成分"，需要 LCM 显微切割数据或去卷积（如 CIBERSORTx）。
 
-### 2.3 为什么不做 HER2+ vs HER2− 的次级对比
+### 2.3 为什么不做亚型次级对比
 
-tumor 组内部还有 3 HER2+ vs 3 HER2− 的结构，看起来可以做次级对比。**本设计不纳入**：
-每组 n=3 时 limma 无法给出可信的 adj.P，且多重检验校正后几乎不可能有基因通过。
-该对比仅在 `results/deg_table.csv` 中保留 `her2` 注释列供人工查看，不产出独立结论。
+TNBC 组内部只有 3 例，没有可分的次级结构。即使有，每组 n=3 时 limma 也无法给出
+可信的 `adj.P`。次级对比不纳入本设计。
 
 ### 2.4 芯片特有的技术决策
 
 | 问题 | 决策 | 理由 |
 | --- | --- | --- |
-| 单色 vs 双色 | 按单色处理：表达值中位数 > 50 时才补做 log2 | GPL16025 是 NimbleGen 单色芯片，`exprs()` 返回的是 log2 强度而非 ratio |
-| 探针 → 基因 | **三级降级映射**，见 §2.5 | 该平台注释只有 ID / GB_ACC / DESCRIPTION，没有 symbol 列 |
+| 单色 vs 双色 | 按单色处理：表达值中位数 > 50 时才补做 log2 | GPL19612 矩阵已是 log2 尺度（中位数约 5.4，最大 19），实测**不会**触发 log2；若误取 log2 会把信号压平 |
+| 探针 → 基因 | 优先平台注释的 `GeneSymbol` 列，见 §2.5 | GPL19612 有 23 列注释，含 `GeneSymbol` / `GenbankAccession` / `GeneName` |
 | 多探针同基因 | 取**表达方差最大**者 | 比取均值更能保留真实信号，且避免稀释 |
-| 缺失值 | KNN 填补（`impute::impute.knn`, k=10） | 芯片常见；记录填补比例 |
+| 缺失值 | KNN 填补（`impute::impute.knn`, k=10） | 实测 0 个缺失值，仍保留该步 |
 | 标准化 | `limma::normalizeBetweenArrays(method="quantile")` | 跨样本可比；QC 保留 before/after 对照 |
 | 过滤 | 去除全 NA / 无变异特征（有效值 < 2 或标准差为 0） | 这类特征对任何下游统计都无贡献 |
 | 富集背景 | 默认**全基因组**（OrgDb），可切换为实测基因集 | 见 §3.6 |
 
-### 2.5 GPL16025 的注释现实与三级映射
+### 2.5 GPL19612 的注释与映射判据
 
-**这是本项目最容易踩空的地方。** GPL16025 的注释表只有三列：
+GPL19612（Agilent-062918 OE Human lncRNA V4.0）有 111,088 行注释、23 列，
+其中 `GeneSymbol`、`GenbankAccession`、`GB_ACC`、`GeneName` 都可用于映射。
+矩阵里 65,531 个探针，逐列实测覆盖率：
 
-```text
-ID            GB_ACC        DESCRIPTION
-AB000409      AB000409      MAP kinase interacting serine/threonine kinase 1
+| 途径 | 覆盖探针数 | 覆盖率 |
+| --- | --- | --- |
+| `GeneSymbol` | 21,812 | 33.3% |
+| `GenbankAccession` | 22,492 | 34.3% |
+| `GB_ACC` | 19,675 | 30.0% |
+| `GeneName` | 21,650 | 33.0% |
+
+`GeneSymbol` 被选中，最终得到 **16,487 个唯一基因**。
+
+**这里有个判据陷阱，值得单独记下来。** 早期版本只按"注释覆盖率 ≥ 50%"决定
+是否走 symbol 模式。这在 lncRNA / 外显子芯片上必然误判：这类芯片**大部分探针
+本来就是非编码的**，覆盖率天然上不去。GSE64790 只有 33.3%，
+按老判据会被降级成探针模式，GO/KEGG/STRING 全部跳过 —— 而它实际有
+16,487 个带 symbol 的基因，做基因层面分析绰绰有余。
+
+现在的判据是**覆盖率与基因数取「或」**：
+
+```r
+if (best$coverage < MIN_SYMBOL_COVERAGE && n_genes < MIN_SYMBOL_GENES)  # 50% 且 5000 个
 ```
 
-没有 `GENE_SYMBOL`，也没有 GEO curated 注释（`GPL16025.annot.gz` 返回 404）。
-只写「取 symbol 列」的流水线会在下载完成后直接失败。因此 `01_download_clean.R`
-实现多级降级，逐级实测覆盖率后取最好的一条：
+覆盖率低但基因数够 → 照常做基因层面分析；两者都不够才退回探针模式。
+
+### 2.6 多级降级映射
+
+`01_download_clean.R` 实现多级降级，逐级实测覆盖率后取最好的一条：
 
 | 级别 | 途径 | 说明 |
 | --- | --- | --- |
-| 1 | 平台注释的 symbol 列 | 通用路径，GPL16025 上不可用 |
+| 1 | 平台注释的 symbol 列 | 通用路径；GPL19612 走的就是这条（`GeneSymbol`） |
 | 2 | `GB_ACC` → `org.Hs.eg.db` 的 `ACCNUM` | GenBank accession，需剥掉 `.1` 之类的版本后缀 |
 | 3 | `GB_ACC` 中的 RefSeq 子集 → `REFSEQ` | `NM_` / `NR_` / `XM_` / `XR_` 开头的记录 |
 | 4 | `DESCRIPTION` → `GENENAME`（精确） | 注释里存的是**基因全名**而非 symbol，正好对应 GENENAME |
 | 5 | `DESCRIPTION` → `GENENAME`（归一化） | 见下 |
 
-**第 5 级是必需的，不是锦上添花。** 该平台的设计年代是 2007 年前后，DESCRIPTION
-用的是当时的基因名，与今天的 GENENAME 经常只差标点或一个括号补充：
+**这套降级不是为 GPL19612 写的，而是为 GPL16025 那类"注释里没有 symbol"的平台准备的。**
+该平台（NimbleGen 100718_HG18_opt_expr）的注释表只有 `ID / GB_ACC / DESCRIPTION` 三列，
+GEO curated 注释也返回 404，只写「取 symbol 列」的流水线会在下载完成后直接失败。
+它的 DESCRIPTION 用的是 2007 年前后的基因名，与今天的 GENENAME 经常只差标点或括号补充：
 
 | DESCRIPTION（平台） | GENENAME（当前） | 精确 | 归一化 |
 | --- | --- | --- | --- |
@@ -129,23 +199,29 @@ AB000409      AB000409      MAP kinase interacting serine/threonine kinase 1
 | `Rap guanine nucleotide exchange factor (GEF) 2` | `Rap guanine nucleotide exchange factor 2` | ✗ | ✓ |
 | `solute carrier family 15 (oligopeptide transporter), member 1` | `solute carrier family 15 member 1` | ✗ | ✓ |
 
-归一化 = 去括号内容 → 去所有非字母数字 → 转小写。所有级别的覆盖率都会打印到日志，
-最终采用哪条、覆盖率多少，记录在 `data/clean_stats.json` 与 `data/feature_mode.json`。
+归一化 = 去括号内容 → 去所有非字母数字 → 转小写。所有级别的覆盖率与**唯一 symbol 数**
+都会打印到日志，最终采用哪条、覆盖率多少，记录在 `data/clean_stats.json` 与
+`data/feature_mode.json`。
 
-**另外，不要用 GEOquery 的 `getGPL=TRUE` 取这个平台的注释。** 那条路会下载
+**另外，不要用 GEOquery 的 `getGPL=TRUE` 取平台注释。** 对 GPL16025 那条路会下载
 `GPL16025_family.soft.gz`（**182 MB**，含该平台上千个 GSM 的完整记录）并在 R 里解析；
 而 GEO 的 CGI `view=full` 返回**同样完整的 45,033 行**注释表，只有 **2.6 MB**。
 流水线走后者，并缓存为 RDS。
 
-全部途径都达不到 **50% 覆盖率**时，流水线**不报错**，而是退回探针层面：
+**什么时候退回探针层面**：覆盖率与唯一基因数**都不够**时（`< 50%` **且** `< 5000 个`）。
+此时流水线**不报错**，而是退回探针层面：
 QC / PCA / 相关性 / limma DEG / 热图全部照常产出（这些不依赖基因身份），
 但 GO/KEGG 会被跳过，原因写入 `results/enrichment_status.json`；
 STRING 查询也跳过，PPI 直接走共表达回退，原因写入 `results/ppi_status.json`。
 
+> **为什么是「或」而不是只看覆盖率**：lncRNA / 外显子芯片上大部分探针本来就是非编码的，
+> 覆盖率天然上不去。GPL19612 只有 33.3%，但对应 **16,487 个基因**，
+> 做基因层面分析绰绰有余。只卡覆盖率会把这类平台误判成探针模式，下游全部跳过。
+
 **报告结论前必须先看这两个文件** —— 「做了 GO 富集」和「因为映射不到 symbol 所以没做」
 是两个完全不同的结论。
 
-### 2.6 为什么不用 spec 里写的 R 4.3.0
+### 2.7 为什么不用 spec 里写的 R 4.3.0
 
 spec 指定 `r-version: '4.3.0'`。首次实跑证明这个组合在 `ubuntu-latest` 上装不上包，
 job 在 **Install R packages** 一步就失败，`pak::repo_status()` 显示五个 Bioconductor
@@ -169,17 +245,17 @@ job 在 **Install R packages** 一步就失败，`pak::repo_status()` 显示五�
 
 spec 要求单次运行 < 20 分钟。**冷缓存**实测（run 35409119340，成功）：
 
-| 步骤 | 耗时 |
-| --- | --- |
-| Set up job + Checkout | 3 s |
-| Install system dependencies | 13 s |
-| Setup R | 24 s |
-| Cache R library | 1 s |
-| **Install R packages** | **722 s（12 min 2 s）** |
-| Record environment | 8 s |
-| **Run analysis pipeline** | **115 s（1 min 55 s）** |
-| Upload + Summarise + Post | 6 s |
-| **整轮** | **14 min 58 s** |
+| 步骤 | 冷缓存 | 暖缓存（run 35412006459） |
+| --- | --- | --- |
+| Set up job + Checkout | 3 s | 4 s |
+| Install system dependencies | 13 s | 17 s |
+| Setup R | 24 s | 29 s |
+| Cache R library | 1 s | 4 s |
+| **Install R packages** | **722 s（12 min 2 s）** | **42 s** |
+| Record environment | 8 s | 8 s |
+| **Run analysis pipeline** | **115 s** | **114 s** |
+| Upload + Summarise + Post | 6 s | 3 s |
+| **整轮** | **14 min 58 s** | **3 min 45 s** |
 
 所以 `timeout-minutes: 20` 保持不变，**冷缓存也在预算内**。
 
@@ -211,10 +287,14 @@ spec 要求单次运行 < 20 分钟。**冷缓存**实测（run 35409119340，�
 顺带一提，这个错误被第 00 步拦下了，而不是让 6 个肿瘤样本里只有 3 个进入分析 ——
 这正是硬门禁存在的意义。
 
-### 2.9 实跑发现：分组与一个全局表达位移高度混杂（**本设计最重要的限制**）
+> 换到 GSE64790 时同样要小心：肿瘤是 `tissue: TNBC  tissue`（注意**两个空格**），
+> 正常是 `tissue: matched normal breast tissues`。判别子串用 `"tnbc"` 和
+> `"matched normal"`，已用 `find_dataset.mjs check` 实测 6/6 命中且无歧义。
 
-首轮成功的运行（run 35409119340）里，QC 把 **9 个样本全部**判为相关性离群，
-`median_min_pearson` 只有 0.122。查相关矩阵后，结构非常清楚：
+### 2.9 为什么否决 GSE92252（**换数据集的原因**）
+
+第一版设计用的是 GSE92252（9 例：6 肿瘤 + 3 正常）。它满足全部形式条件 ——
+人源、芯片、乳腺癌、n < 10、两组 —— 但实跑后发现**三个分组恰好是三个表达批次**：
 
 | 对比 | Pearson r |
 | --- | --- |
@@ -254,24 +334,65 @@ log2 判断错误、不是 quantile 用错、不是探针折叠引入的。
 **为什么这很严重：** HER2− 与 HER2+ 都是乳腺肿瘤，两者 r 只有 0.35 在生物学上
 说不通（同组织不同亚型通常 r > 0.95）。这更像是**批次效应与分组完全混杂**，
 或者提交者对这批数据做了某种分组相关的处理。无论哪种，后果都一样：
-
-> tumor-vs-normal 的差异基因表里，**分不清多少来自恶性转化、多少来自这个全局位移**。
-> 1423 个显著基因不能当作肿瘤特异事件清单使用。
+tumor-vs-normal 的差异基因表里，**分不清多少来自恶性转化、多少来自这个全局位移**。
 
 **旁证：** top DEG 是 `IGHG3` / `IGHG1` / `IGHG2` / `IGHV4-31`（免疫球蛋白重链）
 和 `SPP1`。免疫球蛋白基因在肿瘤 vs 全组织正常里排最前，是**浆细胞浸润造成的
 组织成分差异**的典型特征，与 §2.2 的警告一致，而不是肿瘤细胞内在的改变。
 
-**流水线的处理：** 不删样本、不做批次校正（n=9、3 簇、无重复批次，
-任何校正都会把分组本身一起扣掉）。改为把事实记录进 `results/qc_summary.json`：
+**所以这个数据集被换掉了。** 不删样本、不做批次校正（n=9、3 簇、无重复批次，
+任何校正都会把分组本身一起扣掉）—— 这些补救手段都救不了一个分组与批次共线的设计。
+改为在筛选阶段就用 `tools/check_sample_structure.mjs` 把关，见 §1.2。
+
+**作为通用防线保留：** 流水线仍会把相关结构记进 `results/qc_summary.json`：
 
 - `mean_within_group_pearson` / `mean_between_group_pearson`
 - `group_confounded_with_global_shift`（组间平均相关低于离群阈值时为 `true`）
 
 同时 QC 会在日志里直接警告"分组与全局表达位移高度混杂"。
+在 GSE64790 上这三项分别是 0.9082 / 0.894 / **false** —— 干净的对照。
 
-**结论口径：** 本流水线在 GSE92252 上产出的是**流程演示与假设生成**，
-不是可引用的乳腺癌差异表达结论。任何下游解读都必须先处理这个混杂。
+### 2.10 无 FDR 显著基因时的降级路径（GSE64790 实际走的就是这条）
+
+§2.2 说明：n=6 时全基因组 BH 校正几乎不可能有基因通过。
+但 spec 要求产出 GO/KEGG 富集和 PPI 网络。**如果因为没有显著基因就把这两步跳过，
+交付物就只剩一半。** 所以下游走一条**明确标注的降级路径**：
+
+| 情形 | 下游输入 | `deg_mode` |
+| --- | --- | --- |
+| FDR 显著基因 ≥ 5 个 | `adj.P < 0.05` 且 `\|log2FC\| > 1` 的基因 | `fdr` |
+| FDR 显著基因 < 5 个 | 按 `raw P` 排序、`\|log2FC\| > 1` 的前 500 个基因 | `ranked_fallback` |
+
+`ranked_fallback_genes` 在 `assets/config.yml` 里可调；设为 `0` 即关闭降级
+（富集/PPI 直接跳过并记录原因）。
+
+**降级必须被标注，这是硬规则。** `enrichment_status.json` 和 `ppi_status.json`
+都会写入完整的 `deg_mode` 与 `deg_reason`，例如：
+
+```json
+"deg_mode": "ranked_fallback",
+"deg_reason": "FDR 显著基因仅 0 个（需 >= 5）。样本数 6 下对 16487 个基因做
+               BH 校正过严，最小的 adj.P 为 0.394。退回按 raw P 排序、
+               |log2FC| > 1 的前 500 个基因。**这是假设生成，不是显著差异基因清单。**"
+```
+
+> **结论口径**：`ranked_fallback` 模式下产出的富集条目与 PPI hub 基因，
+> 只能表述为"在最显著的 500 个基因里富集到……"，**不得**写成
+> "显著差异基因富集到……"。这与 AGENTS.md 的硬规则 2 是同一条要求。
+
+**GSE64790 实测结果**（run 35412006459）：
+
+- 富集输入 500 个基因 → GO 44 条（`mitotic cell cycle phase transition`、
+  `DNA replication`、`meiotic spindle assembly`…），KEGG 14 条
+  （`Integrin signaling`、`PI3K-Akt signaling pathway`、`Mismatch repair`…）
+- PPI 输入 500 个基因，STRING v12.0 映射成功 485 个 → 390 节点 / 3,284 边，
+  hub 基因为 `GAPDH`、`CD34`、`IGF1`、`CHEK1`、`CCNB2`、`CXCL12`、`EXO1`、
+  `CENPA`、`MAD2L1`
+
+这些结果在生物学上自洽：TNBC 相对正常乳腺组织，增殖/细胞周期通路上调
+（mitotic、DNA replication、CHEK1、CCNB2、MAD2L1、CENPA、EXO1），
+基质与血管相关基因下调（CD34、IGF1、CXCL12、KRT14、TAGLN、SDPR、PPARG）。
+**方向合理，但按上面的口径，这仍只是假设生成。**
 
 ---
 
@@ -285,14 +406,17 @@ log2 判断错误、不是 quantile 用错、不是探针折叠引入的。
 - 从 GEO SOFT 接口（base R `url()`，不依赖 Bioconductor）拉取 series 与 sample 元数据
 - **硬门禁**：物种必须为 `Homo sapiens`；类型必须为 array；样本数必须 < 10；两组样本数均 ≥ 3
 - 按 `group_field` 匹配 `group_values` 生成分组；一个样本命中多个组 → 报错退出
-- 输出：`data/group.csv`、`data/meta.csv`、`data/platform.txt`、`data/geo_metadata.json`
+- `paired: true` 时校验 `pairs`：每个 GSM 只出现一次、每对必须一例 numerator 一例
+  denominator、不允许有样本落单（§2.1）
+- 输出：`data/group.csv`（含 `patient` 列）、`data/meta.csv`、`data/platform.txt`、
+  `data/geo_metadata.json`
 
 ### 3.2 下载与清洗（`01_download_clean.R`）
 
 - `GEOquery::getGEO(..., getGPL = FALSE)` 只下载表达矩阵；平台注释单独用轻量 CGI
-  接口取（2.6 MB，而非 182 MB 的 family 文件），详见 §2.5
+  接口取（远小于 family 文件），详见 §2.5
 - 原始强度自动识别：中位数 > 50 时执行 `log2(x + 1)`
-- 探针 → 基因 symbol：多级降级映射（§2.5）；全部途径覆盖率 < 50% 时退回探针层面
+- 探针 → 基因 symbol：多级降级映射（§2.6）；覆盖率与基因数**都不够**时才退回探针层面
 - 同一 symbol 的多探针取方差最大者
 - 过滤全 NA / 无变异特征（有效值 < 2 或标准差为 0）
 - KNN 填补缺失（`impute::impute.knn`, k=10）
@@ -311,13 +435,19 @@ log2 判断错误、不是 quantile 用错、不是探针折叠引入的。
 | `correlation_heatmap.pdf` | 样本间 Pearson 相关热图 | — |
 | `correlation_matrix.csv` | Pearson + Spearman 相关矩阵 | **cor < 0.8 的样本标记为离群** |
 
+额外计算**分组混杂指标**（§2.9）：`mean_within_group_pearson`、
+`mean_between_group_pearson`、`group_confounded_with_global_shift`。
+组间平均相关低于离群阈值时日志直接警告。
+
 ### 3.4 差异表达（`03_deg.R`）
 
-- 设计矩阵 `~ 0 + group`，对比 `tumor - normal`
-- `limma::lmFit` → `contrasts.fit` → `eBayes` → `topTable(n=Inf, adjust="BH")`
+- 非配对：设计矩阵 `~ 0 + group`；配对：`~ 0 + group + patient`（§2.1）
+- 对比 `tumor - normal`；配对设计若秩不足自动退回非配对并记录原因
+- `limma::lmFit` → `contrasts.fit` → `eBayes(trend=TRUE, robust=TRUE)` →
+  `topTable(n=Inf, adjust="BH")`（robust 不可用时退回标准 `eBayes`）
 - 输出 `deg_table.csv`，**必须包含** `gene, logFC, AveExpr, t, P.Value, adj.P.Val, B`
 - 显著标准：`adj.P.Val < 0.05` **且** `|log2FC| > 1`
-- 火山图标注 top 基因
+- 摘要写 `paired` / `residual_df` / `n_significant`，火山图标注 top 基因
 
 ### 3.5 聚类热图（`04_heatmap_enrichment.R`）
 
@@ -328,6 +458,7 @@ log2 判断错误、不是 quantile 用错、不是探针折叠引入的。
 
 ### 3.6 GO / KEGG 富集（`04_heatmap_enrichment.R`）
 
+- 输入基因由 `select_degs()` 决定：FDR 显著基因，或降级到 raw P 前 N 个（§2.10）
 - SYMBOL → ENTREZ（`clusterProfiler::bitr` + `org.Hs.eg.db`）
 - GO BP：`clusterProfiler::enrichGO`，`pAdjustMethod="BH"`，`pvalueCutoff=0.05`
 - KEGG：`clusterProfiler::enrichKEGG`，`organism="hsa"`
@@ -341,12 +472,17 @@ log2 判断错误、不是 quantile 用错、不是探针折叠引入的。
 
 ### 3.7 差异基因互作（PPI，`05_ppi.R`）
 
-- 显著 DEG symbol → `STRINGdb` 映射（`species=9606`）
+- 输入基因由 `select_degs()` 决定：FDR 显著基因，或降级到 raw P 前 N 个（§2.10）
+- symbol → `STRINGdb` 映射（`species=9606`）
 - 置信度阈值 `score >= 400`
+- **直接读 STRING 的 `protein.links` 文件建边**，不用 `STRINGdb::get_interactions()` ——
+  后者实测在 GSE92252 上静默返回 0 行，导致"STRING 未返回任何达到阈值的互作"的假象
 - 计算节点 degree，**hub 基因 = degree 排名前 10**
 - 输出 `PPI_network.png`、`hub_genes.csv`、`ppi_edges.csv`
-- **回退**：STRINGdb 需下载 ~100 MB 网络文件，若失败则跳过 PPI 并在
-  `results/ppi_status.json` 标记原因，流程继续（不伪造网络图）
+- **回退顺序**：STRING links 文件 → 共表达网络（标注 `method=coexpression`）→ 跳过
+- **状态先落盘再画图**：`ppi_status.json` 在绘图**之前**写出，绘图单独 `tryCatch`。
+  这样即使画图失败（如 `layout_with_fr` 拒绝负权重），节点/边数与原因仍然留存
+- **回退不伪造网络图**：任何回退都在 `results/ppi_status.json` 标记 `method` 与原因
 
 ### 3.8 汇总（`main_analysis.R`）
 
@@ -358,6 +494,11 @@ log2 判断错误、不是 quantile 用错、不是探针折叠引入的。
 ```
 
 仅当**必需步骤**（校验/清洗/QC/PCA/相关性/DEG）失败时以非零码退出。
+一旦某必需步骤失败，**后续所有步骤都记为 `skipped`**，不再继续跑。
+
+`check_acceptance()` 读取 `enrichment_status.json` / `ppi_status.json` 判断
+"富集/PPI 是否有结果**或**有记录在案的原因"。注意这两个文件的形状不同：
+前者是 `{"go": {...}, "kegg": {...}}`，后者把 `status` 放在顶层。
 
 ---
 
@@ -375,22 +516,29 @@ results/
 ├── top50_heatmap.pdf             top DEG 聚类热图（Z-score）
 ├── GO_dotplot.pdf / GO_table.csv       GO BP 富集
 ├── KEGG_dotplot.pdf / KEGG_table.csv   KEGG 富集
-├── PPI_network.png / hub_genes.csv     STRING PPI 与 hub 基因
-├── enrichment_status.json        富集是否为空及原因
-├── ppi_status.json               PPI 是否回退及原因
-└── state.json                    各步骤执行状态
+├── PPI_network.png / hub_genes.csv / ppi_edges.csv   STRING PPI 与 hub 基因
+├── enrichment_status.json        富集模式（fdr / ranked_fallback）及原因
+├── ppi_status.json               PPI 方法、节点边数及回退原因
+└── state.json                    各步骤执行状态 + 验收结果
 ```
 
 ---
 
 ## 5. 已知局限（必须随结果一并报告）
 
-1. **样本量**：n=9（6 vs 3）。所有 p 值都不稳健，**不能作为临床或机制结论**。
+1. **样本量**：n=6（3 vs 3 配对，残差 df = 2）。**没有任何基因能通过 FDR**
+   （最小 `adj.P` = 0.394），下游富集与 PPI 走的是 `ranked_fallback` 降级路径（§2.10）。
+   所有结果只能作为**假设生成**，不能作为临床或机制结论。
 2. **组织成分混杂**：肿瘤 vs 全组织正常，差异主要反映细胞组成而非肿瘤特异性表达。
-3. **无独立验证队列**：本设计不含验证集，DEG 未经任何外部数据复现。
-4. **HER2 亚型混杂**：tumor 组内 3 HER2+ / 3 HER2−，增加了组内方差，降低了检出功效。
-5. **单平台单批次**：无法评估批次效应，也无法做跨平台一致性检验。
-6. **富集分析**：KEGG 依赖在线 API，可能因限流返回空结果；此时结论中不得声称"无 KEGG 通路富集"，
+   本数据集尤为明显 —— top 基因是 KRT14、SPARCL1、TAGLN、SDPR、PPARG 等
+   基质/脂肪/上皮比例相关基因。
+3. **配对自由度极低**：3 对只剩 2 个残差自由度，配对换来的方差缩减被重尾
+   t 分布抵消了一部分。若能拿到更多配对样本，功效会显著改善。
+4. **无独立验证队列**：本设计不含验证集，结果未经任何外部数据复现。
+5. **lncRNA 芯片的平台局限**：GPL19612 的 65,531 个探针里只有 33.3% 带 `GeneSymbol`，
+   覆盖 16,487 个基因。非编码转录本的信息在 symbol 折叠时被丢弃了。
+6. **单平台单批次**：无法评估批次效应，也无法做跨平台一致性检验。
+7. **富集分析**：KEGG 依赖在线 API，可能因限流返回空结果；此时结论中不得声称"无 KEGG 通路富集"，
    只能声称"本次未获得 KEGG 结果"。
 
 ---
@@ -404,5 +552,8 @@ gh workflow run geo_analysis.yml
 # 本地（需 R 4.3+ 与 Bioconductor）
 Rscript scripts/main_analysis.R --config assets/config.yml
 ```
+
+**已验证的成功运行**：[run 35412006459](https://github.com/liubarryteb12/geo-brca-microarray-skill/actions/runs/35412006459)
+（GSE64790，暖缓存 3 min 45 s，7 个步骤全部 `ok`，12 项验收全过，24 个产物）。
 
 完整配置见 `assets/config.yml`；运行期故障排查见 `references/troubleshooting.md`。
