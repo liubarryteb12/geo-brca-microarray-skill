@@ -687,6 +687,56 @@ clinical_field_profile <- function(clinical) {
 
 # ---- 基因/统计小工具 -------------------------------------------------------
 
+#' 判断表达矩阵是 log2 尺度还是线性强度尺度
+#'
+#' **为什么必须查这件事。** 本流水线从 GEO **series matrix** 出发，
+#' 而那是提交者放上去的东西 —— 有的已经 log2（Affymetrix 的 RMA/MAS5 输出、
+#' 大多数 Illumina 输出），有的还是线性荧光强度。下游 limma 假定数据是
+#' log 尺度：把线性数据直接喂进去，**差异倍数会变成"强度比的对数"而不是
+#' 表达比的对数**，火山图、阈值、GSEA 排序全部偏掉，而**结果看起来完全正常**
+#' —— 没有报错、没有警告，只有错的数字。泛化到任意数据集后这是最容易踩的坑。
+#'
+#' 判据（按可靠性排序，任一命中即定论）：
+#'   1. **出现负值** -> 一定是 log 尺度（线性强度不可能为负）
+#'   2. **99 分位 > 100** -> 一定是线性（log2 的芯片强度极少超过 ~20）
+#'   3. 否则看中位数：> 50 判线性，<= 50 判 log2
+#'
+#' 注意 3 是启发式。所以返回值里带 `reason`，调用方把它落盘 ——
+#' 判断依据可核对，而不是"程序说是就是"。
+#'
+#' @param expr 表达矩阵（探针 x 样本）
+#' @return list(scale = "log2"|"linear"|"unknown", reason, q01, q50, q99, neg_frac)
+detect_expr_scale <- function(expr) {
+  v <- as.numeric(as.matrix(expr))
+  v <- v[is.finite(v)]
+  if (length(v) == 0L) {
+    return(list(scale = "unknown", reason = "矩阵里没有有限值",
+                q01 = NA_real_, q50 = NA_real_, q99 = NA_real_, neg_frac = NA_real_))
+  }
+  q <- stats::quantile(v, c(0.01, 0.5, 0.99), na.rm = TRUE, names = FALSE)
+  neg_frac <- mean(v < 0)
+  base <- list(q01 = q[1L], q50 = q[2L], q99 = q[3L], neg_frac = neg_frac)
+
+  if (neg_frac > 0.001) {
+    return(c(list(scale = "log2",
+                  reason = sprintf("有 %.2f%% 的值 < 0，线性荧光强度不可能为负", 100 * neg_frac)),
+             base))
+  }
+  if (q[3L] > 100) {
+    return(c(list(scale = "linear",
+                  reason = sprintf("99 分位 = %.1f > 100（log2 芯片强度极少超过 ~20）", q[3L])),
+             base))
+  }
+  if (q[2L] > 50) {
+    return(c(list(scale = "linear",
+                  reason = sprintf("中位数 = %.1f > 50", q[2L])),
+             base))
+  }
+  c(list(scale = "log2",
+         reason = sprintf("无负值，99 分位 = %.1f <= 100，中位数 = %.1f <= 50", q[3L], q[2L])),
+    base)
+}
+
 #' 按行 Z-score（用于热图）
 row_zscore <- function(m) {
   t(scale(t(as.matrix(m))))

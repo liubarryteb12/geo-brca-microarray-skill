@@ -70,6 +70,17 @@ analysis:
   seed: 20260919               # 不可删，理由见 config.GSE64790.yml
   top_heatmap_genes: 50
   impute_k: 10
+  # ---- 尺度与标准化 --------------------------------------------------------
+  # log2: auto —— 从 series matrix 检测尺度；判定为线性时做 log2(x+1)。
+  #   尺度判错是**静默失败**：limma 假定 log 尺度，线性数据喂进去不报错，
+  #   只让所有 logFC 变成"强度比的对数"，结果看着正常而数字全偏。
+  #   可选 auto / always / never。除非确知数据集被误判，不要改成 always/never。
+  log2: auto
+  # normalization: 从 series matrix 出发（非原始 CEL/IDAT），
+  #   所以 RMA/neqc 没有输入可跑 —— 这一点在 clean_stats.json 里写明了。
+  #   quantile 默认够用；vsn 适合跨平台合并或强度范围差异大的场景。
+  #   可选 quantile / vsn / none。
+  normalization: quantile
   pca_top_genes: 2000
   hub_gene_count: 10
   ppi_plot_max_nodes: 200

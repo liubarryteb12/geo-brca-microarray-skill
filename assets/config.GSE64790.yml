@@ -86,6 +86,15 @@ analysis:
   # 全部跟着变。实测未设种子时两轮 CI 的 GSEA 显著条目数是 1059 和 1110 ——
   # 看起来像随机波动，实际是结果不可复现。
   seed: 20260919
+  # ---- 尺度与标准化 --------------------------------------------------------
+  # log2: auto —— 从 series matrix 检测尺度，判定为线性时做 log2(x+1)。
+  #   判据与 tools/check_sample_structure.mjs 一致（负值 / 99分位 / 中位数）。
+  #   尺度判错是**静默失败**：limma 假定 log 尺度，线性数据喂进去不报错，
+  #   只让所有 logFC 变成"强度比的对数"，结果看着正常而数字全偏。
+  log2: auto
+  # 从 series matrix 出发（非原始 CEL/IDAT），RMA/neqc 没有输入可跑；
+  # 这一点写进了 clean_stats.json 的 normalization_note，不假装做过。
+  normalization: quantile
   top_heatmap_genes: 50        # 热图取 top N 个 DEG；不足时自动降级
   impute_k: 10                 # KNN 填补的 k
   pca_top_genes: 2000          # PCA 使用方差最大的 N 个基因（0 = 全部）

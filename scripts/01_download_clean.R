@@ -415,9 +415,73 @@ run_01_download_clean <- function(cfg) {
   # 标准化前矩阵留档，供 QC 画 before/after
   expr_raw <- expr
 
-  # ---- 6. quantile 标准化 -------------------------------------------------
-  expr <- limma::normalizeBetweenArrays(expr, method = "quantile")
-  log_info("已执行 quantile 标准化")
+  # ---- 6a. 尺度检查：log2 还是线性 ----------------------------------------
+  #
+  # **这一步原来完全没有，而它比"用哪种标准化"更要紧。**
+  # series matrix 是提交者放上去的东西：有的已 log2，有的还是线性荧光强度。
+  # 下游 limma 假定 log 尺度，把线性数据喂进去不会报错，只会让所有 logFC
+  # 变成"强度比的对数"——**结果看起来完全正常，只有数字是错的**。
+  scale_info <- detect_expr_scale(expr)
+  log2_mode <- cfg$analysis$log2 %||% "auto"
+  need_log2 <- switch(log2_mode,
+    always = TRUE,
+    never  = FALSE,
+    # auto：只有判定为线性时才转。判不出来（unknown）时不转 ——
+    # 无依据地做 log2 会把已经 log 的数据压成常数。
+    auto   = identical(scale_info$scale, "linear"),
+    stop(sprintf("analysis.log2 非法: %s（只能是 auto / always / never）", log2_mode)))
+
+  log_info(sprintf("尺度判定: %s —— %s（中位数 %.2f，99 分位 %.2f，负值 %.3f%%）",
+                   scale_info$scale, scale_info$reason,
+                   scale_info$q50, scale_info$q99, 100 * scale_info$neg_frac))
+
+  if (need_log2) {
+    # log2(x + 1)：series matrix 里可能有 0，log2(0) = -Inf 会污染下游。
+    # 用 +1 偏移是芯片处理的通行做法（RMA 的 bg 校正后下限即约 0-1）。
+    shifted <- min(expr, na.rm = TRUE)
+    if (shifted < 0) {
+      stop(sprintf("判定为线性尺度但存在负值（最小值 %.3g），+1 偏移不适用；请人工确认该数据集",
+                   shifted))
+    }
+    expr <- log2(expr + 1)
+    log_info(sprintf("已做 log2(x + 1) 变换（配置 analysis.log2=%s）", log2_mode))
+  } else if (identical(log2_mode, "never")) {
+    log_warn("按配置跳过 log2 变换（analysis.log2=never）—— 若数据实为线性，下游结果不可用")
+  } else {
+    log_info("数据已在 log 尺度，跳过 log2 变换")
+  }
+
+  # ---- 6b. 样本间标准化 ---------------------------------------------------
+  #
+  # **平台感知的诚实说明。** 用户文档要求按平台选 RMA / neqc / vsn。
+  # 但本流水线从 **series matrix** 出发，不是原始 CEL/IDAT ——
+  # 而 RMA（需要 CEL 的背景校正与探针级模型）和 neqc（需要 Illumina 控制探针）
+  # **在 series matrix 上没有输入可跑**。声称"按平台做了 RMA"是假的。
+  #
+  # 所以这里做的是 series-matrix 层面能做且有意义的事：
+  #   quantile —— 消除样本间残余的分布差异（默认，绝大多数场景够用）
+  #   vsn      —— 方差稳定 + 校准，跨平台合并或强度范围差异大时更合适
+  #   none     —— 提交者已充分标准化且不希望改动时
+  # 原始数据处理（RMA/neqc）需要另走 GEOquery::getGEOSuppFiles 下载原始文件，
+  # 那是另一条路径，本流水线不做 —— 与其假装做了，不如写清楚没做。
+  norm_method <- cfg$analysis$normalization %||% "quantile"
+  if (identical(norm_method, "quantile")) {
+    expr <- limma::normalizeBetweenArrays(expr, method = "quantile")
+    log_info("已执行 quantile 标准化（limma::normalizeBetweenArrays）")
+  } else if (identical(norm_method, "vsn")) {
+    if (!requireNamespace("vsn", quietly = TRUE)) {
+      stop("配置要求 vsn 标准化但 vsn 包不可用")
+    }
+    # vsn 不接受负值/零；先抬到正数域
+    off <- 0
+    if (min(expr, na.rm = TRUE) <= 0) off <- abs(min(expr, na.rm = TRUE)) + 1
+    expr <- vsn::justvsn(as.matrix(expr) + off)
+    log_info(sprintf("已执行 vsn 标准化（偏移 +%.3g 以避开非正值）", off))
+  } else if (identical(norm_method, "none")) {
+    log_warn("按配置跳过样本间标准化（analysis.normalization=none）")
+  } else {
+    stop(sprintf("analysis.normalization 非法: %s（只能是 quantile / vsn / none）", norm_method))
+  }
 
   # ---- 7. 与分组对齐（spec: expr columns match meta rownames）------------
   missing_samples <- setdiff(group$gsm, colnames(expr))
@@ -450,7 +514,23 @@ run_01_download_clean <- function(cfg) {
     genes_final = nrow(expr),
     samples = ncol(expr),
     missing_imputed = n_missing,
-    normalization = "quantile (limma::normalizeBetweenArrays)",
+    # 尺度与标准化要逐项落盘 —— "程序说是就是"不算记录。
+    # 尺度判错是静默失败：结果看着正常，数字全偏，事后只能靠这份记录回溯。
+    scale_detected = scale_info$scale,
+    scale_reason = scale_info$reason,
+    scale_q50 = round(scale_info$q50, 4),
+    scale_q99 = round(scale_info$q99, 4),
+    scale_neg_frac = round(scale_info$neg_frac, 6),
+    log2_mode = log2_mode,
+    log2_applied = need_log2,
+    normalization = switch(norm_method,
+      quantile = "quantile (limma::normalizeBetweenArrays)",
+      vsn      = "vsn (vsn::justvsn)",
+      none     = "none (按配置跳过)",
+      norm_method),
+    normalization_note = paste(
+      "从 GEO series matrix 出发，非原始 CEL/IDAT；",
+      "RMA/neqc 需要原始文件，在本流水线上没有输入可跑，故未执行"),
     probe_collapse = if (identical(mapping$mode, "symbol")) "max variance per symbol" else NA
   ))
 
