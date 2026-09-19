@@ -81,6 +81,11 @@ analysis:
   # 390 节点 / 3284 边全画出来是一团毛线，读者看不出任何结构；
   # 图里取最大连通分量 + degree 前 N 个，并 Louvain 社区着色。
   ppi_plot_max_nodes: 200
+  # 只给最大的几个模块上色。实测过滤后的网络在 Louvain resolution=1 下切出
+  # 11 个社区，而经计算验证的色盲安全色板只有 4 色。给 11 个模块上色必然要
+  # 插值降级，插出来的颜色没验证过、彼此也分不开。其余节点统一灰色 "other"。
+  ppi_plot_max_edges: 700
+  ppi_plot_modules: 4
   # 无基因通过 FDR 时，富集/PPI 退回「raw P 排序前 N 个（仍要求 |log2FC| > 阈值）」。
   # 样本数 < 10 时全基因组 BH 校正几乎不可能有基因通过，这是样本量的固有限制。
   # 降级会被写进 enrichment_status.json / ppi_status.json 的 deg_mode=ranked_fallback，

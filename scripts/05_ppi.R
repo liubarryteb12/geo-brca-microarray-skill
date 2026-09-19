@@ -318,11 +318,32 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
 
     seed <- cfg$analysis$seed
     if (!is.null(seed)) set.seed(seed)
-    # 3. Louvain 社区（随机算法，必须设种子）
+    # 4. Louvain 社区（随机算法，必须设种子）
+    #
     # 注意全部用 igraph:: 前缀 —— 本仓库不 attach 任何包（没有 library() 调用），
     # 裸 V()/E() 会 "could not find function"
+    #
+    # **只给最大的若干个模块上色，其余归入灰色 "other"。**
+    # 实测 129 节点的过滤网络在 resolution=1 下切出 **11 个**社区，
+    # 而经计算验证的色盲安全色板只有 4 色（见 common.R 的 pal_categorical）。
+    # 11 种颜色必然走插值降级，插出来的颜色没经过验证、彼此也分不开 ——
+    # 那样的图看着花花绿绿，实际读不出结构。
     comm <- igraph::cluster_louvain(g)
-    igraph::V(g)$community <- as.character(comm$membership)
+    memb <- as.character(comm$membership)
+    n_comm_all <- length(unique(memb))
+    max_mod <- cfg$analysis$ppi_plot_modules
+    if (is.null(max_mod) || max_mod <= 0) max_mod <- 4L
+    sizes <- sort(table(memb), decreasing = TRUE)
+    shown <- names(sizes)[seq_len(min(max_mod, length(sizes)))]
+    memb[!(memb %in% shown)] <- "other"
+    # 按模块大小定 levels，保证配色稳定（不随 Louvain 的编号跳变）
+    lv <- c(shown, if (any(memb == "other")) "other")
+    igraph::V(g)$community <- factor(memb, levels = lv)
+    n_comm <- length(lv)
+    if (n_comm_all > length(shown)) {
+      log_info(sprintf("网络图：Louvain 切出 %d 个模块，只给最大的 %d 个上色，其余 %d 个节点归入 other",
+                       n_comm_all, length(shown), sum(memb == "other")))
+    }
 
     set.seed(if (is.null(seed)) 123 else seed)
     lay <- igraph::layout_with_fr(g, niter = 2000)
@@ -332,7 +353,7 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
       name = igraph::V(g)$name,
       x = lay[, 1L], y = lay[, 2L],
       degree = as.integer(igraph::degree(g)),
-      community = factor(igraph::V(g)$community),
+      community = igraph::V(g)$community,
       stringsAsFactors = FALSE
     )
     edf <- igraph::as_data_frame(g, what = "edges")
@@ -346,9 +367,11 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
     hub_k <- min(20L, nrow(vdf))
     lab <- vdf[order(-vdf$degree)[seq_len(hub_k)], , drop = FALSE]
 
-    comm_cols <- stats::setNames(pal_categorical(nlevels(vdf$community)),
-                                 levels(vdf$community))
-    n_comm <- nlevels(vdf$community)
+    # 上色：只有被展示的模块用验证过的分类色，other 用中性灰
+    shown_lv <- setdiff(levels(vdf$community), "other")
+    comm_cols <- stats::setNames(pal_categorical(length(shown_lv)), shown_lv)
+    if ("other" %in% levels(vdf$community)) comm_cols["other"] <- PAL$ns
+    n_comm <- length(shown_lv)
 
     p <- ggplot2::ggplot() +
       ggplot2::geom_segment(
@@ -360,8 +383,14 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
         data = vdf,
         ggplot2::aes(x = x, y = y, size = degree, fill = community),
         shape = 21, colour = "white", stroke = 0.35) +
-      ggplot2::scale_fill_manual(values = comm_cols, name = "module",
-                                 guide = if (n_comm > 1) "legend" else "none") +
+      ggplot2::scale_fill_manual(
+        values = comm_cols, name = "module",
+        labels = stats::setNames(
+          c(sprintf("%s (%d)", shown_lv, as.integer(sizes[shown_lv])),
+            if ("other" %in% levels(vdf$community))
+              sprintf("other (%d)", sum(memb == "other"))),
+          c(shown_lv, if ("other" %in% levels(vdf$community)) "other")),
+        guide = "legend") +
       ggplot2::scale_size_continuous(name = "degree", range = c(1.6, 7),
                                      breaks = pretty(range(vdf$degree), 4)) +
       ggrepel::geom_text_repel(
@@ -374,9 +403,11 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
                         if (identical(method, "string_ppi")) "STRING PPI" else "Co-expression (FALLBACK)",
                         cfg$dataset_id),
         subtitle = sprintf(paste0("%d nodes / %d edges shown (largest component, top %d nodes by degree, ",
-                                  "then the %d strongest edges); node colour = Louvain module, ",
+                                  "then the %d strongest edges); node colour = Louvain module ",
+                                  "(%d modules found, top %d coloured, rest grey), ",
                                   "size = degree, edge opacity = interaction confidence"),
-                           igraph::vcount(g), igraph::ecount(g), max_nodes, max_edges),
+                           igraph::vcount(g), igraph::ecount(g), max_nodes, max_edges,
+                           n_comm_all, length(shown)),
         x = NULL, y = NULL) +
       ggplot2::coord_fixed() +
       ggplot2::theme_void(base_size = 10) +
@@ -396,6 +427,7 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
       status$plot_nodes <- igraph::vcount(g)
       status$plot_edges <- igraph::ecount(g)
       status$plot_modules <- n_comm
+      status$plot_modules_total <- n_comm_all
       status$plot_filtered <- igraph::vcount(g) < igraph::vcount(g_full)
       status$plot_note <- sprintf(
         paste0("图为可读性做过过滤：最大连通分量 → degree 前 %d 个节点 → 最强的 %d 条边。",
