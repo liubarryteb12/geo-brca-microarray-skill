@@ -80,10 +80,16 @@ run_05_ppi <- function(cfg) {
 
   res <- cfg$output$results_dir
   deg <- utils::read.csv(file.path(res, "deg_table.csv"), stringsAsFactors = FALSE)
-  sig <- deg$gene[deg$adj.P.Val < cfg$thresholds$adj_p & abs(deg$logFC) > cfg$thresholds$log2fc]
-  sig <- unique(sig[!is.na(sig) & nzchar(sig)])
+  # 与富集用同一套挑选逻辑：FDR 不够时退回 raw P 排序前 N 个，并标注模式
+  sel <- select_degs(deg, cfg, min_genes = MIN_GENES_FOR_NETWORK)
+  sig <- unique(sel$genes[!is.na(sel$genes) & nzchar(sel$genes)])
 
-  status <- list(species = 9606, score_threshold = cfg$thresholds$string_score)
+  status <- list(species = 9606, score_threshold = cfg$thresholds$string_score,
+                 deg_mode = sel$mode, deg_reason = sel$reason)
+  if (identical(sel$mode, "ranked_fallback")) {
+    log_warn(sprintf("无基因通过 FDR，PPI 改用 raw P 排序前 %d 个基因（假设生成，非显著 DEG）",
+                     length(sig)))
+  }
 
   if (length(sig) < MIN_GENES_FOR_NETWORK) {
     msg <- sprintf("显著 DEG 仅 %d 个（< %d），无法构建有意义的互作网络",

@@ -60,22 +60,35 @@ run_03_deg <- function(cfg) {
   design <- NULL
 
   if (isTRUE(cfg$paired)) {
-    design <- tryCatch({
+    # 只把「能不能配对」交给 tryCatch；设计矩阵与标志位走正常赋值。
+    # 早先版本在 tryCatch 表达式里写 paired_used <<- TRUE —— 那个表达式在
+    # run_03_deg 的帧里求值，<<- 会跳过当前帧写到外层环境，导致本地
+    # paired_used 一直是 FALSE：设计矩阵用了配对，摘要却报 paired=false。
+    pat <- tryCatch({
       if (is.null(group$patient)) stop("group.csv 里没有 patient 列")
       if (anyNA(group$patient) || !all(nzchar(group$patient))) stop("存在未配对的样本")
-      pat <- factor(group$patient)
-      if (nlevels(pat) < 2L) stop(sprintf("只有 %d 个配对水平，无法阻断", nlevels(pat)))
-      d <- stats::model.matrix(~ 0 + groups + pat)
-      if (qr(d)$rank < ncol(d)) stop("设计矩阵秩不足（配对不完整？）")
-      log_info(sprintf("配对设计: %d 对，阻断因子 patient (%d 水平)，残差 df = %d",
-                       nlevels(pat), nlevels(pat), nrow(d) - ncol(d)))
-      paired_used <<- TRUE
-      d
+      p <- factor(group$patient)
+      if (nlevels(p) < 2L) stop(sprintf("只有 %d 个配对水平，无法阻断", nlevels(p)))
+      p
     }, error = function(e) {
+      # 这里是嵌套函数，<<- 才会正确落到 run_03_deg 的帧
       pair_reason <<- conditionMessage(e)
       log_warn(sprintf("配对设计不可用，退回非配对: %s", pair_reason))
       NULL
     })
+
+    if (!is.null(pat)) {
+      d <- stats::model.matrix(~ 0 + groups + pat)
+      if (qr(d)$rank < ncol(d)) {
+        pair_reason <- "设计矩阵秩不足（配对不完整？）"
+        log_warn(sprintf("配对设计不可用，退回非配对: %s", pair_reason))
+      } else {
+        design <- d
+        paired_used <- TRUE
+        log_info(sprintf("配对设计: %d 对，阻断因子 patient (%d 水平)，残差 df = %d",
+                         nlevels(pat), nlevels(pat), nrow(d) - qr(d)$rank))
+      }
+    }
   }
 
   if (is.null(design)) {

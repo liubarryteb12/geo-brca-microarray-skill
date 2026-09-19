@@ -68,8 +68,17 @@ check_acceptance <- function(cfg) {
   enrich <- read_status("enrichment_status.json")
   ppi <- read_status("ppi_status.json")
   # 富集/PPI 允许"为空/回退"，但必须留下原因记录
+  # 状态文件有两种形状：
+  #   enrichment_status.json -> {"go": {"status": ...}, "kegg": {...}}
+  #   ppi_status.json        -> {"status": "...", "reason": "..."}   <- status 在顶层
+  # 所以 key 取到的可能是 list（再取 $status），也可能直接就是字符串。
+  # 早期版本无条件写 s[[key]]$status，遇到 ppi_status.json 就报
+  # "$ operator is invalid for atomic vectors" 并让整轮验收崩掉。
   documented <- function(s, key) {
-    !is.null(s) && !is.null(s[[key]]) && !identical(s[[key]]$status, "not_run")
+    if (is.null(s) || is.null(s[[key]])) return(FALSE)
+    node <- s[[key]]
+    st <- if (is.list(node)) node$status else node
+    !is.null(st) && !identical(st, "not_run")
   }
 
   checks <- list(

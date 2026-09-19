@@ -203,6 +203,51 @@ row_zscore <- function(m) {
   t(scale(t(as.matrix(m))))
 }
 
+#' 为下游（富集、PPI）挑选差异基因
+#'
+#' **为什么需要降级路径：** spec 要求样本数 < 10，而在这个量级上，
+#' 对全基因组（约 1.6 万个基因）做 BH 校正几乎不可能有任何基因通过 ——
+#' GSE64790（n=6，3 对配对）实测：1,456 个基因 raw P < 0.05 且 |log2FC| > 1，
+#' 但最小的 adj.P 也有 0.394。这是样本量本身的限制，不是分析错误。
+#'
+#' 所以：FDR 显著基因够用时用 FDR；不够时退回「raw P 排序前 N 个（仍要求
+#' |log2FC| > 阈值）」。**降级必须被标注**，mode 会写进
+#' enrichment_status.json / ppi_status.json，结论里不得把它当成显著差异基因。
+select_degs <- function(deg, cfg, min_genes = 5L) {
+  padj <- cfg$thresholds$adj_p
+  lfc  <- cfg$thresholds$log2fc
+  # 样本数只用于把降级原因写清楚；从 03 步的摘要里取，取不到就算了
+  sp <- file.path(cfg$output$results_dir, "deg_summary.json")
+  n_s <- if (file.exists(sp)) {
+    tryCatch(jsonlite::fromJSON(sp)$n_samples, error = function(e) NA_integer_)
+  } else NA_integer_
+  if (is.null(n_s) || length(n_s) == 0L) n_s <- NA_integer_
+
+  sig <- deg[!is.na(deg$adj.P.Val) & deg$adj.P.Val < padj & abs(deg$logFC) > lfc, , drop = FALSE]
+  if (nrow(sig) >= min_genes) {
+    return(list(
+      genes = unique(sig$gene), mode = "fdr", n = nrow(sig), table = sig,
+      reason = sprintf("adj.P < %g 且 |log2FC| > %g，共 %d 个", padj, lfc, nrow(sig))
+    ))
+  }
+
+  top_n <- cfg$analysis$ranked_fallback_genes
+  if (is.null(top_n)) top_n <- 500L
+  cand <- deg[!is.na(deg$P.Value) & abs(deg$logFC) > lfc, , drop = FALSE]
+  cand <- cand[order(cand$P.Value), , drop = FALSE]
+  cand <- utils::head(cand, top_n)
+  list(
+    genes = unique(cand$gene), mode = "ranked_fallback", n = nrow(cand), table = cand,
+    reason = sprintf(paste0(
+      "FDR 显著基因仅 %d 个（需 >= %d）。样本数 %s 下对 %d 个基因做 BH 校正过严，",
+      "最小的 adj.P 为 %.3f。退回按 raw P 排序、|log2FC| > %g 的前 %d 个基因。",
+      "**这是假设生成，不是显著差异基因清单。**"),
+      nrow(sig), min_genes, if (is.na(n_s)) "很少" else as.character(n_s),
+      nrow(deg), if (nrow(deg)) min(deg$adj.P.Val, na.rm = TRUE) else NA_real_,
+      lfc, nrow(cand))
+  )
+}
+
 #' 安全地调用一个可选包；缺失时返回 NULL 而不是报错
 require_pkg <- function(pkg) {
   if (!requireNamespace(pkg, quietly = TRUE)) {

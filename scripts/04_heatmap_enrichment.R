@@ -123,15 +123,24 @@ run_04b_enrichment <- function(cfg) {
     write_empty_enrichment(cfg, status, reason)
     return(invisible(NULL))
   }
-  sig_genes <- deg$gene[deg$adj.P.Val < cfg$thresholds$adj_p &
-                        abs(deg$logFC) > cfg$thresholds$log2fc]
+  # FDR 显著基因；样本数很小时全基因组 BH 校正几乎不可能有基因通过，
+  # 此时退回按 raw P 排序的前 N 个（见 common.R 的 select_degs），并标注在 status 里
+  sel <- select_degs(deg, cfg, min_genes = 5L)
+  sig_genes <- sel$genes
+  status$deg_mode <- sel$mode
+  status$deg_reason <- sel$reason
+  if (identical(sel$mode, "ranked_fallback")) {
+    log_warn(sprintf("无基因通过 FDR，富集改用 raw P 排序前 %d 个基因（假设生成，非显著 DEG）",
+                     length(sig_genes)))
+  }
 
-  if (length(sig_genes) == 0L) {
-    log_warn("没有显著 DEG，跳过 GO/KEGG 富集（写空表）")
-    write_empty_enrichment(cfg, status, "no significant DEG to test")
+  if (length(sig_genes) < 5L) {
+    log_warn(sprintf("可用于富集的基因仅 %d 个（< 5），跳过 GO/KEGG", length(sig_genes)))
+    write_empty_enrichment(cfg, status, sprintf("只有 %d 个基因可用于富集，不足 5 个",
+                                                length(sig_genes)))
     return(invisible(NULL))
   }
-  log_info(sprintf("富集输入基因数: %d", length(sig_genes)))
+  log_info(sprintf("富集输入基因数: %d（模式: %s）", length(sig_genes), sel$mode))
 
   # 背景集：genome = OrgDb 全部基因；detected = 芯片实测基因
   universe_symbols <- NULL
