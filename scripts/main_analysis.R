@@ -64,6 +64,41 @@ STEPS <- list(
   list(id = "tf_regulation",      fn = run_08_tf_regulation,       required = FALSE)
 )
 
+# ---- 模块零：运行清单（§0.3 / §0.4）---------------------------------------
+#
+# 规范来源：用户整合文档「模块零：语言与运行时规范」。
+# 产物：results/<GSE>/run_manifest.json
+#
+# **为什么不塞进 state.json：** state.json 记的是"这一步跑没跑成"，每步重写；
+# manifest 记的是"本轮是在什么条件下跑出来的"，是证据，写入后不该再变。
+#
+# 文档 §1「本部分人工复核节点」。**默认 pending，不是 confirmed** ——
+# 自动化流水线不能替人签字，把未确认的节点记成已确认，等于把复核节点
+# 变成摆设。验收里作为**可见但不阻断**的项列出（required 只标"这节点
+# 是否适用本数据集"）。
+HUMAN_REVIEW_NODES <- list(
+  list(id = "geo_availability",     label = "GEO 数据集可用性终判",
+       required = TRUE),
+  list(id = "group_labels",         label = "分组标签推断结果确认",
+       required = TRUE),
+  list(id = "outlier_removal",      label = "任何 outlier 样本删除决定",
+       required = TRUE),
+  list(id = "signature_genes",      label = "预后模型最终基因集确定",
+       required = FALSE),
+  list(id = "virtual_perturbation", label = "虚拟敲除/过表达靶基因的生物学合理性",
+       required = FALSE)
+)
+
+# 需要登记哈希的输入（相对 data_dir）。(文件名, 中文说明, 是否必需)
+INPUT_FILES <- list(
+  list(f = "expr_raw.rds",     d = "原始表达矩阵", required = TRUE),
+  list(f = "expr_clean.rds",   d = "清洗后矩阵",   required = TRUE),
+  list(f = "group.csv",        d = "分组表",       required = TRUE),
+  list(f = "clean_stats.json", d = "清洗统计",     required = TRUE),
+  list(f = "feature_mode.json", d = "特征模式",    required = TRUE),
+  list(f = "clinical.csv",     d = "临床表",       required = FALSE)
+)
+
 # ---- 验收项（直接对应 spec 的 acceptance_criteria）-------------------------
 check_acceptance <- function(cfg) {
   res <- cfg$output$results_dir
@@ -241,6 +276,23 @@ main <- function() {
                    cfg$thresholds$adj_p, cfg$thresholds$log2fc))
   log_info("############################################################")
 
+  # ---- 模块零：建立本轮运行清单（§0.3 / §0.4）-----------------------------
+  # **必须在任何步骤之前建，且先清掉上一轮** —— 清单描述的是本轮。
+  init_manifest(cfg)
+  capture_versions(cfg)
+  record_params(cfg, list(
+    seed = cfg$analysis$seed,
+    design_mode = cfg$design_mode,
+    contrast = cfg$contrast,
+    thresholds = cfg$thresholds,
+    dataset_id = cfg$dataset_id
+  ))
+  for (nd in HUMAN_REVIEW_NODES) {
+    record_human_review(cfg, nd$id, required = nd$required, status = "pending",
+                        note = sprintf("%s —— 需人工确认，本轮自动化未确认", nd$label))
+  }
+  log_info(sprintf("运行清单：%s", manifest_path(cfg)))
+
   aborted <- FALSE
   for (step in STEPS) {
     # 一旦某个必需步骤失败，后续所有步骤都失去输入，无论必需与否都跳过，
@@ -269,9 +321,48 @@ main <- function() {
     }
   }
 
+  # ---- 模块零：登记输入哈希（§0.4）---------------------------------------
+  # 放在所有步骤之后 —— 可选步骤的产物这轮有没有，跑完才知道。
+  for (inf in INPUT_FILES) {
+    record_input(cfg, file.path(cfg$output$data_dir, inf$f),
+                 label = sprintf("%s (%s)", inf$d, inf$f),
+                 required = inf$required)
+  }
+  msum <- manifest_summary(cfg)
+  log_info(sprintf("输入登记 %d 项%s", msum$n_inputs,
+                   if (length(msum$inputs_missing) > 0L) {
+                     sprintf("，缺失 %d 项：%s", length(msum$inputs_missing),
+                             paste(msum$inputs_missing, collapse = ", "))
+                   } else "，全部就位"))
+
   # ---- 验收 --------------------------------------------------------------
   log_info("=== 验收检查 ===")
   checks <- check_acceptance(cfg)
+
+  # ---- 模块零：运行清单验收（§0.3 / §0.4）--------------------------------
+  # 清单缺项不是"分析错了"，而是"这轮跑出来的东西没法追溯"。
+  # **人工复核未确认不算失败** —— 默认就是 pending，那是设计如此；
+  # 把它判成 FAIL 会让每个 job 都红，反而没人看。但必须可见。
+  checks[[length(checks) + 1L]] <- list(
+    name = "运行清单存在（run_manifest.json）",
+    ok = isTRUE(msum$present), required = TRUE)
+  if (isTRUE(msum$present)) {
+    checks[[length(checks) + 1L]] <- list(
+      name = sprintf("版本记录非空（installed.packages 全量，%d 个）",
+                     msum$n_versions),
+      ok = msum$n_versions >= 20L, required = TRUE)
+    checks[[length(checks) + 1L]] <- list(
+      name = sprintf("输入哈希已登记且必需项无缺失（%d 项，可选缺失 %d）",
+                     msum$n_inputs, length(msum$inputs_missing) -
+                       length(msum$inputs_missing_required)),
+      ok = msum$n_inputs >= length(INPUT_FILES) &&
+        length(msum$inputs_missing_required) == 0L, required = TRUE)
+    checks[[length(checks) + 1L]] <- list(
+      name = sprintf("人工复核节点待确认（%d 个，不阻断 job）",
+                     length(msum$human_review_pending)),
+      ok = TRUE, required = FALSE)
+  }
+
   for (chk in checks) {
     log_info(sprintf("  [%s] %s%s", if (isTRUE(chk$ok)) "PASS" else "FAIL",
                      chk$name, if (isTRUE(chk$required)) "" else " (optional)"))
@@ -304,6 +395,7 @@ main <- function() {
     generated_at = format(Sys.time(), "%Y-%m-%dT%H:%M:%S")
   )
   state$finished_at <- format(Sys.time(), "%Y-%m-%dT%H:%M:%S")
+  state$manifest <- msum
   write_json(state_path, state)
 
   log_info("############################################################")

@@ -206,6 +206,40 @@
 姊妹项目 Python 侧实测漏 import 一个 `W_SINGLE`，`py_compile` 照样报
 "语法通过"，白跑一整轮 CI。R 侧同理。
 
+## 26. 每轮运行必须留下可追溯的运行清单（模块零）
+
+参考规范：三大部分整合文档的「模块零」（§0.2–§0.4）。姊妹项目
+`scrna-pipeline-skill/AGENTS.md` 规则 16 有完整说明，这里只写 R 侧特有的。
+
+`common.R` 的清单层产出 `results/<GSE>/run_manifest.json`，接口与 Python 侧
+**同名同义**（`init_manifest` / `capture_versions` / `record_input` /
+`record_params` / `record_decision` / `record_human_review` /
+`record_cross_language` / `manifest_summary`），这样三部分的清单可以并排读。
+
+**R 侧有三处必须不同，不是风格问题：**
+
+1. **`NA` 要写成 JSON `null`，不能写成 `"NA"` 字符串。** `jsonlite` 默认把
+   `NA` 序列化成字符串 `"NA"`，而 Python 侧写的是 `null` —— 两边不一致时
+   "这个工具没装"在读的人看来是"装了一个叫 NA 的工具"。
+   所以有独立的 `write_manifest()`，显式 `na = "null"`。
+2. **版本要用 `utils::installed.packages()` 全量，不能用
+   `sessionInfo()$otherPkgs`。** 本仓库的脚本一律 `pkg::fun()` 写全名、
+   不 `attach`，所以 `sessionInfo()$otherPkgs` 是**空的** ——
+   用它等于什么都没记（见「禁止」里对 `library()` 的禁令）。
+3. **哈希优先 `digest::digest(algo="sha256")`，退回 `tools::md5sum`。**
+   `digest` **不在 CI 的 R 包列表里**，所以实际走的是 md5 分支 ——
+   这时必须把 `hash_algo` 一起记下来。**算法不同的哈希不可直接比较**，
+   不写算法等于给了个无法验证的值。
+
+**人工复核节点**（`geo_availability` / `group_labels` / `outlier_removal` /
+`signature_genes` / `virtual_perturbation`）默认 `pending`，**不算失败**。
+其中 `signature_genes` 与 `virtual_perturbation` 是 `required = FALSE` ——
+前者只在有随访终点时才有意义，后者是保留框架（见 §1.7/§1.8）。
+
+**`init_manifest` 必须清掉上一轮**（同规则 14 的道理）：上轮的清单冒充本轮，
+比没有清单更糟。输入哈希在**步骤跑完之后**才登记 —— 可选步骤这轮有没有
+产物，跑完才知道。
+
 ## 代码约定
 
 - R 脚本结构：bootstrap 块 → 辅助函数 → `run_XX(cfg)` → `if (!GEO_ORCHESTRATED())` 自执行块。

@@ -172,6 +172,256 @@ record_step <- function(cfg, id, status, seconds = NA_real_, message = "", requi
   invisible(state)
 }
 
+# ---- 运行清单（模块零规范层）-------------------------------------------------
+#
+# 规范来源：用户整合文档「模块零：语言与运行时规范」。
+#   §0.2 跨语言接口 —— 只走 CSV；每次转换记录维度/metadata/丢失字段
+#   §0.3 版本记录   —— sessionInfo()/installed.packages() 全量 + 关键工具单列
+#   §0.3 随机种子   —— 所有随机过程固定种子并记录
+#   §0.4 运行日志   —— 输入数据哈希、软件版本、关键参数、决策链、
+#                      人工干预记录、跨语言转换记录
+#
+# 产物：results/<GSE>/run_manifest.json
+#
+# **为什么不塞进 state.json：** state.json 记的是"这一步跑没跑成"，每步重写；
+# manifest 记的是"本轮是在什么条件下跑出来的"，是证据，写入后不该再变。
+# 混在一起会让后者被前者覆盖。
+#
+# **诚实性要求（AGENTS.md 规则 24）：** 没做的分析、没装的工具、没确认的
+# 复核节点，都要在 manifest 里留下痕迹，不能因为"不影响结论"就不写。
+
+MANIFEST_NAME <- "run_manifest.json"
+
+# 文档 §1 点名的 R 包。**没装的记 NA（JSON null），不省略键** ——
+# 键消失和"值是 null"看起来完全不同，后者才说明"本该有但没装"。
+KEY_PACKAGES <- c(
+  "GEOquery", "limma", "WGCNA", "clusterProfiler", "GSVA", "glmnet",
+  "survival", "survminer", "timeROC", "rms", "STRINGdb",
+  # §1.5 转录因子调控（文档点名 TRRUST / ChEA3，本仓库未接入）
+  "TRRUST", "ChEA3",
+  # §1.7 / §1.8 虚拟扰动框架（文档标主语言 Python，本仓库无）
+  "scTenifoldKnk", "PerturbNet", "RegVelo"
+)
+
+manifest_path <- function(cfg) file.path(cfg$output$results_dir, MANIFEST_NAME)
+
+#' 读清单。文件不存在返回空 list（不是 NULL，便于直接取字段）
+read_manifest <- function(cfg) {
+  p <- manifest_path(cfg)
+  if (!file.exists(p)) return(list())
+  tryCatch(jsonlite::fromJSON(p, simplifyVector = FALSE), error = function(e) list())
+}
+
+#' 清单专用写出：**NA 映射成 JSON null**，与 Python 侧的 None 对齐。
+#' 共用的 write_json() 不带 na=，会把 NA 写成字符串 "NA" —— 那是两种
+#' 不同的东西：null 是"没有这个值"，"NA" 是"值是字符串 NA"。
+write_manifest <- function(cfg, m) {
+  p <- manifest_path(cfg)
+  tmp <- paste0(p, ".tmp")
+  writeLines(jsonlite::toJSON(m, auto_unbox = TRUE, pretty = TRUE,
+                              null = "null", na = "null"), tmp)
+  if (file.exists(p)) unlink(p)
+  file.rename(tmp, p)
+  invisible(m)
+}
+
+#' 建立本轮清单骨架。**会清掉上一轮的内容** —— 清单描述的是本轮。
+init_manifest <- function(cfg, language = "R") {
+  m <- list(
+    dataset_id = cfg$dataset_id,
+    language = language,
+    created_at = format(Sys.time(), "%Y-%m-%dT%H:%M:%S"),
+    seed = cfg$analysis$seed,
+    versions = list(), key_versions = list(), inputs = list(),
+    params = list(), decisions = list(), human_review = list(),
+    cross_language = list()
+  )
+  write_manifest(cfg, m)
+  invisible(m)
+}
+
+manifest_append <- function(cfg, key, entry) {
+  m <- read_manifest(cfg)
+  cur <- m[[key]]
+  if (is.null(cur)) cur <- list()
+  cur[[length(cur) + 1L]] <- entry
+  m[[key]] <- cur
+  m$dataset_id <- cfg$dataset_id
+  m$updated_at <- format(Sys.time(), "%Y-%m-%dT%H:%M:%S")
+  write_manifest(cfg, m)
+  invisible(m)
+}
+
+#' §0.4 文件哈希。
+#'
+#' 优先 digest::digest(algo = "sha256")；没装 digest 时退回 tools::md5sum。
+#' **实际用的算法写进 hash_algo 字段** —— 用了哪种算法不能靠猜，
+#' 换算法时前后两轮的哈希不可比。
+file_hash <- function(path) {
+  if (!file.exists(path)) return(NULL)
+  if (requireNamespace("digest", quietly = TRUE)) {
+    return(list(algo = "sha256",
+                value = digest::digest(path, algo = "sha256", file = TRUE)))
+  }
+  list(algo = "md5", value = unname(tools::md5sum(path)))
+}
+
+#' §0.4 输入数据哈希。文件不存在时**记 missing 而不是报错**
+record_input <- function(cfg, path, label = NULL, required = TRUE) {
+  h <- file_hash(path)
+  entry <- list(
+    label = label %||% basename(path), path = path, required = isTRUE(required),
+    status = if (is.null(h)) "missing" else "present"
+  )
+  if (!is.null(h)) {
+    entry$hash_algo <- h$algo
+    entry$hash <- h$value
+    entry$bytes <- unname(file.size(path))
+  }
+  manifest_append(cfg, "inputs", entry)
+  invisible(entry)
+}
+
+#' §0.3 版本记录：全量已安装包 + 关键工具单独记版本。
+#'
+#' 脚本一律 `pkg::fun()` 写全名、不 attach，所以 `sessionInfo()$otherPkgs`
+#' 是空的 —— **"没 attach"不等于"没用"**。用 installed.packages() 才是
+#' 实际可用的全集。
+capture_versions <- function(cfg, key_packages = KEY_PACKAGES) {
+  full <- list()
+  ip <- tryCatch(
+    utils::installed.packages()[, c("Package", "Version"), drop = FALSE],
+    error = function(e) NULL
+  )
+  if (!is.null(ip)) {
+    # **必须 unname()。** `ip[i, "Version"]` 返回的是**带名字**的长度 1 字符
+    # 向量（名字是 "Version"），而 jsonlite 对"有名字的原子向量"序列化成
+    # 对象 —— 会写出 `{"dplyr": {"Version": "1.1.4"}}` 而不是
+    # `{"dplyr": "1.1.4"}`。Python 侧写的是后者，两边 schema 就对不上了，
+    # 而清单恰恰是要并排读的。这个错只有 CI 里看到 JSON 才发现。
+    for (i in seq_len(nrow(ip))) {
+      full[[ip[i, "Package"]]] <- unname(ip[i, "Version"])
+    }
+    full <- full[order(tolower(names(full)))]
+  } else {
+    log_warn("installed.packages() 失败 —— versions 会不完整")
+  }
+
+  key <- stats::setNames(vector("list", length(key_packages)), key_packages)
+  for (p in key_packages) {
+    v <- full[[p]]
+    key[[p]] <- if (is.null(v)) NA_character_ else as.character(v)
+  }
+
+  m <- read_manifest(cfg)
+  m$versions <- full
+  m$key_versions <- key
+  m$n_packages <- length(full)
+  m$r_version <- paste(R.version$major, R.version$minor, sep = ".")
+  m$platform <- R.version$platform
+  m$dataset_id <- cfg$dataset_id
+  m$updated_at <- format(Sys.time(), "%Y-%m-%dT%H:%M:%S")
+  write_manifest(cfg, m)
+
+  missing <- key_packages[vapply(key_packages, function(p) is.na(key[[p]]), logical(1))]
+  if (length(missing) > 0) {
+    log_warn(sprintf("关键工具未安装（%d/%d）：%s",
+                     length(missing), length(key_packages), paste(missing, collapse = ", ")))
+  } else {
+    log_info(sprintf("关键工具全部就位（%d 个），共记录 %d 个已安装包",
+                     length(key_packages), length(full)))
+  }
+  invisible(key)
+}
+
+#' §0.4 关键参数完整记录（含随机种子）
+record_params <- function(cfg, params) {
+  m <- read_manifest(cfg)
+  p <- m$params
+  if (is.null(p)) p <- list()
+  for (nm in names(params)) p[[nm]] <- params[[nm]]
+  m$params <- p
+  # **不能写 `m$seed <- cfg$analysis$seed`。** R 里 `x$k <- NULL` 是**删键**
+  # 不是"设成空值" —— seed 配错/缺失时种子会从清单里静默消失，而
+  # §0.3 要求所有随机过程都要记种子。用 list 赋值保住键，值可以是 null。
+  m["seed"] <- list(cfg$analysis$seed)
+  m$dataset_id <- cfg$dataset_id
+  m$updated_at <- format(Sys.time(), "%Y-%m-%dT%H:%M:%S")
+  write_manifest(cfg, m)
+  invisible(m)
+}
+
+#' §0.4 Agent 决策链：从原始问题到最终结论的每一步推理。
+#' evidence 要写**支持这个选择的实际数字**，不是"因为这是通行做法"。
+record_decision <- function(cfg, node, question, answer, evidence = "") {
+  manifest_append(cfg, "decisions", list(
+    node = node, question = question, answer = answer, evidence = evidence,
+    at = format(Sys.time(), "%Y-%m-%dT%H:%M:%S")
+  ))
+}
+
+#' §0.4 人工干预记录。
+#'
+#' status：pending（需确认，未确认）/ confirmed / overridden（人推翻了自动
+#' 结果，note 写改成什么）/ not_needed（本数据集不涉及）。
+#'
+#' **默认 pending 而不是 confirmed。** 自动化流水线不能替人签字 ——
+#' 把未确认的节点默认记成已确认，等于把复核节点变成摆设。
+record_human_review <- function(cfg, node, required = TRUE,
+                                status = "pending", note = "") {
+  manifest_append(cfg, "human_review", list(
+    node = node, required = isTRUE(required), status = status, note = note,
+    at = format(Sys.time(), "%Y-%m-%dT%H:%M:%S")
+  ))
+}
+
+#' §0.2 跨语言转换记录。
+#'
+#' 文档要求记录转换前后维度、metadata 字段数、丢失字段清单。桥接工具限定
+#' zellkonverter / anndata2ri，**禁止 sceasy**（维护状态差、metadata 丢失
+#' 风险高）。
+#'
+#' 本仓库与姊妹仓库之间只走 CSV，所以正常路径下 before/after 是行列数与
+#' 列名集合；真正发生对象级转换时才填 tool。
+record_cross_language <- function(cfg, src, dst, format,
+                                  before = NULL, after = NULL,
+                                  lost = character(0), tool = "", note = "") {
+  manifest_append(cfg, "cross_language", list(
+    src = src, dst = dst, format = format, tool = tool,
+    before = before %||% list(), after = after %||% list(),
+    lost_fields = sort(as.character(lost)), note = note,
+    at = format(Sys.time(), "%Y-%m-%dT%H:%M:%S")
+  ))
+}
+
+#' 给验收用的一行摘要
+#'
+#' **必需项缺失和可选项缺失分开报。** `clinical.csv` 是 required = FALSE ——
+#' 本来就可以没有。把它算进"缺失"会让每个没有临床表的数据集都判失败，
+#' 那是把"设计如此"当成"出错了"。两者都可见，但只有必需项判失败。
+manifest_summary <- function(cfg) {
+  m <- read_manifest(cfg)
+  if (length(m) == 0) return(list(present = FALSE))
+  pick <- function(k) m[[k]] %||% list()
+  ins <- pick("inputs")
+  statuses <- vapply(ins, function(i) i$status %||% "?", character(1))
+  labels <- vapply(ins, function(i) i$label %||% "?", character(1))
+  reqd <- vapply(ins, function(i) isTRUE(i$required), logical(1))
+  is_missing <- statuses == "missing"
+  hstat <- vapply(pick("human_review"), function(h) h$status %||% "?", character(1))
+  hnode <- vapply(pick("human_review"), function(h) h$node %||% "?", character(1))
+  list(
+    present = TRUE,
+    n_versions = length(pick("versions")),
+    n_inputs = length(ins),
+    inputs_missing = sort(labels[is_missing]),
+    inputs_missing_required = sort(labels[is_missing & reqd]),
+    n_decisions = length(pick("decisions")),
+    human_review_pending = sort(hnode[hstat == "pending"]),
+    n_cross_language = length(pick("cross_language"))
+  )
+}
+
 # ---- 统一调色板 -------------------------------------------------------------
 #
 # **语义固定，所有图共用同一套，色值全部取自 SCI 发表常用色板。**
