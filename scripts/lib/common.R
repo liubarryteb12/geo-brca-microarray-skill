@@ -266,6 +266,40 @@ wrap_subtitle <- function(x, fig_width = 8, base_size = 10) {
   paste(strwrap(x, width = chars), collapse = "\n")
 }
 
+#' 组内协方差椭圆的坐标
+#'
+#' **不用 `stat_ellipse()`。** 实测它在每组 3 个样本时产出了空数据 —— 图上
+#' 只有点、没有椭圆，而 ggplot 不会报错，坐标范围也没被撑大，所以从图上
+#' 完全看不出"这一层没画"。自己算有三个好处：画得出来、坐标能落盘核对、
+#' 半径系数是显式的而不是藏在 stat 内部。
+#'
+#' 半径按 `sqrt(qchisq(level, 2))`（`type = "norm"` 的口径）：
+#' 把协方差当作**已知**。ggplot 默认的 `"t"` 用
+#' `sqrt(2 * qf(level, 2, n-2))`，每组 3 个样本时是 6.16 倍标准差，
+#' 椭圆会比数据范围大 6 倍、把点压成中心一小团，所以这里不用它。
+#' 代价是**低估**了小样本下协方差本身的不确定性，这一点必须在图注里写明。
+#'
+#' @param x,y     同一组的点坐标
+#' @param level   置信水平
+#' @param n       椭圆上的点数
+#' @return 数据框，列为 `x` / `y` / `radius_sd`
+ellipse_points <- function(x, y, level = 0.95, n = 120L) {
+  if (length(x) < 3L || stats::var(x) == 0 || stats::var(y) == 0) return(NULL)
+  cov_m <- stats::cov(cbind(x, y))
+  if (any(!is.finite(cov_m)) || det(cov_m) <= 0) return(NULL)
+  eig <- eigen(cov_m, symmetric = TRUE)
+  radius <- sqrt(stats::qchisq(level, 2))
+  theta <- seq(0, 2 * pi, length.out = n)
+  # 单位圆 -> 按特征值缩放 -> 旋到主轴方向
+  pts <- cbind(cos(theta), sin(theta)) %*%
+    diag(sqrt(pmax(eig$values, 0)), 2L) %*% t(eig$vectors)
+  data.frame(
+    x = mean(x) + radius * pts[, 1L],
+    y = mean(y) + radius * pts[, 2L],
+    radius_sd = radius
+  )
+}
+
 #' 所有图共用的主题，保证字号、网格、留白一致
 #'
 #' **图例默认放底部、横向排列。** 右侧图例直接吃掉图的宽度 ——

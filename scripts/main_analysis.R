@@ -85,6 +85,9 @@ check_acceptance <- function(cfg) {
     list(name = "results/boxplot_before_after.pdf", ok = has("boxplot_before_after.pdf"), required = TRUE),
     list(name = "results/density_plot.pdf",         ok = has("density_plot.pdf"),         required = TRUE),
     list(name = "results/pca_plot.pdf",             ok = has("pca_plot.pdf"),             required = TRUE),
+    # 椭圆坐标落盘：从 PNG 反推"椭圆画没画、多大"是猜（实测 stat_ellipse 在 n=3 时
+    # 静默产出空数据，图上只有点）。有这张表就能直接核对。
+    list(name = "results/pca_ellipse.csv",          ok = has("pca_ellipse.csv"),          required = FALSE),
     list(name = "results/correlation_heatmap.pdf",  ok = has("correlation_heatmap.pdf"),  required = TRUE),
     list(name = "results/correlation_matrix.csv",   ok = has("correlation_matrix.csv"),   required = TRUE),
     list(name = "results/deg_table.csv",            ok = has("deg_table.csv"),            required = TRUE),

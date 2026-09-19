@@ -123,24 +123,48 @@ run_02_qc_pca_correlation <- function(cfg) {
   #
   # ---- 组内置信椭圆 -------------------------------------------------------
   #
-  # 用 `type = "norm"`，不是 ggplot 的默认 `"t"`。差别在半径系数：
-  #   norm: sqrt(qchisq(0.95, 2))                = 2.45 倍标准差
-  #   t   : sqrt(2 * qf(0.95, 2, n-2))           = n=3 时 6.16 倍
-  # 每组只有 3 个样本，`"t"` 的椭圆会有数据范围的 6 倍大，把点压成中心一个小点。
-  # `"norm"` 把协方差当作已知，因此**低估**了 n=3 下协方差本身的不确定性 ——
-  # 这一点必须在副标题里写明，不能让它冒充一个严格的 95% 区间。
+  # **不用 `stat_ellipse()`。** 实测它在每组 3 个样本时产出空数据 ——
+  # 图上只有点、没有椭圆，ggplot 不报错，坐标范围也没被撑大，
+  # 所以从图上完全看不出"这一层没画"。自己算坐标还能落盘核对。
+  #
+  # 半径按 `sqrt(qchisq(0.95, 2))` = 2.45 倍标准差（`type = "norm"` 的口径），
+  # 把协方差当作**已知**。ggplot 默认的 `"t"` 用
+  # `sqrt(2 * qf(0.95, 2, n-2))`，每组 3 个样本时是 6.16 倍，椭圆比数据范围还大 6 倍、
+  # 把点压成中心一小团，所以不用它。代价是**低估**了小样本下协方差本身的不确定性 ——
+  # 这一点必须在副标题里写明，不能让它冒充严格的 95% 区间。
   ell_ok <- all(table(groups) >= 3L)
   ell_radius <- sqrt(stats::qchisq(0.95, 2))
-  # 椭圆要 fill 映射，否则 polygon 默认填充灰色、和分组颜色对不上。
-  # fill 图例用 show.legend = FALSE 压掉 —— 颜色和形状已经各有一个图例了。
-  ell_layer <- if (ell_ok) {
-    stat_ellipse(geom = "polygon", type = "norm", level = 0.95,
-                 ggplot2::aes(fill = group),
-                 alpha = 0.10, linewidth = 0.4, show.legend = FALSE)
+  ell_df <- do.call(rbind, lapply(levels(groups), function(g) {
+    idx <- which(as.character(groups) == g)
+    e <- if (ell_ok) ellipse_points(pca_df$PC1[idx], pca_df$PC2[idx], level = 0.95) else NULL
+    if (is.null(e)) return(NULL)
+    e$group <- g
+    e
+  }))
+  if (!is.null(ell_df)) {
+    utils::write.csv(ell_df[, c("group", "x", "y", "radius_sd")],
+                     file.path(res, "pca_ellipse.csv"), row.names = FALSE)
+    ell_extent <- vapply(levels(groups), function(g) {
+      d <- ell_df[ell_df$group == g, , drop = FALSE]
+      max(diff(range(d$x)), diff(range(d$y)))
+    }, numeric(1))
+    data_extent <- max(diff(range(pca_df$PC1)), diff(range(pca_df$PC2)))
+    log_info(sprintf("PCA 椭圆：半径 %.2f SD；椭圆跨度 %s，数据跨度 %.1f（比值 %.2f）",
+                     ell_radius, paste(sprintf("%.1f", ell_extent), collapse = " / "),
+                     data_extent, max(ell_extent) / data_extent))
+  } else {
+    log_warn("PCA 椭圆跳过：每组样本不足 3 个，或协方差奇异")
   }
+
   p_pca <- ggplot(pca_df, aes(x = PC1, y = PC2, colour = group, shape = group,
-                              label = sample)) +
-    ell_layer +
+                              label = sample))
+  if (!is.null(ell_df)) {
+    # 椭圆用自己算的坐标画。fill 映射到 group，图例靠 show.legend = FALSE 压掉。
+    p_pca <- p_pca + geom_polygon(
+      data = ell_df, ggplot2::aes(x = x, y = y, fill = group, group = group),
+      colour = NA, alpha = 0.12, show.legend = FALSE, inherit.aes = FALSE)
+  }
+  p_pca <- p_pca +
     geom_point(size = 3.6, stroke = 0.9) +
     geom_text(vjust = -1, size = 2.4, show.legend = FALSE, colour = PAL$ink) +
     scale_colour_condition(levels(groups), name = NULL) +
