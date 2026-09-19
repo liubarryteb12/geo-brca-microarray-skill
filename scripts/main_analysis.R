@@ -37,7 +37,8 @@ local({
 options(geo.orchestrated = TRUE)
 
 for (f in c("00_validate_inputs.R", "01_download_clean.R", "02_qc_pca_correlation.R",
-            "03_deg.R", "04_heatmap_enrichment.R", "05_ppi.R")) {
+            "03_deg.R", "04_heatmap_enrichment.R", "05_ppi.R",
+            "06_wgcna.R", "07_lasso.R")) {
   p <- file.path(.geo_scripts_dir, f)
   if (!file.exists(p)) stop(sprintf("缺少步骤脚本: %s", p))
   source(p)
@@ -45,6 +46,11 @@ for (f in c("00_validate_inputs.R", "01_download_clean.R", "02_qc_pca_correlatio
 
 # ---- 步骤定义 --------------------------------------------------------------
 # required = TRUE 的步骤失败会让整个运行以非零码退出
+#
+# **06/07 是可选步骤，但"可选"不等于"可以静默不做"** —— 两个脚本都会在
+# 不适用时写一份 wgcna_status.json / lasso_status.json 说明原因
+# （design_mode 不对、事件数不够、终点没配）。验收项检查的是**那份记录**，
+# 不是"有没有出图"。所以 n=6 的 GSE64790 也能通过验收，而日志里说清了为什么。
 STEPS <- list(
   list(id = "validate_inputs",    fn = run_00_validate_inputs,     required = TRUE),
   list(id = "download_clean",     fn = run_01_download_clean,      required = TRUE),
@@ -52,7 +58,9 @@ STEPS <- list(
   list(id = "limma_deg",          fn = run_03_deg,                 required = TRUE),
   list(id = "deg_heatmap",        fn = run_04a_heatmap,            required = TRUE),
   list(id = "go_kegg_enrich",     fn = run_04b_enrichment,         required = FALSE),
-  list(id = "ppi_string",         fn = run_05_ppi,                 required = FALSE)
+  list(id = "ppi_string",         fn = run_05_ppi,                 required = FALSE),
+  list(id = "wgcna",              fn = run_06_wgcna,               required = FALSE),
+  list(id = "lasso_cox",          fn = run_07_lasso,               required = FALSE)
 )
 
 # ---- 验收项（直接对应 spec 的 acceptance_criteria）-------------------------
@@ -67,6 +75,8 @@ check_acceptance <- function(cfg) {
   }
   enrich <- read_status("enrichment_status.json")
   ppi <- read_status("ppi_status.json")
+  wgcna <- read_status("wgcna_status.json")
+  lasso <- read_status("lasso_status.json")
   # 富集/PPI 允许"为空/回退"，但必须留下原因记录
   # 状态文件有两种形状：
   #   enrichment_status.json -> {"go": {"status": ...}, "kegg": {...}}
@@ -79,6 +89,17 @@ check_acceptance <- function(cfg) {
     node <- s[[key]]
     st <- if (is.list(node)) node$status else node
     !is.null(st) && !identical(st, "not_run")
+  }
+  # WGCNA / LASSO 的"做了"判据是**状态文件里有一个已定论的状态**。
+  # 允许的终态：ok（真跑了）、not_applicable / not_configured /
+  # too_few_events / package_missing / endpoint_error（有理由地没跑）。
+  # 不允许：文件不存在，或者 status 还是 not_run —— 那说明脚本压根没执行到，
+  # 而不是"这一步不适用"。
+  settled <- function(s) {
+    if (is.null(s) || is.null(s$status)) return(FALSE)
+    s$status %in% c("ok", "not_applicable", "not_configured", "too_few_events",
+                    "too_few_samples", "package_missing", "endpoint_error",
+                    "empty_signature")
   }
 
   # name 用 file.path(res, ...) 而不是字面量 "results/..." —— 产物现在按数据集
@@ -114,7 +135,17 @@ check_acceptance <- function(cfg) {
     list(name = "preranked GSEA / KEGG（结果或原因）",
          ok = has("GSEA_KEGG_dotplot.pdf") || documented(enrich, "gsea_kegg"), required = FALSE),
     list(name = "PPI 网络（结果或回退原因）",
-         ok = has("PPI_network.png") || documented(ppi, "status"),  required = FALSE)
+         ok = has("PPI_network.png") || documented(ppi, "status"),  required = FALSE),
+    # 热图行名放不下时会被隐藏 —— 那就必须有一张表能还原"第 N 行是哪个基因"。
+    # 这条是**条件性**的：只有在行名被隐藏时才强制要求这张表。
+    list(name = "top50_heatmap_genes.csv（行名隐藏时的对照表）",
+         ok = has("top50_heatmap_genes.csv") || has("top50_heatmap.pdf"),
+         required = TRUE),
+    list(name = "PPI 图注文件（图上写了什么，可检索）",
+         ok = has("PPI_network_caption.txt") || !has("PPI_network.png"),
+         required = FALSE),
+    list(name = "WGCNA（结果或不适用原因）", ok = settled(wgcna), required = FALSE),
+    list(name = "LASSO-Cox（结果或不适用原因）", ok = settled(lasso), required = FALSE)
   )
 
   # deg_table.csv 必须含 spec 要求的四列

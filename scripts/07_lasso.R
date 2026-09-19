@@ -1,0 +1,513 @@
+# ============================================================================
+# 07_lasso.R — LASSO-Cox 预后签名 + 外部验证
+# ============================================================================
+# 只在 design_mode: cohort 且 config 显式声明了随访终点时运行。
+#
+# **终点必须由 config 指定，不自动配对。** 实测 GSE20685 的字段是
+# `event_death` 和 `follow_up_duration (years)` —— 名字里没有任何共同词，
+# 靠关键词配对（time/duration/survival）在别的数据集上一定会配错，
+# 而配错不会报错，只会安静地算出一个错的 C-index。
+#
+# **EPV 门禁。** 通行判据是每个入选变量至少 10 个事件（events per variable）。
+# 实测 GSE42568 的 OS 只有 35 个事件 -> 签名超过 3 个基因就开始过拟合。
+# 这里不"禁止"超过 EPV 的签名（文献里到处都是），但会：
+#   * 把上限算出来写进 status 和日志；
+#   * 用 lambda.1se（而不是 lambda.min）压变量数；
+#   * **报外部验证的 C-index**，因为只有它不受过拟合影响。
+#
+# 输出：results/<GSE>/lasso_coefficients.csv, lasso_risk_scores.csv,
+#       lasso_cv_curve.csv, lasso_stability.csv, lasso_km.pdf,
+#       lasso_validation.csv（有外部队列时）, lasso_status.json
+# ============================================================================
+
+suppressPackageStartupMessages({
+  library(jsonlite)
+})
+
+# ---- bootstrap -------------------------------------------------------------
+local({
+  if (exists("load_config", mode = "function")) return(invisible(NULL))
+  file_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+  here <- if (length(file_arg) > 0L) {
+    dirname(normalizePath(sub("^--file=", "", file_arg[[1L]])))
+  } else {
+    getwd()
+  }
+  cand <- c(file.path(here, "lib", "common.R"),
+            file.path(here, "scripts", "lib", "common.R"),
+            file.path(here, "..", "lib", "common.R"))
+  hit <- cand[file.exists(cand)]
+  if (length(hit) == 0L) stop("找不到 lib/common.R；请从仓库根目录运行")
+  source(hit[[1L]])
+
+  # 外部验证要复用 step 00/01 的辅助函数：`split_soft_samples()`（00）、
+  # `fetch_platform_annotation()` / `map_features_to_symbols()` / `collapse_to_symbol()`（01）。
+  # 编排器（main_analysis.R）已经把这两个脚本 source 进来了，所以只在缺失时补。
+  # 不补的话 `Rscript scripts/07_lasso.R` 能跑完训练集、然后在外部验证那一步
+  # 报 "could not find function"——而那正好是最不该失败的地方。
+  if (!exists("collapse_to_symbol", mode = "function")) {
+    for (f in c("00_validate_inputs.R", "01_download_clean.R")) {
+      p <- file.path(here, f)
+      if (file.exists(p)) source(p)
+    }
+  }
+})
+
+EPV_MIN <- 10   # 每个变量至少 10 个事件
+
+#' 从 clinical.csv 读出随访时间与事件
+#'
+#' 列名由 config 显式给出；事件取值也显式给出（`event_value`）。
+#' 把"什么算事件"写死成 `== 1` 会在事件编码成 "dead"/"recurred" 时静默
+#' 把所有样本判成删失，C-index 变成 0.5 而没有任何报错。
+#'
+#' @return list(time, event, n_events, n_usable) 或 NULL（并记录原因）
+read_survival <- function(cfg) {
+  dat <- cfg$output$data_dir
+  path <- file.path(dat, "clinical.csv")
+  if (!file.exists(path)) return(list(err = "clinical.csv 不存在（step 00 未产出）"))
+  clin <- utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
+
+  sv <- cfg$survival
+  tc <- sv$time_column; ec <- sv$event_column
+  if (is.null(tc) || is.null(ec) || !nzchar(tc) || !nzchar(ec)) {
+    return(list(err = "config 未指定 survival.time_column / event_column"))
+  }
+  if (!tc %in% colnames(clin)) {
+    return(list(err = sprintf("clinical.csv 里没有时间列「%s」；实际列: %s",
+                              tc, paste(utils::head(colnames(clin), 20), collapse = ", "))))
+  }
+  if (!ec %in% colnames(clin)) {
+    return(list(err = sprintf("clinical.csv 里没有事件列「%s」", ec)))
+  }
+
+  time  <- suppressWarnings(as.numeric(clin[[tc]]))
+  ev_raw <- trimws(as.character(clin[[ec]]))
+  ev_levels <- as.character(unlist(sv$event_value %||% list("1")))
+  event <- ifelse(ev_raw %in% ev_levels, 1L,
+                  ifelse(is.na(ev_raw) | !nzchar(ev_raw), NA_integer_, 0L))
+
+  ok <- is.finite(time) & time > 0 & !is.na(event)
+  if (sum(ok) == 0L) {
+    return(list(err = sprintf(
+      "时间/事件列没有一个可用样本。事件列「%s」的实际取值: %s；config 声明的事件取值: %s",
+      ec, paste(utils::head(unique(ev_raw), 8), collapse = ", "),
+      paste(ev_levels, collapse = ", "))))
+  }
+  list(gsm = clin$gsm[ok], time = time[ok], event = event[ok],
+       n_usable = sum(ok), n_events = sum(event[ok] == 1L),
+       time_column = tc, event_column = ec, event_levels = ev_levels)
+}
+
+#' KM 曲线（不依赖 survminer，自己用 survfit + ggplot 画）
+#'
+#' 风险分组用**训练集的中位数**切，验证集也用它 —— 若在验证集里重新取中位数，
+#' 两个队列的"高风险"就不是同一个定义，KM 图看起来能对上而实际上不可比。
+make_km_plot <- function(df, cutoff, title, cfg) {
+  df$stratum <- factor(ifelse(df$risk > cutoff, "high risk", "low risk"),
+                       levels = c("low risk", "high risk"))
+  fit <- survival::survfit(survival::Surv(time, event) ~ stratum, data = df)
+  # 手写 KM 阶梯：survfit 对象里没有现成的 ggplot 接口
+  s <- summary(fit)
+  steps <- data.frame(
+    time    = s$time,
+    surv    = s$surv,
+    stratum = sub("^stratum=", "", as.character(s$strata)),
+    stringsAsFactors = FALSE)
+  # 每条曲线的起点 (0, 1)
+  starts <- do.call(rbind, lapply(unique(steps$stratum), function(g) {
+    data.frame(time = 0, surv = 1, stratum = g, stringsAsFactors = FALSE)
+  }))
+  steps <- rbind(starts, steps)
+  steps <- steps[order(steps$stratum, steps$time), , drop = FALSE]
+
+  # 删失点：从 survfit 的 n.censor 里取，标在曲线上
+  cens <- data.frame(time = s$time, n.censor = s$n.censor,
+                     stratum = sub("^stratum=", "", as.character(s$strata)),
+                     stringsAsFactors = FALSE)
+  cens <- cens[cens$n.censor > 0L, , drop = FALSE]
+  if (nrow(cens) > 0L) {
+    # 找到每个删失时刻对应的生存概率
+    cens$surv <- vapply(seq_len(nrow(cens)), function(i) {
+      sub <- steps[steps$stratum == cens$stratum[i] & steps$time <= cens$time[i], , drop = FALSE]
+      if (nrow(sub) == 0L) NA_real_ else sub$surv[nrow(sub)]
+    }, numeric(1))
+    cens <- cens[is.finite(cens$surv), , drop = FALSE]
+  }
+
+  # log-rank p
+  lr <- survival::survdiff(survival::Surv(time, event) ~ stratum, data = df)
+  p_lr <- stats::pchisq(lr$chisq, df = length(lr$n) - 1L, lower.tail = FALSE)
+  n_hi <- sum(df$stratum == "high risk"); n_lo <- sum(df$stratum == "low risk")
+
+  p <- ggplot2::ggplot(steps, ggplot2::aes(x = time, y = surv, colour = stratum)) +
+    ggplot2::geom_step(linewidth = 0.5) +
+    ggplot2::scale_colour_manual(
+      values = c("low risk" = PAL$down, "high risk" = PAL$up),
+      labels = c("low risk" = sprintf("low risk (n=%d)", n_lo),
+                 "high risk" = sprintf("high risk (n=%d)", n_hi)),
+      name = NULL) +
+    ggplot2::coord_cartesian(ylim = c(0, 1)) +
+    ggplot2::labs(
+      title = title,
+      subtitle = wrap_subtitle(sprintf(
+        paste0("median split at risk score = %.3f (cut-off fixed on the TRAINING set). ",
+               "log-rank p = %.3g. Censored observations are tick marks; ",
+               "shaded bands would imply a confidence interval the n does not support."),
+        cutoff, p_lr), fig_width = 7.5),
+      x = "time", y = "survival probability") +
+    theme_paper(10) +
+    ggplot2::theme(legend.position = "bottom")
+  if (nrow(cens) > 0L) {
+    p <- p + ggplot2::geom_point(data = cens, shape = 124, size = 1.6,
+                                 colour = PAL$ink, show.legend = FALSE)
+  }
+  p
+}
+
+#' 下载并清洗外部验证队列的表达矩阵
+#'
+#' **不走 step 00/01 的完整流程。** 那两个步骤的门禁是"两组设计、每组 >= 10"，
+#' 而预后验证队列（如 GSE20685）是**单一队列、全部是癌**，没有对照组 ——
+#' 拿它去跑两组门禁只会得到"分组失败"。
+#' 这里只需要"表达矩阵 + 临床终点"，所以单独走一条轻量路径，
+#' 但探针映射与基因折叠复用 step 01 的函数，保证两个队列的基因空间一致。
+#'
+#' @return list(expr, clinical) 或 list(err = ...)
+load_external_cohort <- function(cfg, gse, platform_id) {
+  cache_dir <- file.path(cfg$output$data_dir, paste0("external_", gse))
+  if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
+
+  eset <- tryCatch(
+    GEOquery::getGEO(gse, GSEMatrix = TRUE, getGPL = FALSE, destdir = cache_dir, AnnotGPL = FALSE),
+    error = function(e) NULL)
+  if (is.null(eset)) return(list(err = sprintf("GEO 下载 %s 失败", gse)))
+  if (is.list(eset)) eset <- eset[[1L]]
+
+  expr <- Biobase::exprs(eset)
+  pd <- Biobase::pData(eset)
+  gsm <- if ("geo_accession" %in% colnames(pd)) as.character(pd$geo_accession) else rownames(pd)
+  colnames(expr) <- gsm
+  if (stats::median(expr, na.rm = TRUE) > 50) {
+    expr[expr < 0] <- NA
+    expr <- log2(expr + 1)
+  }
+
+  gpl_id <- Biobase::annotation(eset)
+  if (is.null(gpl_id) || !nzchar(gpl_id) || identical(gpl_id, "NA")) {
+    gpl_id <- unique(as.character(pd$platform_id))[1L]
+  }
+  fdata <- tryCatch(fetch_platform_annotation(gpl_id, cache_dir), error = function(e) NULL)
+  if (is.null(fdata)) return(list(err = sprintf("平台注释 %s 抓取失败", gpl_id)))
+  if ("ID" %in% colnames(fdata)) {
+    idx <- match(rownames(expr), as.character(fdata$ID))
+    fdata <- fdata[idx, , drop = FALSE]
+    rownames(fdata) <- rownames(expr)
+  }
+  sym <- map_features_to_symbols(rownames(expr), fdata)
+  expr <- collapse_to_symbol(expr, sym)
+
+  # 临床：复用与 step 00 完全相同的解析器
+  gsm_lines <- fetch_geo_soft(gse, targ = "gsm")
+  blocks <- split_soft_samples(gsm_lines)
+  clinical <- clinical_table(blocks, vapply(blocks, function(b)
+    soft_value(b, "Sample_geo_accession"), character(1)))
+  list(expr = expr, clinical = clinical, platform = gpl_id)
+}
+
+run_07_lasso <- function(cfg) {
+  log_info("=== 步骤 07：LASSO-Cox 预后签名 ===")
+  ensure_dirs(cfg)
+  res <- cfg$output$results_dir
+  status <- list(step = "lasso")
+
+  if (!identical(cfg$design_mode, "cohort")) {
+    status$status <- "not_applicable"
+    status$reason <- sprintf("design_mode=%s；预后建模需要队列级样本量", cfg$design_mode)
+    write_json(file.path(res, "lasso_status.json"), status)
+    log_warn(sprintf("跳过 LASSO：%s", status$reason))
+    return(invisible(NULL))
+  }
+  sv <- cfg$survival
+  if (is.null(sv) || !isTRUE(sv$enabled)) {
+    status$status <- "not_configured"
+    status$reason <- "config 没有启用 survival 段（终点必须显式声明，不自动配对）"
+    write_json(file.path(res, "lasso_status.json"), status)
+    log_warn(sprintf("跳过 LASSO：%s", status$reason))
+    return(invisible(NULL))
+  }
+  for (pkg in c("glmnet", "survival")) {
+    if (!requireNamespace(pkg, quietly = TRUE)) {
+      status$status <- "package_missing"
+      status$reason <- sprintf("%s 未安装", pkg)
+      write_json(file.path(res, "lasso_status.json"), status)
+      log_warn(sprintf("跳过 LASSO：%s", status$reason))
+      return(invisible(NULL))
+    }
+  }
+
+  # ---- 1. 终点 ------------------------------------------------------------
+  surv <- read_survival(cfg)
+  if (!is.null(surv$err)) {
+    status$status <- "endpoint_error"
+    status$reason <- surv$err
+    write_json(file.path(res, "lasso_status.json"), status)
+    log_warn(sprintf("跳过 LASSO：%s", surv$err))
+    return(invisible(NULL))
+  }
+  status$time_column <- surv$time_column
+  status$event_column <- surv$event_column
+  status$event_levels <- as.list(surv$event_levels)
+  status$n_usable <- surv$n_usable
+  status$n_events <- surv$n_events
+
+  min_events <- as.integer(sv$min_events %||% 20L)
+  if (surv$n_events < min_events) {
+    status$status <- "too_few_events"
+    status$reason <- sprintf("只有 %d 个事件（< %d），Cox 模型无法给出可用估计",
+                             surv$n_events, min_events)
+    write_json(file.path(res, "lasso_status.json"), status)
+    log_warn(sprintf("跳过 LASSO：%s", status$reason))
+    return(invisible(NULL))
+  }
+
+  # **EPV 门禁**：算出来、写下来，但不假装它能被绕过
+  epv_cap <- floor(surv$n_events / EPV_MIN)
+  status$epv_min <- EPV_MIN
+  status$epv_max_variables <- epv_cap
+  log_info(sprintf("EPV: %d 个事件 / %d = 签名最多 %d 个基因（超过即过拟合）",
+                   surv$n_events, EPV_MIN, epv_cap))
+
+  # ---- 2. 表达矩阵（只用肿瘤组）-------------------------------------------
+  expr  <- readRDS(file.path(cfg$output$data_dir, "expr_clean.rds"))
+  group <- utils::read.csv(file.path(cfg$output$data_dir, "group.csv"), stringsAsFactors = FALSE)
+  tumor <- group$gsm[group$group == cfg$contrast[1L]]
+  common <- Reduce(intersect, list(surv$gsm, tumor, colnames(expr)))
+  if (length(common) < 20L) {
+    status$status <- "too_few_samples"
+    status$reason <- sprintf("同时有表达、属于 %s、且有随访的样本只有 %d 个",
+                             cfg$contrast[1L], length(common))
+    write_json(file.path(res, "lasso_status.json"), status)
+    log_warn(sprintf("跳过 LASSO：%s", status$reason))
+    return(invisible(NULL))
+  }
+  idx <- match(common, surv$gsm)
+  time <- surv$time[idx]; event <- surv$event[idx]
+  status$n_samples <- length(common)
+  status$n_events_used <- sum(event == 1L)
+  log_info(sprintf("建模样本: %d 个（%s 组且有随访），其中 %d 个事件",
+                   length(common), cfg$contrast[1L], sum(event == 1L)))
+
+  # ---- 3. 候选基因：FDR 显著 DEG ------------------------------------------
+  deg <- utils::read.csv(file.path(res, "deg_table.csv"), stringsAsFactors = FALSE)
+  sig <- deg[deg$adj.P.Val < cfg$thresholds$adj_p &
+             abs(deg$logFC) > cfg$thresholds$log2fc, , drop = FALSE]
+  cand <- intersect(sig$gene, rownames(expr))
+  status$deg_mode <- if (nrow(sig) > 0L) "fdr" else "ranked_fallback"
+  if (length(cand) < 5L) {
+    # 与 step 04/05 一致：FDR 为空时退回排序表前 N，但**明确标注**
+    n_fb <- as.integer(cfg$analysis$ranked_fallback_genes %||% 500L)
+    cand <- intersect(utils::head(deg$gene[order(deg$P.Value)], n_fb), rownames(expr))
+    status$deg_mode <- "ranked_fallback"
+    log_warn(sprintf("FDR 显著基因为空，LASSO 候选退回 raw P 前 %d 个（结论只能作假设生成）", n_fb))
+  }
+  status$n_candidates <- length(cand)
+  log_info(sprintf("LASSO 候选基因: %d 个（deg_mode=%s）", length(cand), status$deg_mode))
+
+  # ---- 4. 重复 CV ---------------------------------------------------------
+  seed <- cfg$analysis$seed
+  if (!is.null(seed)) set.seed(seed)
+  x <- t(expr[cand, common, drop = FALSE])
+  # 标准化：glmnet 默认 standardize=TRUE，但**验证队列必须用训练集的均值方差**，
+  # 所以这里自己算并存下来，避免验证时又按验证集的尺度标准化。
+  x_center <- colMeans(x); x_scale <- apply(x, 2L, stats::sd)
+  x_scale[!is.finite(x_scale) | x_scale == 0] <- 1
+  x <- scale(x, center = x_center, scale = x_scale)
+  y <- survival::Surv(time, event)
+
+  folds  <- as.integer(sv$cv_folds %||% 10L)
+  repeats <- as.integer(sv$cv_repeats %||% 5L)
+  foldid_list <- lapply(seq_len(repeats), function(r) {
+    # 显式 foldid：不传的话 cv.glmnet 自己抽，重复之间不可比
+    sample(rep(seq_len(folds), length.out = length(time)))
+  })
+
+  cvs <- lapply(foldid_list, function(fid) {
+    glmnet::cv.glmnet(x, y, family = "cox", alpha = 1, foldid = fid, type.measure = "C")
+  })
+  status$cv_folds <- folds
+  status$cv_repeats <- repeats
+
+  # 稳定性：每轮 lambda.1se 选中的基因数与集合
+  stab <- do.call(rbind, lapply(seq_along(cvs), function(i) {
+    b <- as.matrix(stats::coef(cvs[[i]], s = "lambda.1se"))
+    nz <- rownames(b)[b[, 1L] != 0]
+    data.frame(repeat_id = i, lambda_1se = cvs[[i]]$lambda.1se, n_selected = length(nz),
+               genes = paste(nz, collapse = " | "), stringsAsFactors = FALSE)
+  }))
+  utils::write.csv(stab, file.path(res, "lasso_stability.csv"), row.names = FALSE)
+  status$n_selected_per_repeat <- as.list(stab$n_selected)
+  status$n_selected_median <- stats::median(stab$n_selected)
+
+  # 基因入选频率：比"某一轮选了哪些"更能说明稳定性
+  all_sel <- unlist(strsplit(stab$genes, " \\| "))
+  all_sel <- all_sel[nzchar(all_sel)]
+  freq <- sort(table(all_sel), decreasing = TRUE)
+  utils::write.csv(data.frame(gene = names(freq), n_repeats = as.integer(freq),
+                              stringsAsFactors = FALSE),
+                   file.path(res, "lasso_selection_frequency.csv"), row.names = FALSE)
+
+  # 最终模型用第一轮的 foldid 对应的 lambda.1se（显式、可复现）
+  final_cv <- cvs[[1L]]
+  fit <- glmnet::glmnet(x, y, family = "cox", alpha = 1, lambda = final_cv$lambda.1se)
+  beta <- as.matrix(stats::coef(fit))
+  coef_df <- data.frame(gene = rownames(beta), coef = beta[, 1L], stringsAsFactors = FALSE)
+  coef_df <- coef_df[coef_df$coef != 0, , drop = FALSE]
+  coef_df <- coef_df[order(-abs(coef_df$coef)), , drop = FALSE]
+  rownames(coef_df) <- NULL
+  utils::write.csv(coef_df, file.path(res, "lasso_coefficients.csv"), row.names = FALSE)
+
+  status$lambda_1se <- final_cv$lambda.1se
+  status$n_signature_genes <- nrow(coef_df)
+  status$exceeds_epv <- nrow(coef_df) > epv_cap
+  if (nrow(coef_df) == 0L) {
+    status$status <- "empty_signature"
+    status$reason <- "lambda.1se 下所有系数被压为 0，没有可用签名"
+    write_json(file.path(res, "lasso_status.json"), status)
+    log_warn(sprintf("LASSO：%s", status$reason))
+    return(invisible(NULL))
+  }
+  if (status$exceeds_epv) {
+    log_warn(sprintf("签名 %d 个基因 > EPV 上限 %d —— 训练集 C-index 会偏高，以外部验证为准",
+                     nrow(coef_df), epv_cap))
+  } else {
+    log_info(sprintf("签名 %d 个基因（EPV 上限 %d）", nrow(coef_df), epv_cap))
+  }
+
+  # ---- 5. 训练集风险分与 C-index ------------------------------------------
+  risk_train <- as.numeric(predict(fit, newx = x, type = "link"))
+  names(risk_train) <- common
+  c_train <- survival::concordance(y ~ risk_train)
+  status$cindex_train <- unname(c_train$concordance)
+
+  # 交叉验证得到的 C-index 是**乐观程度更小**的那个，一并报出来
+  # 用 which.min(abs(...)) 而不是 which(lambda == lambda.1se)：
+  # 后者在浮点不完全相等时返回 integer(0)，status 里就会出现一个空的
+  # cindex_cv，而空值在 JSON 里看着像"没算"，不像"算错了"。
+  status$cindex_cv <- unname(final_cv$cvm[which.min(abs(final_cv$lambda - final_cv$lambda.1se))])
+  log_info(sprintf("C-index: 训练集 %.3f | 交叉验证 %.3f",
+                   status$cindex_train, status$cindex_cv))
+
+  # ---- 6. 外部验证 --------------------------------------------------------
+  val_gse <- sv$validation_dataset
+  cutoff <- stats::median(risk_train)
+  risk_df <- data.frame(gsm = common, time = time, event = event, risk = risk_train,
+                        set = "training", stringsAsFactors = FALSE)
+
+  if (!is.null(val_gse) && nzchar(val_gse)) {
+    val <- tryCatch(load_external_cohort(cfg, val_gse, sv$validation_platform_id),
+                    error = function(e) list(err = conditionMessage(e)))
+    if (!is.null(val$err)) {
+      status$validation <- "failed"
+      status$validation_error <- val$err
+      log_warn(sprintf("外部验证失败（签名本身有效）: %s", val$err))
+    } else {
+      vexpr <- val$expr; vclin <- val$clinical
+      vs <- read_survival_from_table(vclin, sv, val_gse)
+      if (!is.null(vs$err)) {
+        status$validation <- "endpoint_error"
+        status$validation_error <- vs$err
+        log_warn(sprintf("外部验证：%s", vs$err))
+      } else {
+        genes <- coef_df$gene
+        miss <- setdiff(genes, rownames(vexpr))
+        have <- intersect(genes, rownames(vexpr))
+        vcommon <- Reduce(intersect, list(vs$gsm, colnames(vexpr)))
+        status$validation_dataset <- val_gse
+        status$validation_n_samples <- length(vcommon)
+        status$validation_n_events <- sum(vs$event[match(vcommon, vs$gsm)] == 1L)
+        status$validation_genes_found <- length(have)
+        status$validation_genes_missing <- as.list(miss)
+
+        if (length(have) == 0L || length(vcommon) < 10L) {
+          status$validation <- "unusable"
+          log_warn("外部验证：可用样本或基因不足")
+        } else {
+          # **用训练集的均值方差标准化验证集**，否则两个队列的风险分不在同一尺度上，
+          # 中位数切点也就失去意义。
+          vx <- t(vexpr[have, vcommon, drop = FALSE])
+          vx <- scale(vx, center = x_center[have], scale = x_scale[have])
+          vx[!is.finite(vx)] <- 0
+          b <- coef_df$coef[match(have, coef_df$gene)]
+          risk_val <- as.numeric(vx %*% b)
+          vi <- match(vcommon, vs$gsm)
+          vy <- survival::Surv(vs$time[vi], vs$event[vi])
+          c_val <- survival::concordance(vy ~ risk_val)
+          status$validation <- "ok"
+          status$cindex_validation <- unname(c_val$concordance)
+          log_info(sprintf("外部验证 %s: n=%d, %d 个事件, C-index = %.3f（训练集 %.3f）",
+                           val_gse, length(vcommon), status$validation_n_events,
+                           status$cindex_validation, status$cindex_train))
+          risk_df <- rbind(risk_df,
+                           data.frame(gsm = vcommon, time = vs$time[vi], event = vs$event[vi],
+                                      risk = risk_val, set = val_gse, stringsAsFactors = FALSE))
+        }
+      }
+    }
+  } else {
+    status$validation <- "not_configured"
+    log_warn("未配置外部验证队列；训练集 C-index 不能作为签名性能的证据")
+  }
+
+  utils::write.csv(risk_df, file.path(res, "lasso_risk_scores.csv"), row.names = FALSE)
+  utils::write.csv(data.frame(lambda = final_cv$lambda, cvm = final_cv$cvm,
+                              cvsd = final_cv$cvsd, nzero = final_cv$nzero),
+                   file.path(res, "lasso_cv_curve.csv"), row.names = FALSE)
+
+  # KM：训练集与验证集各一张，**切点都用训练集的中位数**
+  save_pdf(file.path(res, "lasso_km.pdf"), {
+    print(make_km_plot(risk_df[risk_df$set == "training", , drop = FALSE], cutoff,
+                       sprintf("LASSO-Cox risk groups (training) - %s", cfg$dataset_id), cfg))
+    if (any(risk_df$set != "training")) {
+      vset <- unique(risk_df$set[risk_df$set != "training"])[1L]
+      print(make_km_plot(risk_df[risk_df$set == vset, , drop = FALSE], cutoff,
+                         sprintf("LASSO-Cox risk groups (external validation: %s)", vset), cfg))
+    }
+  }, width = 7.5, height = 5.5)
+
+  status$status <- "ok"
+  write_json(file.path(res, "lasso_status.json"), status)
+  log_info(paste0("已生成 lasso_coefficients.csv / lasso_risk_scores.csv / lasso_stability.csv / ",
+                  "lasso_cv_curve.csv / lasso_km.pdf / lasso_status.json"))
+  invisible(coef_df)
+}
+
+#' 在任意临床表上按 config 的列名取终点（外部队列用）
+read_survival_from_table <- function(clin, sv, gse) {
+  tc <- sv$validation_time_column %||% sv$time_column
+  ec <- sv$validation_event_column %||% sv$event_column
+  if (!tc %in% colnames(clin)) {
+    return(list(err = sprintf("%s 没有时间列「%s」；实际列: %s", gse, tc,
+                              paste(utils::head(colnames(clin), 20), collapse = ", "))))
+  }
+  if (!ec %in% colnames(clin)) {
+    return(list(err = sprintf("%s 没有事件列「%s」", gse, ec)))
+  }
+  time <- suppressWarnings(as.numeric(clin[[tc]]))
+  ev_raw <- trimws(as.character(clin[[ec]]))
+  lv <- as.character(unlist(sv$validation_event_value %||% sv$event_value %||% list("1")))
+  event <- ifelse(ev_raw %in% lv, 1L,
+                  ifelse(is.na(ev_raw) | !nzchar(ev_raw), NA_integer_, 0L))
+  ok <- is.finite(time) & time > 0 & !is.na(event)
+  if (sum(ok) == 0L) {
+    return(list(err = sprintf("%s 的时间/事件列没有可用样本（事件列取值: %s）", gse,
+                              paste(utils::head(unique(ev_raw), 8), collapse = ", "))))
+  }
+  list(gsm = clin$gsm[ok], time = time[ok], event = event[ok],
+       n_events = sum(event[ok] == 1L), time_column = tc, event_column = ec)
+}
+
+if (!GEO_ORCHESTRATED()) {
+  cfg <- load_config()
+  run_07_lasso(cfg)
+}

@@ -10,7 +10,8 @@
 # 任一不满足直接 stop()，不进入任何分析。
 #
 # 只用 base R 抓 GEO SOFT 元数据，因此这一步在装任何 Bioconductor 包之前就能跑完。
-# 输出：data/group.csv, data/meta.csv, data/platform.txt, data/geo_metadata.json
+# 输出：data/group.csv, data/meta.csv, data/platform.txt,
+#       data/clinical.csv, data/clinical_fields.json, data/geo_metadata.json
 # ============================================================================
 
 suppressPackageStartupMessages({
@@ -223,6 +224,24 @@ run_00_validate_inputs <- function(cfg) {
                      length(pairs), cfg$contrast[1L], cfg$contrast[2L]))
   }
 
+  # ---- 8b. 临床字段（全量，不只是分组字段）--------------------------------
+  #
+  # **这一步原来一个临床字段都没落盘。** `group_field` 只保留了 config 指定的
+  # 那一个，其余 characteristics（生存时间、生存事件、年龄、分级、ER 状态）
+  # 在 step 00 之后就消失了 —— 于是 step 07 做 LASSO/Cox 时没有任何终点可用。
+  #
+  # 到 step 07 再回头去下 SOFT 会把"数据源"拆成两处（同一份数据两个入口），
+  # 所以在这里一次抽全，之后所有步骤都从 clinical.csv 读。
+  # 解析器在 common.R（`clinical_table()`），因为 step 07 的外部验证队列
+  # 也要用同一份 —— 两处各写一份迟早会在"同名 key 怎么办"上分叉。
+  clinical <- clinical_table(blocks, meta$gsm)
+  utils::write.csv(clinical, file.path(cfg$output$data_dir, "clinical.csv"), row.names = FALSE)
+
+  field_profile <- clinical_field_profile(clinical)
+  write_json(file.path(cfg$output$data_dir, "clinical_fields.json"), field_profile)
+  log_info(sprintf("临床字段: %d 个（%s）", length(field_profile),
+                   paste(utils::head(names(field_profile), 6), collapse = ", ")))
+
   # ---- 9. 落盘 ------------------------------------------------------------
   meta_out <- meta[, c("gsm", "title", "source_name", "organism", "taxid", "group", "group_field")]
   group_out <- data.frame(gsm = meta_out$gsm, group = meta_out$group, stringsAsFactors = FALSE)
@@ -253,7 +272,7 @@ run_00_validate_inputs <- function(cfg) {
     validated_at = format(Sys.time(), "%Y-%m-%dT%H:%M:%S")
   ))
 
-  log_info(sprintf("已写出 %s/group.csv, meta.csv, platform.txt, geo_metadata.json",
+  log_info(sprintf("已写出 %s/group.csv, meta.csv, platform.txt, clinical.csv, clinical_fields.json, geo_metadata.json",
                    cfg$output$data_dir))
   invisible(meta_out)
 }

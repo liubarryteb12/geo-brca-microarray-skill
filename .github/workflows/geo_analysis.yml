@@ -33,11 +33,18 @@ jobs:
       fail-fast: false
       matrix:
         dataset: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.event.inputs.dataset)) || fromJSON('["GSE64790","GSE42568"]') }}
-    # spec 要求单次运行 < 20 分钟。实测冷缓存整轮 14m58s（run 35409119340），
-    # 其中 Install R packages 722s、分析流水线 115s，20 分钟够用。
-    # 之所以不写更紧的值：冷缓存下装包要 12 分钟，留给分析只有 8 分钟，
+    # spec 要求单次运行 < 20 分钟。实测（bioc-v2，无 WGCNA/LASSO）冷缓存整轮
+    # 14m58s，其中 Install R packages 722s、分析流水线 115s。
+    #
+    # **加入 WGCNA + LASSO + 外部验证后临时放宽到 35 分钟**，理由是这两件事
+    # 各带来一段新的、还没测过的开销：WGCNA 的依赖树（fastcluster /
+    # dynamicTreeCut / Hmisc / GO.db）要新装，外部验证要另下一整个队列
+    # （GSE20685，327 个样本）。等测出真实耗时后再收紧回 20 分钟以内，
+    # 并把实测值写在这里 —— 不写死一个"应该够"的值。
+    #
+    # 之所以不写更紧的值：冷缓存下装包要十几分钟，留给分析的时间很薄，
     # 超时被掐死的 job 往往存不下缓存，会变成"每次都超时"的死循环。
-    timeout-minutes: 20
+    timeout-minutes: 35
 
     # **把 BLAS 线程数钉死为 1，否则数值结果不是逐位可复现的。**
     #
@@ -100,11 +107,13 @@ jobs:
       # 为什么必须递增：actions/cache 的 key 一旦存在就不会再写回，
       # 沿用旧 key 的话新装的包每次运行都会被丢掉、重新装一遍。
       # v1 -> v2：加入 fgsea（preranked GSEA 的引擎）。
+      # v2 -> v3：加入 WGCNA（共表达网络）、glmnet + survival（LASSO-Cox 与
+      #          KM 曲线）、matrixStats（WGCNA 的依赖，显式列出以免被间接装成旧版）。
       - name: Cache R library
         uses: actions/cache@v4
         with:
           path: ${{ env.R_LIBS_USER }}
-          key: rlib-${{ runner.os }}-bioc-v2
+          key: rlib-${{ runner.os }}-bioc-v3
           restore-keys: |
             rlib-${{ runner.os }}-
 
@@ -127,6 +136,10 @@ jobs:
             any::yaml
             any::ggrepel
             any::statmod
+            any::WGCNA
+            any::glmnet
+            any::survival
+            any::matrixStats
           cache-version: 1
 
       # 纯诊断步骤，不允许它拖垮整条流水线
@@ -134,7 +147,7 @@ jobs:
         continue-on-error: true
         run: |
           Rscript -e 'cat(R.version.string, "\n"); if (requireNamespace("BiocVersion", quietly=TRUE)) cat("Bioconductor:", as.character(BiocVersion::version()), "\n"); cat("lib:", .libPaths()[1], "\n")'
-          Rscript -e 'for (p in c("GEOquery","limma","clusterProfiler","org.Hs.eg.db","enrichplot","STRINGdb","pheatmap","impute","igraph","yaml","ggrepel","statmod")) cat(sprintf("%-16s %s\n", p, if (requireNamespace(p, quietly=TRUE)) as.character(packageVersion(p)) else "MISSING"))'
+          Rscript -e 'for (p in c("GEOquery","limma","clusterProfiler","org.Hs.eg.db","enrichplot","STRINGdb","pheatmap","impute","igraph","yaml","ggrepel","statmod","WGCNA","glmnet","survival","matrixStats")) cat(sprintf("%-16s %s\n", p, if (requireNamespace(p, quietly=TRUE)) as.character(packageVersion(p)) else "MISSING"))'
 
       # 数据集预检：物种 / 数据类型 / 样本量 / 分组。
       # 00_validate_inputs.R 内部还会再判一次，这里只是让失败发生在**装包之前**。
@@ -214,6 +227,8 @@ jobs:
             data/${{ matrix.dataset }}/clean_stats.json
             data/${{ matrix.dataset }}/feature_mode.json
             data/${{ matrix.dataset }}/geo_metadata.json
+            data/${{ matrix.dataset }}/clinical.csv
+            data/${{ matrix.dataset }}/clinical_fields.json
           if-no-files-found: warn
           retention-days: 30
 

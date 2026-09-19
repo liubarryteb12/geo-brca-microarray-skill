@@ -100,25 +100,55 @@ run_04a_heatmap <- function(cfg) {
     direction = c(up = PAL$up, down = PAL$down)
   )
 
+  # 画布高度随基因数缩放：每行 0.115in ≈ 8.3pt。
+  fig_h  <- max(5.5, length(genes) * 0.115)
+  row_fs <- 5
+  # **行名放不下就整张不显示。** 原来写的是硬编码的 `length(genes) <= 60`，
+  # 和画布高度毫无关系 —— 50 个基因时每行只剩约 3.6px 间隙，糊成一片。
+  # pheatmap 没有副标题、图例是右侧细色条，面板占比比 ggplot 高，用 0.82。
+  show_rn <- decide_rownames(length(genes), fig_h, row_fs, "热图基因",
+                             panel_frac = 0.82, min_gap = 2.5)
+
+  # **行聚类自己算，再把同一棵树传给 pheatmap。**
+  # 一是为了拿到显示顺序（见下面的 CSV），二是保证表和图的顺序必然一致 ——
+  # 若让 pheatmap 内部再算一次，两边就只是"应该一样"。
+  hc_rows <- stats::hclust(stats::dist(mat), method = "complete")
+
   save_pdf(file.path(res, "top50_heatmap.pdf"), {
     pheatmap::pheatmap(
       mat,
       annotation_col = annotation_col,
       annotation_row = annotation_row,
       annotation_colors = annotation_colors,
-      cluster_rows = TRUE, cluster_cols = TRUE,
-      clustering_distance_rows = "euclidean", clustering_method = "complete",
+      cluster_rows = hc_rows, cluster_cols = TRUE,
       clustering_distance_cols = "euclidean",
-      show_rownames = length(genes) <= 60, fontsize_row = 5,
+      show_rownames = show_rn, fontsize_row = row_fs,
       color = pal_diverging(100), border_color = "white",
       breaks = seq(-3, 3, length.out = 101),
       main = sprintf("Top DEG heatmap (row Z-score) - %s", cfg$dataset_id),
       silent = FALSE
     )
     # pheatmap 的色条固定在图右侧、无位置参数；细长条，占宽有限，保留。
-  }, width = 7, height = max(5.5, length(genes) * 0.115))
+  }, width = 7, height = fig_h)
   log_info("已生成 top50_heatmap.pdf")
-  invisible(list(genes = genes, mode = pick$mode))
+
+  # **行名一旦不显示，基因身份就只剩这张表能提供。**
+  # 而且必须是**显示顺序** —— 热图按聚类重排行，写 `genes` 的原始顺序
+  # 会对不上图上的第 N 行。规则 16（布局要落盘）在热图上同样适用：
+  # 从 PNG 反推"第 12 行是哪个基因"是猜，落盘之后就是可核对的数据。
+  row_order <- hc_rows$order
+  disp <- data.frame(
+    display_row = seq_along(row_order),
+    gene        = genes[row_order],
+    direction   = annotation_row$direction[row_order],
+    logFC       = deg$logFC[match(genes[row_order], deg$gene)],
+    adj_P_Val   = deg$adj.P.Val[match(genes[row_order], deg$gene)],
+    stringsAsFactors = FALSE
+  )
+  utils::write.csv(disp, file.path(res, "top50_heatmap_genes.csv"), row.names = FALSE)
+  log_info(sprintf("已生成 top50_heatmap_genes.csv（%d 行，按图上的显示顺序；行名%s）",
+                   nrow(disp), if (show_rn) "已显示" else "未显示，靠这张表对照"))
+  invisible(list(genes = genes, mode = pick$mode, show_rownames = show_rn))
 }
 
 run_04b_enrichment <- function(cfg) {
@@ -258,6 +288,8 @@ run_04b_enrichment <- function(cfg) {
           top = head(df$Description[order(df$p.adjust)], 5),
           top_up = head(df$Description[df$NES > 0][order(df$p.adjust[df$NES > 0])], 3),
           top_down = head(df$Description[df$NES < 0][order(df$p.adjust[df$NES < 0])], 3))
+        decide_rownames(min(2 * cfg$enrichment$top_terms, nrow(df)), 6.5, 7,
+                        "GSEA GO 点图", panel_frac = 0.75, min_gap = 2.5)
         save_pdf(file.path(res, "GSEA_GO_dotplot.pdf"),
                  print(make_gsea_dotplot(df, cfg,
                          sprintf("GSEA (preranked) GO %s - %s", cfg$enrichment$ont,
@@ -297,6 +329,8 @@ run_04b_enrichment <- function(cfg) {
         status$gsea_kegg <- list(
           status = "ok", terms = nrow(df), representative_terms = n_rep,
           top = head(df$Description[order(df$p.adjust)], 5))
+        decide_rownames(min(2 * cfg$enrichment$top_terms, nrow(df)), 6.5, 7,
+                        "GSEA KEGG 点图", panel_frac = 0.75, min_gap = 2.5)
         save_pdf(file.path(res, "GSEA_KEGG_dotplot.pdf"),
                  print(make_gsea_dotplot(df, cfg,
                          sprintf("GSEA (preranked) KEGG - %s", cfg$dataset_id))),
@@ -412,9 +446,14 @@ run_04b_enrichment <- function(cfg) {
       direction_split = TRUE,
       top_up = head(out$Description[out$direction == "up"][order(out$p.adjust[out$direction == "up"])], 3),
       top_down = head(out$Description[out$direction == "down"][order(out$p.adjust[out$direction == "down"])], 3))
+    # 两个面板并排，每个面板 15 行标签 —— 比原来单面板 30 行宽松一倍。
+    # 标签仍按量化判据核一遍：放不下就整张不显示，不缩字号硬塞。
+    ora_w <- 10; ora_h <- 6.5
+    decide_rownames(min(cfg$enrichment$top_terms, nrow(out)), ora_h, 7,
+                    sprintf("%s 点图", label), panel_frac = 0.68, min_gap = 2.5)
     save_pdf(file.path(res, paste0(file_base, "_dotplot.pdf")),
              print(make_ora_dotplot(out, cfg, sprintf("%s - %s", label, cfg$dataset_id))),
-             width = 8, height = 7)
+             width = ora_w, height = ora_h)
     invisible(NULL)
   }
 
@@ -433,33 +472,59 @@ run_04b_enrichment <- function(cfg) {
   invisible(NULL)
 }
 
-#' ORA 的 dotplot：x 轴是方向，一眼看出条目由上调还是下调基因驱动
+#' ORA 的 dotplot：**按方向分面**
+#'
+#' 原来 x 轴是方向，两个列标签都写成 `"<arm>\n(up in <arm>)"` —— 于是
+#' **整张图上 "down" 这个词一次都不出现**，读者会以为只有上调的富集。
+#' 实测就是这样被问的（"怎么只有上调的富集没有下调的"）。下调的点其实画了
+#' （连通域数得出来两列都有点），是标注把人骗了。
+#'
+#' 改成按方向分面：
+#'   * 两个面板各有标题与条目数，方向不可能看漏；
+#'   * y 轴标签从 30 行降到每面板 15 行，密集问题一并缓解；
+#'   * x 轴腾出来放显著性（原来被方向占着，-log10 P 只能塞进颜色）。
 make_ora_dotplot <- function(df, cfg, title) {
   n <- cfg$enrichment$top_terms
-  keep <- do.call(rbind, lapply(split(df, df$direction), function(d) {
-    utils::head(d[order(d$p.adjust), , drop = FALSE], n)
-  }))
-  keep$Description <- factor(keep$Description,
-                             levels = unique(keep$Description[order(keep$p.adjust, decreasing = TRUE)]))
-  keep$direction <- factor(keep$direction, levels = c("up", "down"))
   arms <- as.character(cfg$contrast)
-  # 方向轴用条件色（红=contrast[1]，蓝=contrast[2]），与火山图/PCA/热图一致；
-  # 显著性用 magma 序列色 —— 刻意避开红蓝，否则深色会被误读成"上调"
-  ggplot2::ggplot(keep, ggplot2::aes(x = direction, y = Description)) +
-    ggplot2::geom_point(ggplot2::aes(size = Count, colour = -log10(p.adjust))) +
-    scale_colour_seq("-log10\nadj.P") +
+  dir_name <- c(up = sprintf("up in %s", arms[1L]),
+                down = sprintf("down in %s", arms[1L]))
+
+  keep <- do.call(rbind, lapply(c("up", "down"), function(d) {
+    sub <- df[df$direction == d, , drop = FALSE]
+    if (nrow(sub) == 0L) return(NULL)
+    utils::head(sub[order(sub$p.adjust), , drop = FALSE], n)
+  }))
+  if (is.null(keep) || nrow(keep) == 0L) return(NULL)
+  rownames(keep) <- NULL
+
+  # 面板标题带条目数：读者一眼看出两边各有多少条，不会怀疑某边是空的
+  counts <- as.integer(table(factor(keep$direction, levels = c("up", "down"))))
+  panel_lab <- sprintf("%s\n(%d terms shown)", dir_name[c("up", "down")], counts)
+  keep$panel <- factor(panel_lab[match(keep$direction, c("up", "down"))],
+                       levels = panel_lab)
+  keep$Description <- factor(keep$Description,
+                             levels = unique(keep$Description[order(keep$p.adjust,
+                                                                    decreasing = TRUE)]))
+  ggplot2::ggplot(keep, ggplot2::aes(x = -log10(p.adjust), y = Description)) +
+    ggplot2::geom_point(ggplot2::aes(size = Count, colour = direction)) +
+    # 颜色仍走方向色（与火山图/PCA/热图注释条同源）；图例关掉，
+    # 因为分面标题已经把方向写在脸上了，再放一个图例是重复。
+    ggplot2::scale_colour_manual(values = c(up = PAL$up, down = PAL$down),
+                                 guide = "none") +
     ggplot2::scale_size_continuous(name = "genes", range = c(2, 7)) +
-    ggplot2::scale_x_discrete(labels = stats::setNames(
-      c(sprintf("%s\n(up in %s)", arms[1L], arms[1L]),
-        sprintf("%s\n(up in %s)", arms[2L], arms[2L])),
-      c("up", "down"))) +
+    ggplot2::facet_wrap(~ panel, scales = "free_y", nrow = 1) +
     ggplot2::labs(title = title,
                   subtitle = wrap_subtitle(sprintf(
-                    "top %d per direction; up/down kept separate (ORA is direction-agnostic)", n),
-                    fig_width = 8),
-                  x = NULL, y = NULL) +
+                    paste0("top %d per direction. ORA itself is direction-agnostic, ",
+                           "so up and down are run as separate gene lists. ",
+                           "x = significance, size = number of genes in the term."), n),
+                    fig_width = 10),
+                  x = expression(-log[10] ~ "(adj.P)"), y = NULL) +
     theme_paper(9) +
-    ggplot2::theme(axis.text.y = ggplot2::element_text(size = 7))
+    ggplot2::theme(
+      axis.text.y = ggplot2::element_text(size = 7),
+      strip.text  = ggplot2::element_text(size = 9, face = "bold"),
+      panel.spacing = ggplot2::unit(1.2, "lines"))
 }
 
 #' GSEA 的 dotplot：x 轴是 NES，方向直接由符号给出
@@ -478,9 +543,11 @@ make_gsea_dotplot <- function(df, cfg, title) {
     scale_colour_seq("-log10\nadj.P") +
     ggplot2::scale_size_continuous(name = "set size", range = c(2, 7)) +
     ggplot2::labs(title = title,
+                  # 原来写的是 "right = up in tumor, left = up in normal" ——
+                  # 两个方向又都写成 "up"，和 ORA 那张图是同一个毛病。
                   subtitle = wrap_subtitle(sprintf(
-                    "preranked on the full gene list (no threshold); right = up in %s, left = up in %s",
-                    arms[1L], arms[2L]), fig_width = 8),
+                    "preranked on the full gene list (no threshold); right = up in %s (= down in %s), left = down in %s",
+                    arms[1L], arms[2L], arms[1L]), fig_width = 8),
                   x = "NES (normalized enrichment score)", y = NULL) +
     theme_paper(9) +
     ggplot2::theme(axis.text.y = ggplot2::element_text(size = 7))

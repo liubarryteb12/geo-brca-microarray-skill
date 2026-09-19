@@ -453,6 +453,54 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
     if ("other" %in% levels(vdf$community)) comm_cols["other"] <- PAL$ns
     n_comm <- length(shown_lv)
 
+    # ---- 图注 ---------------------------------------------------------------
+    #
+    # **图注要能独立读懂这张图。** 原来只有一句约 250 字符的副标题，而 artifact
+    # 里只有一张 PNG：读者看不出边是什么证据、基因从哪来、为什么只剩这么多节点、
+    # 环序排的是哪个网络、被上色的模块是怎么选的。这五件事恰恰都是最容易
+    # 被误读的地方，缺一句就会读错。
+    #
+    # 所以按「方法 / 输入 / 展示范围 / 视觉编码 / 环 / 陷阱 / 文件」写全，
+    # 并且**同时落盘**成 PPI_network_caption.txt —— 写论文时可以直接取用。
+    n_mapped <- igraph::vcount(g_full)
+    cap <- c(
+      sprintf("Method: %s. %s",
+              if (identical(method, "string_ppi"))
+                sprintf(paste0("STRING v12 protein-protein interactions, Homo sapiens ",
+                               "(taxid 9606), combined score >= %g"),
+                        cfg$thresholds$string_score)
+              else paste0("co-expression network (STRING unavailable - ",
+                          "see ppi_status.json for the recorded reason)"),
+              "Edges are database evidence, NOT measured in this dataset."),
+      sprintf("Input: %d genes from %s (limma; deg_mode=%s%s). %d of them mapped to the network.",
+              status$n_input_genes, cfg$dataset_id, status$deg_mode,
+              if (identical(status$deg_mode, "ranked_fallback"))
+                " - i.e. NOT FDR-significant, treat as hypothesis-generating" else "",
+              n_mapped),
+      sprintf(paste0("Shown: %d of %d nodes and %d of %d edges, after ",
+                     "largest connected component -> top %d by degree -> strongest %d edges."),
+              igraph::vcount(g), n_mapped, igraph::ecount(g), igraph::ecount(g_full),
+              max_nodes, max_edges),
+      sprintf(paste0("Encoding: node size = degree WITHIN the shown subnetwork; ",
+                     "colour = Louvain module (resolution 1; %d modules found, top %d coloured, ",
+                     "the rest grey); edge opacity = interaction confidence."),
+              n_comm_all, n_comm),
+      sprintf(paste0("Rings: %d concentric rings (%s nodes), inner ring = highest degree in the ",
+                     "SHOWN subnetwork; per-node ring/angle/degree/module is written to ",
+                     "ppi_plot_layout.csv."),
+              n_rings, paste(sizes_r, collapse = "/")),
+      sprintf(paste0("CAUTION: the %d labelled hubs are hubs of the SHOWN subnetwork (%s). ",
+                     "hub_genes.csv ranks the FULL %d-node network instead (%s) - ",
+                     "both rankings are correct but answer different questions; do not mix them."),
+              nrow(lab),
+              paste(utils::head(vdf$name[order(-vdf$degree)], 3), collapse = ", "),
+              n_mapped,
+              paste(utils::head(status$hub_genes, 3), collapse = ", ")),
+      paste0("Files: ppi_edges.csv (full edge list), hub_genes.csv (full-network ranking), ",
+             "ppi_plot_layout.csv (per-node ring, angle, degree, module).")
+    )
+    writeLines(cap, file.path(res, "PPI_network_caption.txt"), useBytes = TRUE)
+
     p <- ggplot2::ggplot() +
       ggplot2::geom_path(
         data = ring_path,
@@ -502,23 +550,19 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
         title = sprintf("%s network - %s",
                         if (identical(method, "string_ppi")) "STRING PPI" else "Co-expression (FALLBACK)",
                         cfg$dataset_id),
-        # 原来这里 455 字符，一行放不下被静默裁掉。压到 ~250 字符并折行。
-        # **规则 13 要求副标题必须写明环序来自哪个网络** —— 这句不能省，
-        # 省掉读者会把核心环当成 hub_genes.csv 的答案，而那个文件给的是另一批基因。
-        subtitle = wrap_subtitle(sprintf(
-          paste0("%d nodes / %d edges shown on %d concentric rings. Inner ring = highest degree ",
-                 "within the SHOWN subnetwork (%d hubs labelled); hub_genes.csv instead ranks the ",
-                 "full %d-node network. Node size = degree, colour = Louvain module (%d found, ",
-                 "top %d coloured, rest grey)."),
-          igraph::vcount(g), igraph::ecount(g), n_rings, nrow(lab),
-          igraph::vcount(g_full), n_comm_all, length(shown)),
-          fig_width = 7.5),
+        # 折行按**实际字号**算：wrap_subtitle 内部用 base_size - 1.5 估字宽，
+        # 所以这里传 8 是为了让它按 6.5pt 排版（下面 plot.subtitle 就是 6.5）。
+        # 传 10 会按 8.5pt 估，每行偏短、行数虚高，图会被撑得过高。
+        subtitle = wrap_caption(cap, fig_width = 7.5, base_size = 8),
         x = NULL, y = NULL) +
       ggplot2::coord_fixed() +
       ggplot2::theme_void(base_size = 10) +
       ggplot2::theme(
         plot.title    = ggplot2::element_text(face = "bold", size = 11),
-        plot.subtitle = ggplot2::element_text(colour = PAL$muted, size = 8),
+        # 图注左对齐：七段说明居中会很难读，每段起头对不齐
+        plot.subtitle = ggplot2::element_text(colour = PAL$muted, size = 6.5,
+                                              hjust = 0, lineheight = 1.15,
+                                              margin = ggplot2::margin(t = 4)),
         # 图例放底部横排：右侧图例直接吃掉图宽，而这张图本来就是方的
         legend.position   = "bottom",
         legend.direction  = "horizontal",
@@ -530,9 +574,10 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
         plot.margin = ggplot2::margin(6, 6, 4, 6))
 
     plot_err <- tryCatch({
-      # 从 10x8.5 缩到 7.5x7.8：coord_fixed 下面板本来就是方的，
-      # 多出来的宽度全被图例和留白吃掉。
-      save_pdf(file.path(res, "PPI_network.pdf"), print(p), width = 7.5, height = 7.8)
+      # 高度从 7.8 加到 9.4：coord_fixed 下面板是方的，宽 7.5in 就要求
+      # 面板高约 7.2in，再加标题、**七段图注**和底部图例。图注多出来的
+      # 约 1.3in 必须由画布高度支付，否则面板会被压小、节点更挤。
+      save_pdf(file.path(res, "PPI_network.pdf"), print(p), width = 7.5, height = 9.4)
       NULL
     }, error = function(e) conditionMessage(e))
 
@@ -546,6 +591,10 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
       status$plot_ring_sizes <- as.integer(sizes_r)
       status$plot_layout <- "concentric_rings"
       status$plot_filtered <- igraph::vcount(g) < igraph::vcount(g_full)
+      # 图注同时进状态文件 —— 这样"图上写了什么"是可检索的，
+      # 不用去翻 PNG。写论文时直接取 PPI_network_caption.txt。
+      status$plot_caption_file <- "PPI_network_caption.txt"
+      status$plot_caption <- cap
       status$plot_note <- sprintf(
         paste0("图为可读性做过过滤：最大连通分量 → degree 前 %d 个节点 → 最强的 %d 条边；",
                "布局为 %d 个同心圆环（内圈 = degree 最高），环内按社区排序。",

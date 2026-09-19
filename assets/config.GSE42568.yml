@@ -82,6 +82,39 @@ analysis:
   ranked_fallback_genes: 500
   gsea_min_set: 15
   gsea_max_set: 500
+  # ---- WGCNA ----
+  # 只喂高变基因：WGCNA 是全基因两两相关，全基因组跑既慢又没有额外信息，
+  # 低变基因的相关基本是噪声，还会把软阈值拟合带偏。5000 是通行的起点。
+  wgcna_top_genes: 5000
+  wgcna_min_module_size: 30
+
+# ---- 随访终点（LASSO-Cox 用）-----------------------------------------------
+# **列名必须显式写。** 自动按关键词配对 time/event 列在字段名不规整时
+# 会静默配错，而配错不会报错，只会算出一个错的 C-index。
+# 实测 GSE20685 的字段是 `event_death` 和 `follow_up_duration (years)` ——
+# 名字里没有任何共同词，靠关键词一定配不上。
+#
+# GSE42568 实测：`overall survival event` 0×69 / 1×35 / NA×17（17 例正常样本
+# 全部临床字段为 NA，所以实际可用 104 例），`overall survival time_days` 103 种取值。
+# **35 个事件 -> EPV>=10 意味着签名最多 3 个基因。**
+survival:
+  enabled: true
+  time_column: "overall survival time_days"
+  event_column: "overall survival event"
+  event_value: ["1"]
+  # 少于 20 个事件直接不做 —— 这时 Cox 的系数估计没有意义，
+  # 与其产出一个看着像结果的表，不如留下一句"事件不够"。
+  min_events: 20
+  cv_folds: 10
+  cv_repeats: 5
+  # 外部队列。GSE20685 同平台（GPL570）、327 例、83 个死亡事件，
+  # 是这套签名唯一能拿到的独立验证。
+  validation_dataset: GSE20685
+  validation_platform_id: GPL570
+  # 验证队列的终点列名与主队列不同，必须分别写
+  validation_time_column: "follow_up_duration (years)"
+  validation_event_column: "event_death"
+  validation_event_value: ["1"]
 
 enrichment:
   universe: detected

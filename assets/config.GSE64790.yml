@@ -130,6 +130,21 @@ analysis:
   # 曾经在这里单独放过 gsea_seed 并传给 gseGO(seed=)，实测**不足以保证复现**
   # （参数被接受但没转发到 fgsea 的采样器），所以改成调用前直接 set.seed()。
 
+  # ---- WGCNA（本数据集不会执行，字段保留以示显式）-------------------------
+  # n=6，WGCNA 在 00/06 两道门禁上都会被挡下（design_mode=small_sample）。
+  # 数值留着是为了让"为什么没跑"是配置决定的，而不是函数里散落的 if。
+  wgcna_top_genes: 5000
+  wgcna_min_module_size: 30
+
+# ---- 随访终点 --------------------------------------------------------------
+# **n=6 做不了预后签名，所以这里显式关掉。**
+# GSE64790 是 3 例 TNBC + 3 例配对正常，没有随访数据；
+# 就算有，6 个样本也撑不起 Cox 模型（EPV>=10 要求每个变量至少 10 个事件，
+# 6 个样本最多 6 个事件 -> 上限 0 个变量）。
+# 07 步会把 not_configured 写进 lasso_status.json，验收项据此通过。
+survival:
+  enabled: false
+
 enrichment:
   # genome   = 全基因组背景（OrgDb 默认）
   # detected = 仅用芯片实测基因作背景

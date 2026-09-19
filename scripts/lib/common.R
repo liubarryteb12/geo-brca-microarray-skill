@@ -303,6 +303,79 @@ wrap_subtitle <- function(x, fig_width = 8, base_size = 10) {
   paste(strwrap(x, width = chars), collapse = "\n")
 }
 
+#' 把多条说明各折各的行，再拼成一段多行图注
+#'
+#' `wrap_subtitle()` 用的是 `strwrap()`，它把输入当成**一个段落**，
+#' 里面的 `\n` 会被当普通空白折叠掉 —— 所以直接传带换行的文本进去，
+#' 结构化图注会被压成一坨。这里逐条折行再拼，行结构得以保留。
+#'
+#' @param lines     字符向量，每条是一行图注
+#' @param fig_width 图宽（英寸），要和 `save_pdf()` 传的值一致
+#' @param base_size 主题基准字号
+wrap_caption <- function(lines, fig_width = 8, base_size = 10) {
+  lines <- lines[!is.na(lines) & nzchar(lines)]
+  if (length(lines) == 0L) return("")
+  paste(vapply(lines, function(l) wrap_subtitle(l, fig_width, base_size),
+               character(1)), collapse = "\n")
+}
+
+# ---- 行名标签放得下吗 ------------------------------------------------------
+#
+# **判据是算出来的，不是看出来的。** "标签挤不挤"如果靠肉眼判断，就会变成
+# 一个没人能复现的印象：同一张图有人说挤有人说不挤，而且加一个基因、
+# 改一次画布高度之后没人会想起来重新看一遍。
+#
+# 所以把它写成算术：一行标签需要 `fontsize + min_gap` 点的垂直空间，
+# 画布能给的是 `height_in * 72 * panel_frac` 点（panel_frac 扣掉标题、
+# 副标题、坐标轴和图例占掉的高度）。
+#
+# 实测：GSE42568 的 top50 热图 50 个基因、5pt 字号、5.75in 高，
+# 每行只有约 3.6px 间隙（约 1.7pt），确实挤 —— 而 `show_rownames` 原来
+# 写的是硬编码的 `length(genes) <= 60`，跟画布高度毫无关系。
+
+#' 画布高度能容纳多少行标签
+#'
+#' @param height_in  图高（英寸），要和 `save_pdf()` / `pheatmap()` 传的值一致
+#' @param fontsize   标签字号（pt）
+#' @param panel_frac 绘图面板占图高的比例。0.75 是带标题、副标题、
+#'   底部横排图例时的实测经验值；`pheatmap` 没有副标题、图例是右侧细色条，
+#'   用 0.82 更准。
+#' @param min_gap    相邻标签之间至少要留的空白（pt）。2.5pt 约合 5px（150dpi），
+#'   是"一眼能分开两行"的下限；1.5pt 已经会糊成一片。
+#' @return 整数上限
+label_budget <- function(height_in, fontsize, panel_frac = 0.75, min_gap = 2.5) {
+  avail <- height_in * 72 * panel_frac
+  as.integer(floor(avail / (fontsize + min_gap)))
+}
+
+#' 这些标签放得下吗
+#'
+#' @inheritParams label_budget
+#' @param n 标签行数
+#' @return 逻辑值；`n` 为 0 或非有限值时返回 FALSE
+fits_labels <- function(n, height_in, fontsize, panel_frac = 0.75, min_gap = 2.5) {
+  if (!is.finite(n) || n <= 0L) return(FALSE)
+  n <= label_budget(height_in, fontsize, panel_frac, min_gap)
+}
+
+#' 决定要不要显示行名，并把决定与依据写进日志
+#'
+#' 返回逻辑值，供 `show_rownames = ` 直接用。**日志里必须留下算式** ——
+#' 否则"这张图为什么没有行名"又要靠猜。
+#'
+#' @param what 标签指代的东西，用于日志（如 "热图基因"）
+#' @return 逻辑值
+decide_rownames <- function(n, height_in, fontsize, what = "行名",
+                            panel_frac = 0.75, min_gap = 2.5) {
+  budget <- label_budget(height_in, fontsize, panel_frac, min_gap)
+  ok <- fits_labels(n, height_in, fontsize, panel_frac, min_gap)
+  log_info(sprintf(
+    "%s标签: %d 行 / 画布可容纳 %d 行（高 %.2fin，字号 %gpt，行距余量 %gpt）-> %s",
+    what, n, budget, height_in, fontsize, min_gap,
+    if (ok) "显示行名" else "**不显示行名**（会糊成一片）"))
+  ok
+}
+
 #' 组内协方差椭圆的坐标
 #'
 #' **不用 `stat_ellipse()`。** 实测它在每组 3 个样本时产出了空数据 —— 图上
@@ -467,6 +540,90 @@ soft_values <- function(lines, key) {
 soft_value <- function(lines, key, default = NA_character_) {
   v <- soft_values(lines, key)
   if (length(v) == 0L) default else v[[1L]]
+}
+
+#' 把一组 `characteristics_ch1` 取值解析成 key -> value
+#'
+#' SOFT 里的形状是 `"key: value"`，一个样本有多行。
+#' **同名 key 在一个样本里出现多次时用 " | " 连接** —— GEO 里确实有
+#' （GSE20685 的 regimen 就有），直接取最后一个会静默丢数据。
+#'
+#' 没有 `"key:"` 前缀的自由文本单独归到 `unnamed`，**不伪装成某个字段**：
+#' 把它按第一个词当 key 会凭空造出一个语义不明的列，下游按列名取性状时会中招。
+#'
+#' @param values 一个样本的全部 `Sample_characteristics_ch1` 取值
+#' @return 命名 list
+parse_characteristics <- function(values) {
+  out <- list()
+  for (v in values) {
+    if (!nzchar(trimws(v))) next
+    if (grepl(":", v, fixed = TRUE)) {
+      k   <- trimws(sub(":.*$", "", v))
+      val <- trimws(sub("^[^:]*:", "", v))
+    } else {
+      k <- "unnamed"; val <- trimws(v)
+    }
+    if (!nzchar(k)) next
+    out[[k]] <- if (is.null(out[[k]])) val else paste(out[[k]], val, sep = " | ")
+  }
+  out
+}
+
+#' 从 SOFT 样本块建一张临床宽表
+#'
+#' step 00（主队列）与 step 07（外部验证队列）共用这一个实现 ——
+#' 两处各写一份解析器，迟早会在"同名 key 怎么办"上分叉，
+#' 而那种分叉不会报错，只会让两个队列的字段含义悄悄不一致。
+#'
+#' @param blocks  `split_soft_samples()` 的结果
+#' @param gsm     样本 ID，顺序要与 `blocks` 一致
+#' @return data.frame，第一列是 `gsm`
+clinical_table <- function(blocks, gsm) {
+  parsed <- lapply(blocks, function(b) parse_characteristics(soft_values(b, "Sample_characteristics_ch1")))
+  keys <- unique(unlist(lapply(parsed, names)))
+  out <- data.frame(gsm = gsm, stringsAsFactors = FALSE)
+  for (k in keys) {
+    out[[k]] <- vapply(parsed, function(p) {
+      v <- p[[k]]
+      if (is.null(v) || !nzchar(v)) NA_character_ else v
+    }, character(1))
+  }
+  out
+}
+
+#' 临床字段画像：每个字段的覆盖度、类型、取值分布
+#'
+#' LASSO/Cox 的门禁要据此判断"有没有可用的终点、有多少个事件"。
+#' **不在这里判定用哪个终点** —— 终点必须由 config 显式指定，
+#' 自动配对 time/event 列在字段名不规整时会静默配错（实测 GSE20685 的
+#' `event_death` 和 `follow_up_duration (years)` 名字里没有任何共同词）。
+#'
+#' @param clinical `clinical_table()` 的结果
+#' @return 命名 list，每个字段一项
+clinical_field_profile <- function(clinical) {
+  out <- lapply(setdiff(colnames(clinical), "gsm"), function(k) {
+    v <- clinical[[k]]
+    present <- v[!is.na(v) & nzchar(v)]
+    num <- suppressWarnings(as.numeric(present))
+    numeric_ok <- length(present) > 0L && !anyNA(num)
+    info <- list(n_present = length(present),
+                 n_missing = sum(is.na(v) | !nzchar(v)),
+                 n_distinct = length(unique(present)))
+    if (numeric_ok) {
+      info$kind <- "numeric"
+      info$min <- min(num); info$max <- max(num); info$median <- stats::median(num)
+    } else {
+      info$kind <- "categorical"
+      tab <- sort(table(present), decreasing = TRUE)
+      # 取值太多就只留前 12 个，避免 JSON 里塞进 327 个样本标题之类的东西
+      info$top_values <- as.list(head(as.integer(tab), 12L))
+      names(info$top_values) <- names(head(tab, 12L))
+      info$n_levels <- length(tab)
+    }
+    info
+  })
+  names(out) <- setdiff(colnames(clinical), "gsm")
+  out
 }
 
 # ---- 基因/统计小工具 -------------------------------------------------------
