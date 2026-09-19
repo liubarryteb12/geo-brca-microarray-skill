@@ -269,20 +269,24 @@ assets/
 ├── config.GSE64790.yml      小样本配置（design_mode: small_sample）
 └── config.GSE42568.yml      队列配置（design_mode: cohort）
 scripts/
-├── main_analysis.R          编排器（00→05 + 验收）
+├── main_analysis.R          编排器（00→07 + 验收）
 ├── 00_validate_inputs.R     硬门禁：物种/类型/样本量/分组（两套，按 design_mode）
+│                            另落盘 clinical.csv / clinical_fields.json
 ├── 01_download_clean.R      下载、探针映射、KNN 填补、quantile 标准化
 ├── 02_qc_pca_correlation.R  QC 箱线图/密度、PCA、样本相关性
 ├── 03_deg.R                 limma 差异表达 + 火山图
-├── 04_heatmap_enrichment.R  聚类热图 + GO/KEGG
-├── 05_ppi.R                 STRING PPI（含共表达回退）
+├── 04_heatmap_enrichment.R  聚类热图 + GO/KEGG（ORA 按方向分面）
+├── 05_ppi.R                 STRING PPI（含共表达回退）+ 七段式图注
+├── 06_wgcna.R               WGCNA 共表达模块（可选，仅 cohort，仅肿瘤组）
+├── 07_lasso.R               LASSO-Cox 预后签名（可选，需随访终点）
 ├── find_dataset.mjs         GEO 数据集预检（Node，不需要 R）
-└── lib/common.R             配置、日志、状态、SOFT 抓取
+└── lib/common.R             配置、日志、状态、SOFT 抓取、临床解析、标签容量判据
 tools/
 ├── check_r_syntax.mjs       R 静态检查（括号配平、副标题折行、配置键一致性）
 ├── check_sample_structure.mjs  样本相关结构预检（Node，不需要 R）
 ├── check_clinical_endpoints.mjs 随访终点与 EPV 签名上限（Node，不需要 R）
-└── check_figures.mjs        图不是空白的（独立解码 PNG 像素，不需要 R）
+├── check_figures.mjs        图不是空白的（独立解码 PNG 像素，不需要 R）
+└── check_palette.mjs        配色仍然"一个颜色一个含义"（不需要 R）
 references/troubleshooting.md 运行期故障排查
 .github/workflows/geo_analysis.yml
 results/<GSE>/               运行产物，按数据集分目录

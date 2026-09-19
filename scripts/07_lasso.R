@@ -269,11 +269,24 @@ load_external_cohort <- function(cfg, gse, platform_id) {
     return(list(err = sprintf(
       "平台注释没有 ID 列且行数 %d != 探针数 %d，无法对齐", nrow(fdata), nrow(expr))))
   }
-  sym <- stage("map_features_to_symbols", map_features_to_symbols(rownames(expr), fdata))
-  if (length(sym) != nrow(expr)) {
-    return(list(err = sprintf("探针->基因映射长度 %d != 探针数 %d", length(sym), nrow(expr))))
+  # **`map_features_to_symbols()` 返回的是 list，不是向量。**
+  # 第一次实跑时我把它当向量用了，于是 `collapse_to_symbol(expr, <list>)`
+  # 报了一句没有任何上下文的 "argument lengths differ"。
+  # 加了长度检查后它变成了 "探针->基因映射长度 6 != 探针数 54627" ——
+  # 那个 6 正是 list 的元素个数（mode / symbols / method / coverage /
+  # mapped_genes / reason），一眼就看出是类型用错了。
+  # 正确用法见 01_download_clean.R:370。
+  mapping <- stage("map_features_to_symbols", map_features_to_symbols(rownames(expr), fdata))
+  if (!identical(mapping$mode, "symbol")) {
+    return(list(err = sprintf("平台注释无法映射到基因 symbol：%s", mapping$reason)))
   }
-  expr <- stage("collapse_to_symbol", collapse_to_symbol(expr, sym))
+  if (length(mapping$symbols) != nrow(expr)) {
+    return(list(err = sprintf("探针->基因映射长度 %d != 探针数 %d",
+                              length(mapping$symbols), nrow(expr))))
+  }
+  expr <- stage("collapse_to_symbol", collapse_to_symbol(expr, mapping$symbols))
+  log_info(sprintf("%s 基因折叠后: %d 个基因（映射途径 %s，覆盖率 %.1f%%）",
+                   gse, nrow(expr), mapping$method, 100 * mapping$coverage))
 
   # 临床：复用与 step 00 完全相同的解析器
   gsm_lines <- stage("fetch_geo_soft", fetch_geo_soft(gse, targ = "gsm"))
