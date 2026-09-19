@@ -496,6 +496,24 @@ theme_paper <- function(base_size = 10) {
     )
 }
 
+# ---- 画布尺寸（毫米）-------------------------------------------------------
+#
+# **为什么按毫米而不是英寸。** 期刊的栏宽是用毫米规定的，英寸是排版软件
+# 内部单位。写英寸时"这图多宽"要靠换算才知道，写毫米时一眼就能对上投稿要求。
+# 参考规范：K-Dense `scientific-visualization` skill。
+#
+# 三个标准宽度覆盖绝大多数情况；超宽图（类别数多）应**夹到 W_DOUBLE**，
+# 而不是让宽度随类别数无限增长 —— 否则会画出装不进任何期刊一页的图。
+# 姊妹项目 Python 侧（`scrna-pipeline-skill` / `spatial-pipeline-skill`）
+# 用同一组数值，三部分文档的图幅因此可比。
+W_SINGLE   <- 89 / 25.4    # 单栏
+W_ONE_HALF <- 136 / 25.4   # 一栏半
+W_DOUBLE   <- 183 / 25.4   # 双栏（通栏）
+
+#' 毫米转英寸（`save_pdf()` 的宽高单位是英寸）
+#' @param ... 一个或多个毫米数值
+mm <- function(...) c(...) / 25.4
+
 # ---- 绘图 ------------------------------------------------------------------
 
 #' 把绘图表达式同时写进 PDF 和 PNG，保证设备一定关闭
@@ -518,7 +536,10 @@ theme_paper <- function(base_size = 10) {
 #'
 #' @param path  PDF 输出路径；同名 `.png` 会写在旁边
 #' @param expr  绘图表达式，会在调用者的环境里求值两次
-save_pdf <- function(path, expr, width = 8, height = 6, dpi = 150) {
+#' @param width,height 画布尺寸（英寸）。**用 `mm()` / `W_SINGLE` / `W_ONE_HALF` /
+#'   `W_DOUBLE` 给值**，不要写裸英寸数字 —— 栏宽是按毫米规定的。
+#' @param dpi   PNG 分辨率
+save_pdf <- function(path, expr, width = W_DOUBLE, height = mm(64), dpi = 150) {
   code <- substitute(expr)
   env  <- parent.frame()
 

@@ -194,7 +194,7 @@ make_km_plot <- function(df, cutoff, title, cfg) {
         paste0("median split at risk score = %.3f (cut-off fixed on the TRAINING set). ",
                "log-rank p = %.3g. Censored observations are tick marks; ",
                "shaded bands would imply a confidence interval the n does not support."),
-        cutoff, p_lr), fig_width = 7.5),
+        cutoff, p_lr), fig_width = W_DOUBLE),
       x = "time", y = "survival probability") +
     theme_paper(10) +
     ggplot2::theme(legend.position = "bottom")
@@ -679,7 +679,7 @@ run_07_lasso <- function(cfg) {
       print(make_km_plot(risk_df[risk_df$set == vset, , drop = FALSE], cutoff,
                          sprintf("LASSO-Cox risk groups (external validation: %s)", vset), cfg))
     }
-  }, width = 7.5, height = 5.5)
+  }, width = W_DOUBLE, height = mm(140))
 
   # ---- 8. 推荐哪一个签名 --------------------------------------------------
   #

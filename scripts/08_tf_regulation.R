@@ -416,7 +416,7 @@ run_08_tf_regulation <- function(cfg) {
       # 传 NULL 给 dpi 会报 "`dpi` must be a single number or string"，
       # 被下面的 tryCatch 接住，于是图静默消失、status 里 figure_written=false。
       save_pdf(file.path(res, "tf_regulon_enrichment.pdf"),
-               print(p1), width = 7.0, height = 6.0)
+               print(p1), width = mm(178), height = mm(152))
       figs_written <- c(figs_written, "tf_regulon_enrichment.pdf")
       if (!is.null(act_test) && nrow(act_test) >= 2L) {
         tt <- utils::head(act_test[order(-abs(act_test$cohens_d)), ], 20L)
@@ -444,7 +444,7 @@ run_08_tf_regulation <- function(cfg) {
             x = NULL, y = "Cohen's d", fill = NULL) +
           theme_paper()
         save_pdf(file.path(res, "tf_activity_group_difference.pdf"),
-                 print(p2), width = 7.0, height = 6.0)
+                 print(p2), width = mm(178), height = mm(152))
         figs_written <- c(figs_written, "tf_activity_group_difference.pdf")
       }
       TRUE

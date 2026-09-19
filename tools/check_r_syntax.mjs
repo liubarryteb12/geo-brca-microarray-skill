@@ -197,6 +197,75 @@ for (const file of files) {
   })
 }
 
+/**
+ * 画布尺寸符号必须真的定义在 lib/common.R 里。
+ *
+ * 为什么需要：R 里用到未定义的名字**要到运行时才炸**，静态检查看不见。
+ * 姊妹项目 Python 侧实测漏 import 一个 `W_SINGLE`，`py_compile` 照样报
+ * "语法通过"，白跑了一整轮 CI。R 侧同理。
+ *
+ * 检查两件事：
+ *   1. 用到的尺寸符号在 common.R 里有定义（挡住拼错 `W_DOUBL` 这类）
+ *   2. 脚本确实 source 了 common.R（否则符号在作用域里根本不存在）
+ *
+ * 名单是**写死的**，不是"common.R 导出的所有名字" —— 后者会把函数参数名、
+ * 局部变量当成漏定义，误报一堆（Python 侧第一版就是这么误报的）。
+ */
+const SIZE_SYMBOLS = ['W_SINGLE', 'W_ONE_HALF', 'W_DOUBLE', 'mm']
+
+const commonPath = join(root, 'scripts', 'lib', 'common.R')
+if (!existsSync(commonPath)) {
+  problems.push('找不到 scripts/lib/common.R —— 尺寸符号检查无法执行')
+} else {
+  const commonSrc = readFileSync(commonPath, 'utf8')
+  for (const sym of SIZE_SYMBOLS) {
+    const defined =
+      new RegExp(`^\\s*${sym}\\s*<-`, 'm').test(commonSrc) ||
+      new RegExp(`^\\s*${sym}\\s*<-\\s*function`, 'm').test(commonSrc)
+    if (!defined) problems.push(`lib/common.R 里没有定义 ${sym}`)
+  }
+
+  // 拼错检测：扫所有 `W_XXX` 形状的标识符，逐个确认 common.R 里真有定义。
+  // 只看名单是不够的 —— `W_DOUBL` 不在名单里，漏掉一个字母就溜过去了，
+  // 而 R 要到运行时才报 "object not found"。
+  const definedW = new Set()
+  for (const m of commonSrc.matchAll(/^\s*(W_[A-Z0-9_]+)\s*<-/gm)) definedW.add(m[1])
+
+  for (const file of files) {
+    const rel = relative(root, file).split('\\').join('/')
+    if (rel.endsWith('lib/common.R')) continue
+    const body = readFileSync(file, 'utf8').replace(/#[^\n]*/g, '')
+    for (const m of body.matchAll(/(?<![\w.$])(W_[A-Z0-9_]+)\b/g)) {
+      if (!definedW.has(m[1])) {
+        problems.push(
+          `${rel} 用了 ${m[1]}，但 lib/common.R 里没有这个符号` +
+          `（已定义: ${[...definedW].sort().join(', ')}）—— 拼错了？`
+        )
+      }
+    }
+  }
+
+  for (const file of files) {
+    const rel = relative(root, file).split('\\').join('/')
+    if (rel.endsWith('lib/common.R')) continue
+    const source = readFileSync(file, 'utf8')
+    // 去掉注释，避免"名字只出现在注释里"的误报
+    const body = source.replace(/#[^\n]*/g, '')
+    const used = SIZE_SYMBOLS.filter(s => new RegExp(`(?<![\\w.$])${s}\\b`).test(body))
+    if (used.length === 0) continue
+    // 脚本走的是候选列表模式：`cand <- c(file.path(here, "lib", "common.R"), ...)`
+    // 再 `source(hit)` —— 所以 `common.R` **不在** source() 的括号里。
+    // 判据是"非注释正文里出现过 common.R"，而不是在 source(...) 里找。
+    const referencesCommon = /common\.R/.test(body)
+    if (!referencesCommon) {
+      problems.push(
+        `${rel} 用了 ${used.join(', ')} 但没有加载 lib/common.R —— ` +
+        `单独 Rscript 跑到这里会 "object not found"`
+      )
+    }
+  }
+}
+
 console.log(`检查了 ${files.length} 个 R 文件`)
 console.log(`定义的函数: ${definedFunctions.size}，步骤函数调用: ${calledFunctions.size}`)
 

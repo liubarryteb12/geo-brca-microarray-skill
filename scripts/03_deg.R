@@ -233,7 +233,7 @@ run_03_deg <- function(cfg) {
                   "BH is per-gene, so the FDR cutoff is not a horizontal line."),
            lfc_cut, numerator, denominator, padj_cut,
            if (nrow(tt)) min(tt$adj.P.Val, na.rm = TRUE) else NA_real_),
-           fig_width = 8),
+           fig_width = W_DOUBLE),
          x = sprintf("log2 fold change (%s / %s)", numerator, denominator),
          y = "-log10 raw P value",
          colour = NULL, alpha = NULL) +
@@ -244,7 +244,7 @@ run_03_deg <- function(cfg) {
   if (nrow(label_df) > 0L) {
     p_volcano <- p_volcano + ggrepel_labels(label_df, seed = cfg$analysis$seed)
   }
-  save_pdf(file.path(res, "volcano_plot.pdf"), print(p_volcano), width = 8, height = 6.5)
+  save_pdf(file.path(res, "volcano_plot.pdf"), print(p_volcano), width = W_DOUBLE, height = mm(165))
   log_info("已生成 volcano_plot.pdf")
 
   # ---- 5. p 值分布诊断（DE 之后的 QC 关卡）--------------------------------
@@ -276,10 +276,10 @@ run_03_deg <- function(cfg) {
         if (length(pv) && min(pv) < 1e-3)
           sprintf("%.0f genes at P < 0.001 (real signal below the null)", sum(pv < 1e-3))
         else "no gene below P < 0.001"),
-        fig_width = 6.5),
+        fig_width = mm(165)),
       x = "raw P value", y = "gene count") +
     theme_paper(10)
-  save_pdf(file.path(res, "pvalue_histogram.pdf"), print(p_hist), width = 6.5, height = 5)
+  save_pdf(file.path(res, "pvalue_histogram.pdf"), print(p_hist), width = mm(165), height = mm(127))
 
   # 诊断结论：把"功效不足"和"设计有问题"分开
   n_below_001 <- sum(pv < 0.001)

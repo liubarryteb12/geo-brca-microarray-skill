@@ -101,7 +101,7 @@ run_04a_heatmap <- function(cfg) {
   )
 
   # 画布高度随基因数缩放：每行 0.115in ≈ 8.3pt。
-  fig_h  <- max(5.5, length(genes) * 0.115)
+  fig_h  <- max(mm(140), length(genes) * 0.115)
   row_fs <- 5
   # **行名放不下就整张不显示。** 原来写的是硬编码的 `length(genes) <= 60`，
   # 和画布高度毫无关系 —— 50 个基因时每行只剩约 3.6px 间隙，糊成一片。
@@ -130,7 +130,7 @@ run_04a_heatmap <- function(cfg) {
       silent = FALSE
     )
     # pheatmap 的色条固定在图右侧、无位置参数；细长条，占宽有限，保留。
-  }, width = 7, height = fig_h)
+  }, width = W_DOUBLE, height = fig_h)
   log_info("已生成 top50_heatmap.pdf")
 
   # **行名一旦不显示，基因身份就只剩这张表能提供。**
@@ -296,7 +296,7 @@ run_04b_enrichment <- function(cfg) {
                  print(make_gsea_dotplot(df, cfg,
                          sprintf("GSEA (preranked) GO %s - %s", cfg$enrichment$ont,
                                  cfg$dataset_id))),
-                 width = 8, height = 6.5)
+                 width = W_DOUBLE, height = mm(165))
       } else {
         status$gsea_go <- list(status = "empty", reason = "no gene set passed the cutoff")
         utils::write.csv(data.frame(), file.path(res, "GSEA_GO_table.csv"), row.names = FALSE)
@@ -337,7 +337,7 @@ run_04b_enrichment <- function(cfg) {
         save_pdf(file.path(res, "GSEA_KEGG_dotplot.pdf"),
                  print(make_gsea_dotplot(df, cfg,
                          sprintf("GSEA (preranked) KEGG - %s", cfg$dataset_id))),
-                 width = 8, height = 6.5)
+                 width = W_DOUBLE, height = mm(165))
       } else {
         status$gsea_kegg <- list(status = "empty", reason = "no pathway passed the cutoff")
         utils::write.csv(data.frame(), file.path(res, "GSEA_KEGG_table.csv"), row.names = FALSE)
@@ -451,7 +451,7 @@ run_04b_enrichment <- function(cfg) {
       top_down = head(out$Description[out$direction == "down"][order(out$p.adjust[out$direction == "down"])], 3))
     # 两个面板并排，每个面板 15 行标签 —— 比原来单面板 30 行宽松一倍。
     # 标签仍按量化判据核一遍：放不下就整张不显示，不缩字号硬塞。
-    ora_w <- 10; ora_h <- 6.5
+    ora_w <- W_DOUBLE; ora_h <- mm(165)   # 10 in = 254 mm，装不进一页
     decide_rownames(min(cfg$enrichment$top_terms, nrow(out)), ora_h, 7,
                     sprintf("%s 点图", label), panel_frac = 0.68, min_gap = 2.5,
                     figure = paste0(file_base, "_dotplot"))
@@ -527,7 +527,7 @@ make_ora_dotplot <- function(df, cfg, title) {
                     paste0("top %d per direction. ORA itself is direction-agnostic, ",
                            "so up and down are run as separate gene lists. ",
                            "x = significance, size = number of genes in the term."), n),
-                    fig_width = 10),
+                    fig_width = W_DOUBLE),
                   x = expression(-log[10] ~ "(adj.P)"), y = NULL) +
     theme_paper(9) +
     ggplot2::theme(
@@ -556,7 +556,7 @@ make_gsea_dotplot <- function(df, cfg, title) {
                   # 两个方向又都写成 "up"，和 ORA 那张图是同一个毛病。
                   subtitle = wrap_subtitle(sprintf(
                     "preranked on the full gene list (no threshold); right = up in %s (= down in %s), left = down in %s",
-                    arms[1L], arms[2L], arms[1L]), fig_width = 8),
+                    arms[1L], arms[2L], arms[1L]), fig_width = W_DOUBLE),
                   x = "NES (normalized enrichment score)", y = NULL) +
     theme_paper(9) +
     ggplot2::theme(axis.text.y = ggplot2::element_text(size = 7))
@@ -584,7 +584,7 @@ make_dotplot <- function(x, cfg, title) {
   n <- min(cfg$enrichment$top_terms, nrow(as.data.frame(x)))
   p <- enrichplot::dotplot(x, showCategory = n) +
     labs(title = title, subtitle = wrap_subtitle(sprintf(
-      "top %d terms, p.adjust < %g", n, cfg$enrichment$pvalue_cutoff), fig_width = 8)) +
+      "top %d terms, p.adjust < %g", n, cfg$enrichment$pvalue_cutoff), fig_width = W_DOUBLE)) +
     theme_bw(base_size = 9) +
     theme(axis.text.y = element_text(size = 7),
           legend.position = "bottom", legend.direction = "horizontal")

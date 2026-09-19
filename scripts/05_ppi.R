@@ -553,7 +553,7 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
         # 折行按**实际字号**算：wrap_subtitle 内部用 base_size - 1.5 估字宽，
         # 所以这里传 8 是为了让它按 6.5pt 排版（下面 plot.subtitle 就是 6.5）。
         # 传 10 会按 8.5pt 估，每行偏短、行数虚高，图会被撑得过高。
-        subtitle = wrap_caption(cap, fig_width = 7.5, base_size = 8),
+        subtitle = wrap_caption(cap, fig_width = W_DOUBLE, base_size = 8),
         x = NULL, y = NULL) +
       ggplot2::coord_fixed() +
       ggplot2::theme_void(base_size = 10) +
@@ -577,7 +577,7 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
       # 高度从 7.8 加到 9.4：coord_fixed 下面板是方的，宽 7.5in 就要求
       # 面板高约 7.2in，再加标题、**七段图注**和底部图例。图注多出来的
       # 约 1.3in 必须由画布高度支付，否则面板会被压小、节点更挤。
-      save_pdf(file.path(res, "PPI_network.pdf"), print(p), width = 7.5, height = 9.4)
+      save_pdf(file.path(res, "PPI_network.pdf"), print(p), width = W_DOUBLE, height = mm(239))
       NULL
     }, error = function(e) conditionMessage(e))
 

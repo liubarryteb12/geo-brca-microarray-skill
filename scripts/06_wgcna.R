@@ -121,7 +121,7 @@ make_soft_power_plot <- function(tab, chosen, cfg) {
       subtitle = wrap_subtitle(sprintf(
         paste0("dashed line = chosen power %d. Left: scale-free topology R2 ",
                "(target >= 0.8). Right: mean connectivity, which must stay above 0."),
-        chosen), fig_width = 8),
+        chosen), fig_width = W_DOUBLE),
       x = "soft-thresholding power", y = NULL) +
     theme_paper(10)
 }
@@ -149,7 +149,7 @@ make_module_trait_plot <- function(cor_df, cfg) {
                "* p_adj<0.05, ** <0.01, *** <0.001 (BH across all %d tests). ",
                "Modules are named by WGCNA colour labels; the colour here encodes r only."),
         length(unique(cor_df$module)), length(unique(cor_df$trait)),
-        cor_df$n[1L], nrow(cor_df)), fig_width = 9),
+        cor_df$n[1L], nrow(cor_df)), fig_width = W_DOUBLE),
       x = NULL, y = NULL) +
     theme_paper(10) +
     ggplot2::theme(
@@ -264,7 +264,7 @@ run_06_wgcna <- function(cfg) {
   utils::write.csv(pw$table, file.path(res, "wgcna_soft_power.csv"), row.names = FALSE)
   save_pdf(file.path(res, "wgcna_soft_power.pdf"),
            print(make_soft_power_plot(pw$table, pw$power, cfg)),
-           width = 8, height = 4.5)
+           width = W_DOUBLE, height = mm(114))
 
   # ---- 5. 模块识别 --------------------------------------------------------
   #
@@ -406,7 +406,7 @@ run_06_wgcna <- function(cfg) {
 
   save_pdf(file.path(res, "wgcna_module_trait_heatmap.pdf"),
            print(make_module_trait_plot(cor_df, cfg)),
-           width = 9, height = max(3.2, 0.32 * length(unique(cor_df$module)) + 1.6))
+           width = W_DOUBLE, height = max(mm(81), 0.32 * length(unique(cor_df$module)) + 1.6))
 
   write_json(file.path(res, "wgcna_status.json"), status)
   log_info(paste0("已生成 wgcna_modules.csv / wgcna_module_trait.csv / wgcna_module_sizes.csv / ",

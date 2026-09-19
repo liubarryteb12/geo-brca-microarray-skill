@@ -73,12 +73,12 @@ run_02_qc_pca_correlation <- function(cfg) {
     labs(title = "Expression distribution before / after quantile normalization",
          subtitle = wrap_subtitle(sprintf("%s - %d genes x %d samples",
                                           cfg$dataset_id, nrow(expr), ncol(expr)),
-                                  fig_width = 8),
+                                  fig_width = W_DOUBLE),
          x = NULL, y = "log2 expression") +
     theme_paper(9) +
     theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 6),
           legend.position = "none")
-  save_pdf(file.path(res, "boxplot_before_after.pdf"), print(p_box), width = 8, height = 5.5)
+  save_pdf(file.path(res, "boxplot_before_after.pdf"), print(p_box), width = W_DOUBLE, height = mm(140))
   log_info("已生成 boxplot_before_after.pdf")
 
   # ---- 2. 密度曲线 --------------------------------------------------------
@@ -95,10 +95,10 @@ run_02_qc_pca_correlation <- function(cfg) {
                           name = NULL) +
     labs(title = "Expression density before / after normalization",
          subtitle = wrap_subtitle(sprintf("coloured and styled by group; one curve per sample (%s)",
-                                          cfg$dataset_id), fig_width = 7),
+                                          cfg$dataset_id), fig_width = W_DOUBLE),
          x = "log2 expression", y = "density") +
     theme_paper(9)
-  save_pdf(file.path(res, "density_plot.pdf"), print(p_density), width = 7, height = 6)
+  save_pdf(file.path(res, "density_plot.pdf"), print(p_density), width = W_DOUBLE, height = mm(152))
   log_info("已生成 density_plot.pdf")
 
   # ---- 3. PCA -------------------------------------------------------------
@@ -179,11 +179,11 @@ run_02_qc_pca_correlation <- function(cfg) {
                   "understates the true spread and is a visual aid, not a test."),
            nrow(pca_input), ell_radius, min(table(groups)),
            min(table(groups)) - 1L),
-           fig_width = 6.5),
+           fig_width = mm(165)),
          x = sprintf("PC1 (%.1f%% variance)", var_explained[1L]),
          y = sprintf("PC2 (%.1f%% variance)", var_explained[2L])) +
     theme_paper(10)
-  save_pdf(file.path(res, "pca_plot.pdf"), print(p_pca), width = 6.5, height = 6)
+  save_pdf(file.path(res, "pca_plot.pdf"), print(p_pca), width = mm(165), height = mm(152))
   log_info(sprintf("已生成 pca_plot.pdf（PC1=%.1f%%, PC2=%.1f%%）",
                    var_explained[1L], var_explained[2L]))
 
@@ -260,7 +260,7 @@ run_02_qc_pca_correlation <- function(cfg) {
     )
     # pheatmap 的色条固定在图右侧，没有位置参数可调。
     # 它是**细长条**，占的宽度远小于 ggplot 的右侧图例，所以这张图保留右侧。
-  }, width = 7, height = 6.5)
+  }, width = W_DOUBLE, height = mm(165))
   log_info("已生成 correlation_heatmap.pdf")
 
   # ---- 6. 相关性矩阵落盘 --------------------------------------------------
