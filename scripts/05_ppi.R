@@ -418,6 +418,17 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
     vdf$ring <- factor(sprintf("ring %d", ring_of),
                        levels = sprintf("ring %d", seq_len(n_rings)))
 
+    # **布局落盘。** 图本身看不出"第 3 环是不是真的在外圈"，光看 PNG 只能靠猜；
+    # 写下每个节点的环号与坐标，环结构就是可核对的数据而不是视觉效果。
+    # 同时它让"哪些基因属于核心环"成为可引用的结果。
+    utils::write.csv(
+      data.frame(gene = vdf$name, ring = ring_of, radius = radii[ring_of],
+                 angle_deg = round((atan2(vdf$y, vdf$x) * 180 / pi + 360) %% 360, 1),
+                 x = round(vdf$x, 4), y = round(vdf$y, 4),
+                 degree = vdf$degree, module = as.character(vdf$community),
+                 stringsAsFactors = FALSE),
+      file.path(res, "ppi_plot_layout.csv"), row.names = FALSE, fileEncoding = "UTF-8")
+
     edf <- igraph::as_data_frame(g, what = "edges")
     edf$x    <- vdf$x[match(edf$from, vdf$name)]
     edf$y    <- vdf$y[match(edf$from, vdf$name)]
