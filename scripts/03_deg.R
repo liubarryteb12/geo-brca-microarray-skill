@@ -285,16 +285,28 @@ run_03_deg <- function(cfg) {
   n_below_001 <- sum(pv < 0.001)
   # 在正确的原假设下，P < 0.05 的基因数应约为 5%。明显超出 = 有真实信号。
   excess <- sum(pv < 0.05) / max(1, length(pv)) / 0.05
-  pval_verdict <- if (excess >= 2) {
-    "signal_present_but_underpowered"   # 有信号，只是过不了多重检验
+  # **"有信号"和"功效不足"是两件事，必须分开判。**
+  #
+  # 原来写的是 `excess >= 2 -> "signal_present_but_underpowered"` —— 只要检出信号
+  # 就贴上"功效不足"的标签，**根本没看有没有基因通过 FDR**。
+  # 实测 GSE42568（n=121，3795 个基因过 FDR）也被标成 underpowered：
+  # 这个字符串会直接进 deg_summary.json，任何引用它的措辞都会跟着错。
+  #
+  # 正确的判据是三分：有信号且**一个都没过** FDR 才叫功效不足；
+  # 有信号且过了 FDR 就是功效充足。
+  n_sig <- nrow(sig)
+  pval_verdict <- if (excess >= 2 && n_sig == 0L) {
+    "signal_present_but_underpowered"
+  } else if (excess >= 2) {
+    "signal_present"
   } else if (excess <= 0.5) {
     "little_or_no_signal"
   } else {
     "inconclusive"
   }
-  log_info(sprintf("P 值分布: P<0.05 的基因占 %.1f%%（原假设期望 5%%，超出 %.1f 倍）→ %s",
-                   100 * sum(pv < 0.05) / max(1, length(pv)), excess, pval_verdict))
-  if (pval_verdict == "signal_present_but_underpowered") {
+  log_info(sprintf("P 值分布: P<0.05 的基因占 %.1f%%（原假设期望 5%%，超出 %.1f 倍），FDR 显著 %d 个 → %s",
+                   100 * sum(pv < 0.05) / max(1, length(pv)), excess, n_sig, pval_verdict))
+  if (identical(pval_verdict, "signal_present_but_underpowered")) {
     log_warn(sprintf(paste0("有真实信号但功效不足：%d 个基因 P < 0.001，",
                             "却没有任何基因通过 FDR。这是样本量的限制，不是设计错误。"),
                      n_below_001))

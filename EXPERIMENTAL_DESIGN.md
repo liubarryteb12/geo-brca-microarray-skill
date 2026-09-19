@@ -1,8 +1,15 @@
-# GEO 乳腺癌小样本芯片数据挖掘 — 实验设计
+# GEO 乳腺癌芯片数据挖掘 — 实验设计
+
+> **本文档的路径约定：** 文中出现的 `results/X` 与 `data/X` 一律指
+> `results/<GSE>/X` 与 `data/<GSE>/X` —— 产物**按数据集分目录**，
+> 跑第二个数据集不会覆盖第一个。配置也一个数据集一个文件
+> （`assets/config.<GSE>.yml`）。目录名由 `dataset_id` 在 `load_config()` 里派生。
 
 > 数据源：**GSE64790** ｜ 平台：**GPL19612**（Agilent-062918 OE Human lncRNA Microarray V4.0，111,088 探针）
 > 物种：*Homo sapiens* ｜ 类型：Expression profiling by array ｜ 样本量：**6**（3 例 TNBC + 3 例配对正常）
-> 运行环境：GitHub Actions `ubuntu-latest` ｜ 语言：R / Bioconductor
+> `design_mode: small_sample` ｜ 运行环境：GitHub Actions `ubuntu-latest` ｜ 语言：R / Bioconductor
+>
+> 另有队列级设计：**GSE42568**（121 例，`design_mode: cohort`），见 §6。
 
 ---
 
@@ -924,17 +931,118 @@ results/
 
 ---
 
-## 6. 复现
+## 6. 队列级设计：GSE42568
+
+上面 §1–§5 是 `design_mode: small_sample` 的设计（GSE64790，n=6）。
+GSE42568 是**同一个对比的放大版**，用途是把 GSE64790 上"信号存在但功效不足"
+的假设放到有功效的队列上验证。
+
+### 6.1 合规性核验
+
+| 约束 | 要求（`cohort`） | GSE42568 实测 | 结论 |
+| --- | --- | --- | --- |
+| 物种 | Homo sapiens | `Homo sapiens` (taxid 9606) | ✅ |
+| 数据类型 | 基因芯片 | `Expression profiling by array` / GPL570 | ✅ |
+| 疾病 | 乳腺癌 | 104 例癌 vs 17 例正常乳腺 | ✅ |
+| 样本量 | ≥ 15 | **121** | ✅ |
+| 每组样本数 | ≥ 10 | 104 vs 17 | ✅ |
+| 基因注释 | 需要 symbol | GPL570 有 `Gene Symbol` 列 → 23,500 个基因 | ✅ |
+
+### 6.2 实际结果（run 35434644032）
+
+**DEG 是实打实的，没有走降级路径**：`deg_mode: "fdr"`，3,795 个基因通过
+`adj.P < 0.05` 且 `|log2FC| > 1`（上调 1,845 / 下调 1,950），残差自由度 119。
+这与 GSE64790 的 0 个形成直接对照 —— **同一套代码、同一个对比，差别只在样本量**。
+
+| | GSE64790 (n=6) | GSE42568 (n=121) |
+|---|---|---|
+| FDR 显著基因 | **0** | **3,795** |
+| 最小 adj.P | 0.394 | — |
+| 富集输入 | `ranked_fallback` 前 500 | `fdr` 3,795 |
+| GO 条目（去冗余后） | — | 799 → 278 |
+| PPI | 共表达回退（STRING 映射 485/500） | STRING 3,254 节点 / 92,872 边 |
+
+### 6.3 临床终点与 EPV 上限
+
+`tools/check_clinical_endpoints.mjs` 实测（**这是选数据集时最容易漏掉的一步**）：
+
+| 终点 | 事件数 / 风险集 | Cox 签名上限（EPV ≥ 10） |
+| --- | --- | --- |
+| `overall survival event`（配 `overall survival time_days`） | **35 / 104** | **3 个基因** |
+| `relapse free survival event`（配 `relapse free survival time_days`） | **48 / 104** | 4 个基因 |
+| `er_status` | 67 vs 34（少数类 34） | 3 个基因（logistic） |
+| `lymph node status` | 59 vs 45（少数类 45） | 4 个基因（logistic） |
+
+**35 个事件意味着 OS 模型超过 3 个基因就开始过拟合。** 文献里常见的
+"8 基因预后签名"配 35 个事件是过拟合，只是很少被查。
+
+### 6.4 配套验证队列：GSE20685
+
+| | GSE42568 | GSE20685 |
+|---|---|---|
+| 平台 | **GPL570** | **GPL570** |
+| n | 121（104 癌 + 17 正常） | 327（全为原发癌） |
+| 终点 | OS 35 事件 / RFS 48 事件 | 死亡 83 事件 / 转移 83 事件 |
+| 其他临床 | ER / grade / 淋巴结 / 年龄 / 大小 | 分期 / 亚型(I–VI) / 化疗方案 / 随访年数 |
+| 角色 | 发现集 | **独立验证集** |
+
+**两者同平台**，注释和表达量尺度直接可比，省掉跨平台校正这一整块风险。
+
+> ⚠️ GSE20685 的事件列与时间列**名称对不上**（`event_death` 配
+> `follow_up_duration (years)`），工具会如实报"需人工确认配对关系"而不是猜。
+
+### 6.5 尚未做的（本设计范围之外）
+
+- **WGCNA 尚未实现。** n=121 满足 WGCNA 的通行下限（≥15），可以做，
+  但**应该只用 104 例癌**，不要带那 17 例正常 —— 否则第一个模块必然是
+  "肿瘤 vs 正常"轴，反映的是组织成分而不是肿瘤内部的共表达结构。
+- **LASSO 尚未实现。** 终点和事件数都已确认可用，但签名规模必须受 §6.3 的
+  EPV 上限约束，且**必须在 GSE20685 上做外部验证** —— 只在训练集上报
+  C-index 的预后签名没有意义。
+
+---
+
+## 7. 复现
 
 ```bash
-# GitHub Actions：手动触发或 push 触发
-gh workflow run geo_analysis.yml
+# GitHub Actions：指定数据集（push 时两个数据集各跑一个 job）
+gh workflow run geo_analysis.yml -f dataset=GSE42568
+gh run download --name geo-results-GSE42568
 
-# 本地（需 R 4.3+ 与 Bioconductor）
-Rscript scripts/main_analysis.R --config assets/config.yml
+# 本地（需 R 4.3+ 与 Bioconductor）。没有默认配置，必须显式指定。
+Rscript scripts/main_analysis.R --config assets/config.GSE42568.yml
 ```
 
-**已验证的成功运行**：[run 35412006459](https://github.com/liubarryteb12/geo-brca-microarray-skill/actions/runs/35412006459)
-（GSE64790，暖缓存 3 min 45 s，7 个步骤全部 `ok`，12 项验收全过，24 个产物）。
+**已验证的成功运行**：[run 35434644032](https://github.com/liubarryteb12/geo-brca-microarray-skill/actions/runs/35434644032)
+—— 两个 job 全绿（GSE64790 5m47s、GSE42568 6m25s），7 个步骤全部 `ok`。
 
-完整配置见 `assets/config.yml`；运行期故障排查见 `references/troubleshooting.md`。
+> **关于"逐字节可复现"：不要把浮点末位也当成已验证的性质。**
+>
+> 同一 commit 连跑多轮会得到**两组**不同的浮点末位。实测数据（GSE64790）：
+>
+> | 轮次 | Azure 区域 | 数据文件指纹 |
+> |---|---|---|
+> | c370bd0 ×3 | westus3 / eastus2 / westus2 | `04d8295b` |
+> | c370bd0 ×2 | eastus / eastus | `04d8295b` |
+> | **c370bd0 ×1** | **westus3** | **`6839eb19`** |
+> | 3f2a373 ×2 | centralus | `6839eb19` |
+>
+> 关键那一行：**同一个 commit、同一个区域（westus3）跑出了另一组末位。**
+> 所以差异既不是 commit 引起的（我曾据此误判过一次），也不是区域引起的 ——
+> 是 GitHub 托管 runner 的 CPU 型号在**同一 Azure 区域内也不单一**。
+>
+> 差异幅度：`deg_table.csv` 最大绝对差 **9.9e-14**（logFC 量级 ~1）、
+> `pca_ellipse.csv` 最大 **1.0e-12**（坐标量级 ~100），都是**约 1 个 ULP**。
+> 而同一批运行的 `data/` 输入文件（`group.csv` / `clean_stats.json` /
+> `feature_mode.json`）**逐字节一致**，所有**报告出来的**统计量也完全一致
+> （16487 个基因、PC1=46.1%、1909 个名义显著、GSEA 1080/101、
+> STRING 485/500、17 项验收全过）。
+>
+> 机制是 OpenBLAS 在**运行期**按 CPU 型号分发 SIMD 内核，向量宽度不同则
+> 归约顺序不同。`OMP_NUM_THREADS=1` 只解决了**线程调度**那一半，
+> 管不到**内核分发**这一半 —— 所以 workflow 里另外钉了 `OPENBLAS_CORETYPE`。
+>
+> **可以放心声称的是结构与量级可复现；不要把"浮点末位一致"写进结论。**
+> 验证方式是同一 commit 连跑多轮比对 SHA256（AGENTS.md 规则 12）。
+
+完整配置见 `assets/config.<GSE>.yml`；运行期故障排查见 `references/troubleshooting.md`。

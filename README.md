@@ -1,18 +1,24 @@
-# GEO 乳腺癌小样本芯片数据挖掘流水线
+# GEO 乳腺癌芯片数据挖掘流水线
 
-对 GEO 人源乳腺癌基因表达芯片数据（**样本量 < 10**）执行端到端纯生信分析，
-产出清洗、QC、PCA、样本相关性、差异基因、聚类热图、GO/KEGG 富集、
-差异基因互作网络的**全部图表与表格**，并在 GitHub Actions 上运行后打包为 artifact。
+对 GEO 人源乳腺癌基因表达芯片数据执行端到端纯生信分析，产出清洗、QC、PCA、
+样本相关性、差异基因、聚类热图、GO/KEGG 富集、差异基因互作网络的**全部图表与表格**，
+并在 GitHub Actions 上运行后打包为 artifact。
 
-**默认数据集：[GSE64790](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE64790)**
-人源 · Agilent GPL19612 lncRNA 芯片 · 6 例（3 TNBC vs 3 **配对**正常乳腺组织）
+**两套设计模式**，由配置里的 `design_mode` 选择（不是一个门禁换个阈值，见
+[`AGENTS.md`](AGENTS.md) 规则 1）：
 
-> ✅ **已验证跑通**：[run 35412006459](https://github.com/liubarryteb12/geo-brca-microarray-skill/actions/runs/35412006459)
-> —— 暖缓存 3 min 45 s，7 个步骤全部 `ok`，12 项验收全过，24 个产物。
->
-> ⚠️ n=6 时**没有任何基因能通过 FDR**（最小 `adj.P` = 0.394）。富集与 PPI 走的是
-> 明确标注的 `ranked_fallback` 降级路径，结果只能作假设生成。见
+| | `small_sample` | `cohort` |
+|---|---|---|
+| 规模 | 总样本 < 10，每组 ≥ 3 | 总样本 ≥ 15，每组 ≥ 10 |
+| 用途 | 探索性、假设生成 | 队列级验证 |
+| 数据集 | [GSE64790](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE64790) · 6 例（3 TNBC vs 3 **配对**正常） · GPL19612 | [GSE42568](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE42568) · 121 例（104 癌 vs 17 正常） · GPL570 |
+
+> ⚠️ GSE64790 在 n=6 时**没有任何基因能通过 FDR**（最小 `adj.P` = 0.394）。富集与 PPI
+> 走的是明确标注的 `ranked_fallback` 降级路径，结果只能作假设生成。见
 > [`EXPERIMENTAL_DESIGN.md`](EXPERIMENTAL_DESIGN.md) §2.2 与 §2.10。
+>
+> GSE42568 的用途正是把这个假设放到**有功效的队列**上验证。它还有完整的随访
+> （OS 35 个事件、RFS 48 个事件），是同平台（GPL570）验证队列 GSE20685 的配套发现集。
 
 ---
 
@@ -23,32 +29,35 @@
 #    R 4.3+ / Bioconductor；Node 18+（仅用于数据集预检）
 
 # 1. 先验证数据集合规（不要跳过）
-node scripts/find_dataset.mjs check GSE64790
-node tools/check_sample_structure.mjs GSE64790   # 分组是否与批次混杂
+node scripts/find_dataset.mjs check GSE42568
+node tools/check_sample_structure.mjs GSE42568        # 分组是否与批次混杂
+node tools/check_clinical_endpoints.mjs GSE42568      # 有没有随访终点、多少个事件
 
-# 2. 改配置（可选）
-#    数据集、分组、阈值全部在 assets/config.yml
+# 2. 配置：一个数据集一个文件，assets/config.<GSE>.yml
+#    数据集、分组、阈值、design_mode 都在里面
 
-# 3. 跑
-Rscript scripts/main_analysis.R --config assets/config.yml
+# 3. 跑（没有默认配置，必须显式指定）
+Rscript scripts/main_analysis.R --config assets/config.GSE42568.yml
 
-# 4. 看结果
-ls results/
-cat results/state.json
+# 4. 看结果（产物按数据集分目录，跑第二个数据集不会覆盖第一个）
+ls results/GSE42568/
+cat results/GSE42568/state.json
 ```
 
 ## GitHub Actions
 
 ```bash
-gh workflow run geo_analysis.yml
+gh workflow run geo_analysis.yml -f dataset=GSE42568
 gh run watch
-gh run download --name geo-results
+gh run download --name geo-results-GSE42568
 ```
 
-workflow 手动触发或 push 到 `main` 时运行，上限 20 分钟，产物上传为
-artifact `geo-results`。
+手动触发时指定数据集；push 到 `main` 时**两个数据集各跑一个 job**。
+上限 20 分钟，artifact 名带数据集，下载下来不会混。
 
 ## 产出
+
+所有产物落在 `results/<GSE>/` 下。
 
 | 文件 | 内容 |
 | --- | --- |
@@ -120,10 +129,14 @@ GO 从 1059 折到 **439** 个代表条目。报告时引用 `representative` �
 
 ## 配置
 
-全部参数在 [`assets/config.yml`](assets/config.yml)。切换数据集只需改这个文件：
+**一个数据集一个配置文件**：`assets/config.<GSE>.yml`。切换数据集就是换文件，
+`--config` 必须显式指定（故意没有默认值 —— 多数据集下静默默认到其中某一个，
+正是"跑错数据集"的来源）。
 
 ```yaml
-dataset_id: GSE64790
+design_mode: small_sample   # 或 cohort。决定走哪套门禁，见 AGENTS.md 规则 1
+dataset_id: GSE64790        # 产物目录 results/<dataset_id>/ 由此派生
+
 group_field: characteristics_ch1
 group_values:
   # 判别子串实测：肿瘤是 "tissue: TNBC  tissue"（两个空格），
@@ -150,14 +163,17 @@ analysis:
 ## 换数据集
 
 ```bash
-# 找候选：人源 + 芯片 + 样本数 < 10
+# 找候选：人源 + 芯片
 node scripts/find_dataset.mjs search --disease "breast cancer" --max-samples 10
 
 # 只列出能凑出两个 >=3 样本组的数据集（慢，会逐个拉样本元数据）
 node scripts/find_dataset.mjs search --disease "breast cancer" --max-samples 10 --two-groups
 
 # 看某个数据集的样本明细
-node scripts/find_dataset.mjs samples GSE64790
+node scripts/find_dataset.mjs samples GSE42568
+
+# 有没有随访终点、多少个事件、EPV 换算的签名基因数上限
+node tools/check_clinical_endpoints.mjs GSE42568
 
 # 完整校验
 node scripts/find_dataset.mjs check GSEXXXXX

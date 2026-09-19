@@ -6,73 +6,114 @@
 ## 硬性规则
 
 1. **不要绕过 `00_validate_inputs.R`。** 物种 / 数据类型 / 样本量 / 分组四项门禁是
-   这个流水线唯一防止"用错数据得出结论"的机制。不要为了让某个数据集跑通而放宽它。
-2. **不要把"没有结果"写成"没有富集"。** KEGG 空结果、STRING 回退都必须通过
-   `results/enrichment_status.json` / `results/ppi_status.json` 记录原因，
+   这个流水线唯一防止"用错数据得出结论"的机制。
+   **门禁分两套，由 config 的 `design_mode` 选择，不是一个门禁换个阈值：**
+
+   | | `small_sample` | `cohort` |
+   |---|---|---|
+   | 总样本 | < 10 | >= 15（WGCNA 通行下限） |
+   | 每组 | >= 3 | >= 10 |
+   | FDR 显著基因 | 可能为 0，走 `ranked_fallback` 降级 | 应有 |
+   | 措辞约束 | "在最显著的 N 个基因里富集到……" | 可直接说"差异基因富集到……" |
+
+   **不要为了让某个数据集通过而调大 `small_sample` 的上限。** 两种设计的降级路径
+   和措辞约束都不同，混成一个门禁会让契约变含糊。规模不够就跑 `small_sample`，
+   够就显式写 `cohort`。
+2. **一个数据集一个配置文件、一个产物目录。** 配置是 `assets/config.<GSE>.yml`，
+   产物落在 `results/<GSE>/` 与 `data/<GSE>/`（目录由 `dataset_id` 在
+   `load_config()` 里派生，不要在脚本或配置里写死）。
+   **`parse_args()` 故意没有默认配置** —— 多数据集下静默默认到其中某一个，
+   正是"跑错数据集"的来源。
+3. **不要把"没有结果"写成"没有富集"。** KEGG 空结果、STRING 回退都必须通过
+   `results/<GSE>/enrichment_status.json` / `ppi_status.json` 记录原因，
    结论中引用该原因，不得升级为生物学结论。**`deg_mode: ranked_fallback` 时尤其注意**：
    只能说"在最显著的 N 个基因里富集到……"，不能说"显著差异基因富集到……"（§2.10）。
-3. **不要为 n<10 的结果编造机制解释。** 见设计文档 §2.2。肿瘤 vs 全组织正常的差异
+4. **不要为 n<10 的结果编造机制解释。** 见设计文档 §2.2。肿瘤 vs 全组织正常的差异
    主要反映组织成分，不是肿瘤特异事件。
-4. **不要凭空开关配对分析。** `paired: true` 必须在 `pairs` 里**显式声明**配对关系，
+5. **不要凭空开关配对分析。** `paired: true` 必须在 `pairs` 里**显式声明**配对关系，
    且能拿出依据（年龄/患者编号/`Series_overall_design`），不能靠解析样本标题后缀。
    见设计文档 §2.1。
-5. **换数据集前先查两件事**：`tools/check_sample_structure.mjs`（分组是否与批次混杂）
-   和平台注释列（有没有 `GeneSymbol` 之类的基因注释）。两者任一不合格，数据集就不可用，
-   见设计文档 §1.2。
-6. **新增分析步骤要同时改三处**：脚本、`main_analysis.R` 的 `STEPS`、
+6. **换数据集前先查三件事**：`tools/check_sample_structure.mjs`（分组是否与批次混杂）、
+   平台注释列（有没有 `GeneSymbol` 之类的基因注释）、以及
+   `tools/check_clinical_endpoints.mjs`（有没有随访终点、有多少个事件）。
+   前两者任一不合格数据集就不可用（见设计文档 §1.2）；第三个决定能不能做预后模型。
+7. **做 LASSO / Cox 之前先算 EPV。** 通行判据是每个入选变量至少 10 个事件。
+   实测 GSE42568 的 OS 只有 **35 个事件** → 签名超过 **3 个基因**就开始过拟合；
+   GSE20685 的死亡有 83 个事件 → 上限 8 个。文献里常见的"8 基因预后签名"配
+   35 个事件是过拟合。`tools/check_clinical_endpoints.mjs` 会直接把上限打出来。
+8. **新增分析步骤要同时改三处**：脚本、`main_analysis.R` 的 `STEPS`、
    `check_acceptance()` 的验收项。漏掉后两处会让步骤静默不执行。
-7. **富集分析的方法学判据来自 K-Dense `pathway-enrichment` skill，不要凭直觉改**：
+9. **富集分析的方法学判据来自 K-Dense `pathway-enrichment` skill，不要凭直觉改**：
    - 有**完整排序表**就用 preranked GSEA，**不要卡阈值跑 ORA**（初版犯过这个错，
      灵敏度差两个数量级）。排序指标用 limma 的 moderated `t`，不用 log2FC。
    - ORA 必须**按上/下调分开跑**，合并会丢掉方向（实测 `PI3K-Akt` 其实全是下调的）。
    - 背景集默认 `detected`（实测基因集），不用全基因组。
    - GO 条目必须**基因重叠去冗余**后再报告，不要罗列同一簇的近义条目。
-8. **不要报 post-hoc observed power。** 要报就报固定 n 下的 MDE（敏感性分析）。
-   `n < 10` 时必须看 `pvalue_histogram`：峰在 1 或 U 形说明设计有问题，
-   那时候连排序表都不能用。判据来自 K-Dense `bulk-rnaseq` / `statistical-power`。
-9. **引入任何随机调用都必须紧挨着它 `set.seed(cfg$analysis$seed)`。** 已知四个源：
-   `impute.knn`、`fgsea`（`gseGO(seed=)` **不可靠**，必须自己设 RNG）、
-   `layout_with_fr`、**`ggrepel::geom_text_repel`**（`seed` 默认是 `NA` 不是 `NULL`）。
-   `analysis.seed` 不可删。**验证方式是连跑两轮比对 SHA256**，
-   不是看一眼日志说"应该没问题"。
-10. **不要靠设种子解决一切。** 多线程 BLAS 的归约顺序会让浮点末位分叉，
-    设种子无用，只能把 `OMP_NUM_THREADS` / `OPENBLAS_NUM_THREADS` /
-    `MKL_NUM_THREADS` 钉为 1。实测 `deg_table.csv` 曾出现
-    `6.00193941779545e-05` vs `...546e-05`。**报"逐字节一致"之前先确认
-    是什么机制在保证它** —— 之前几轮的一致有一半是运气。
-11. **颜色只能有一个含义，且判据是量化的：色相相差 15° 以内视为同一颜色。**
+10. **不要报 post-hoc observed power。** 要报就报固定 n 下的 MDE（敏感性分析）。
+    `n < 10` 时必须看 `pvalue_histogram`：峰在 1 或 U 形说明设计有问题，
+    那时候连排序表都不能用。判据来自 K-Dense `bulk-rnaseq` / `statistical-power`。
+11. **引入任何随机调用都必须紧挨着它 `set.seed(cfg$analysis$seed)`。** 已知四个源：
+    `impute.knn`、`fgsea`（`gseGO(seed=)` **不可靠**，必须自己设 RNG）、
+    `layout_with_fr`、**`ggrepel::geom_text_repel`**（`seed` 默认是 `NA` 不是 `NULL`）。
+    `analysis.seed` 不可删。**验证方式是连跑两轮比对 SHA256**，
+    不是看一眼日志说"应该没问题"。
+12. **不要靠设种子解决一切，也不要以为钉了线程数就逐字节可复现。**
+    浮点末位分叉有**两个独立**的来源，必须分别处理：
+
+    | 来源 | 机制 | 处理 |
+    |---|---|---|
+    | 线程调度 | 多线程归约的求和顺序随调度变化 | `OMP_NUM_THREADS` / `OPENBLAS_NUM_THREADS` / `MKL_NUM_THREADS` = 1 |
+    | 内核分发 | OpenBLAS 在**运行期**按检测到的 CPU 型号选 SIMD 内核，向量宽度不同则归约顺序不同 | `OPENBLAS_CORETYPE` 钉死内核类型 |
+
+    **只钉线程数是不够的 —— 这一点是实测出来的，不是推理。** 同一个 commit
+    `c370bd0` 连跑 6 轮：5 轮给出一组末位，1 轮给出另一组。那一轮和其中两轮
+    **同在 westus3**，所以差异既不是 commit 引起的，也不是区域引起的 ——
+    GitHub 托管 runner 的 CPU 型号在**同一 Azure 区域内也不单一**。
+    实测差异幅度：`deg_table.csv` 最大绝对差 9.9e-14（logFC 量级 ~1）、
+    `pca_ellipse.csv` 最大 1.0e-12（坐标量级 ~100），都是**约 1 个 ULP**；
+    而同一批运行的 `data/` 输入文件（`group.csv` / `clean_stats.json` /
+    `feature_mode.json`）逐字节一致。
+
+    实测 `deg_table.csv` 还出现过 `6.00193941779545e-05` vs `...546e-05`。
+
+    **所以：报"逐字节一致"之前先确认是什么机制在保证它。**
+    可以放心声称的是**结构与量级可复现**（16487 个基因、PC1=46.1%、
+    1909 个名义显著、GSEA 1080/101、STRING 485/500、17 项验收全过 ——
+    这些在两种末位下都相同）；**不要**把"浮点末位也一致"当作已验证的性质。
+    验证方式是**同一 commit 连跑多轮比对 SHA256**，不是看一眼日志说"应该没问题"。
+13. **颜色只能有一个含义，且判据是量化的：色相相差 15° 以内视为同一颜色。**
     改任何色值前先跑 `node tools/check_palette.mjs`，它从 `common.R` 解析实际值重算。
     不要在某个脚本里就地写 `"#C1443C"` 之类的字面量 —— 一律走 `PAL$*`。
     色板来源固定：方向 = **ColorBrewer RdBu** 两端，连续 = **viridis**，
     分类 = Okabe-Ito 变体。**viridis 必须截去暗端** —— `#365C8D` 距 down 蓝仅 3.1°，
     深色点会被读成"下调"。门禁就是为这条设的。
-12. **出图代码的错误不得逃逸到方法级的 `tryCatch`。** 实测踩过：画图代码因为
+14. **出图代码的错误不得逃逸到方法级的 `tryCatch`。** 实测踩过：画图代码因为
     图缺 `weight` 边属性而报错，被 STRING 分支的 `tryCatch` 当成"STRING 失败"接住，
     **一个画图 bug 静默换掉了分析方法**，而状态 JSON 里看着一切正常。
     绘图要单独兜住，方法本身如实记录。
-13. **图上的 hub 是子网络的 hub。** PPI 图按**过滤后**子网络的 degree 排环序，
+15. **图上的 hub 是子网络的 hub。** PPI 图按**过滤后**子网络的 degree 排环序，
     `hub_genes.csv` 排的是**全网络**，两者前列基因不同（核心环是增殖模块，
     全网络前列是 GAPDH / CD34 / IGF1）。副标题必须写明环序来自哪个网络 ——
     否则读者会把核心环当成"hub 基因"的答案，而那个文件给的是另一批基因。
-14. **布局要落盘。** 从 PNG 反推"第 3 环是不是真的在外圈"是猜。
+16. **布局要落盘。** 从 PNG 反推"第 3 环是不是真的在外圈"是猜。
     `ppi_plot_layout.csv` 记录每个节点的环号、半径、角度、坐标、degree 与模块，
     环结构因此是可核对的数据而不是视觉印象。
-15. **副标题必须走 `wrap_subtitle()`。** ggplot 的副标题**不换行** ——
+17. **副标题必须走 `wrap_subtitle()`。** ggplot 的副标题**不换行** ——
     超出画布宽度的部分被**静默裁掉**，不是显示成省略号，所以"字没显示全"
     从图上完全看不出来。实测 PPI 副标题 455 字符、火山图 275 字符，尾巴都被切了。
     `tools/check_r_syntax.mjs` 会挡住超过 100 字符又没折行的副标题。
     **注意 `plot.subtitle = element_text(...)` 是主题设置，不算副标题文本。**
-16. **图例默认在底部横排。** `theme_paper()` 已经设好。右侧图例直接吃掉图宽，
+18. **图例默认在底部横排。** `theme_paper()` 已经设好。右侧图例直接吃掉图宽，
     底部横排在同样信息量下几乎不增加图幅。pheatmap 的色条固定在右侧、无位置参数，
     它是细长条、占宽有限，保留即可。
-17. **不要用 `stat_ellipse()`，自己算椭圆坐标。** 实测每组 3 个样本时它**产出空数据**，
+19. **不要用 `stat_ellipse()`，自己算椭圆坐标。** 实测每组 3 个样本时它**产出空数据**，
     ggplot 不报错、坐标范围也没被撑大，所以图上只有点没有椭圆而图注却写着有椭圆 ——
     "少画了一层"和"画对了"看起来一样。用 `ellipse_points()`，坐标落盘成
     `pca_ellipse.csv`，半径系数显式写在代码里。
     半径用 `sqrt(qchisq(level, 2))`（= 2.45 SD），**不用** ggplot 默认的
     `sqrt(2*qf(level, 2, n-2))` —— 后者在 n=3 时是 6.16 SD，椭圆比数据范围大 6 倍。
     代价是低估了小样本下协方差的不确定性，**图注必须写明它是视觉参考不是检验**。
-18. **图例键的填充色要显式给。** 节点是 `shape = 21` + `colour = "white"`，
+20. **图例键的填充色要显式给。** 节点是 `shape = 21` + `colour = "white"`，
     而 `fill` 映射在另一个 scale 上；size 图例的键继承不到 `fill`，
     于是画成"白描边 + 无填充"，在白底上**完全隐形**（实测图例只剩标题）。
     用 `override.aes = list(fill = ...)` 补回来。
@@ -90,27 +131,34 @@
 ## 验证
 
 ```bash
-# R 语法与括号配平（不需要 R 运行时）
+# R 语法与括号配平 + 副标题折行 + 配置字段引用一致性（不需要 R 运行时）
 node tools/check_r_syntax.mjs
 
 # GEO 数据集合规性（门禁 + 真实分组取值）
-node scripts/find_dataset.mjs check GSE64790
+node scripts/find_dataset.mjs check GSE42568
 
 # 样本相关结构（是否分组与全局表达位移混杂，不需要 R）
-node tools/check_sample_structure.mjs GSE64790
+node tools/check_sample_structure.mjs GSE42568
 
-# 图不是空白的（独立解码 PNG 像素，不需要 R）
-node tools/check_figures.mjs results
+# 有没有随访终点、有多少个事件、EPV 换算出的签名基因数上限（不需要 R）
+node tools/check_clinical_endpoints.mjs GSE42568
+
+# 图不是空白的（独立解码 PNG 像素，不需要 R）；参数是**数据集目录**
+node tools/check_figures.mjs results/GSE42568
 
 # 配色仍然"一个颜色一个含义"（解析 common.R 的实际色值重算，不需要 R）
 node tools/check_palette.mjs
 
-# 端到端（需要 R + Bioconductor）
-Rscript scripts/main_analysis.R --config assets/config.yml
+# 端到端（需要 R + Bioconductor）。没有默认配置，必须显式指定。
+Rscript scripts/main_analysis.R --config assets/config.GSE42568.yml
 ```
 
 CI 在 GitHub Actions 上跑 `geo_analysis.yml`，`timeout-minutes: 20` 是硬上限。
 实测：冷缓存 14m58s，暖缓存 3m33s（R 库由 `actions/cache` 缓存）。
+
+> **push 时两个数据集各跑一个 job**（矩阵），手动触发时只跑指定的那个。
+> 产物 artifact 名带数据集（`geo-results-GSE42568`），下载下来不会混。
+> 平台注释缓存落在 `data/<GSE>/geo_cache`，**CI 里不持久化**，每轮重下。
 
 > **改 `packages` 列表必须同时把缓存键 `rlib-<os>-bioc-vN` 递增。**
 > `actions/cache` 的 key 一旦存在就不再写回，沿用旧 key 会让新装的包每次运行都被丢掉、

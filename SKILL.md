@@ -52,26 +52,28 @@ node tools/check_sample_structure.mjs GSE64790
 
 ### 2. 改配置，不改代码
 
-所有可调项都在 [`assets/config.yml`](assets/config.yml)：数据集、分组字段、
-分组模式、对比方向、阈值、富集背景。切换数据集只需要改这个文件。
+**一个数据集一个配置文件**：`assets/config.<GSE>.yml`。所有可调项都在里面：
+`design_mode`、数据集、分组字段、分组模式、对比方向、阈值、富集背景。
+切换数据集就是换文件，**产物按数据集分目录**（`results/<GSE>/`、`data/<GSE>/`），
+跑第二个数据集不会覆盖第一个。
 
 ### 3. 跑
 
 ```bash
-# 本地
-Rscript scripts/main_analysis.R --config assets/config.yml
+# 本地（--config 必须显式指定，故意没有默认值）
+Rscript scripts/main_analysis.R --config assets/config.GSE42568.yml
 
-# GitHub Actions
-gh workflow run geo_analysis.yml
+# GitHub Actions（指定数据集；push 时两个数据集各跑一个 job）
+gh workflow run geo_analysis.yml -f dataset=GSE42568
 ```
 
 `main_analysis.R` 按 00→05 顺序执行，每步独立 `tryCatch`：必需步骤失败即中止，
 可选步骤（富集、PPI）失败则记录原因后继续，最后按 spec 的 acceptance criteria
-逐项校验产物并写 `results/state.json`。
+逐项校验产物并写 `results/<GSE>/state.json`。
 
 ### 4. 读结果
 
-产物清单见 `EXPERIMENTAL_DESIGN.md` §4。`results/state.json` 是唯一的执行真相来源。
+产物清单见 `EXPERIMENTAL_DESIGN.md` §4。`results/<GSE>/state.json` 是唯一的执行真相来源。
 
 ## Gotchas
 
@@ -263,10 +265,12 @@ SKILL.md                     本文件
 EXPERIMENTAL_DESIGN.md       实验设计（分组依据、统计功效边界、局限）
 AGENTS.md                    给其他 agent 的仓库约定
 README.md                    人类可读的安装与使用说明
-assets/config.yml            全部可调参数
+assets/
+├── config.GSE64790.yml      小样本配置（design_mode: small_sample）
+└── config.GSE42568.yml      队列配置（design_mode: cohort）
 scripts/
 ├── main_analysis.R          编排器（00→05 + 验收）
-├── 00_validate_inputs.R     硬门禁：物种/类型/样本量/分组
+├── 00_validate_inputs.R     硬门禁：物种/类型/样本量/分组（两套，按 design_mode）
 ├── 01_download_clean.R      下载、探针映射、KNN 填补、quantile 标准化
 ├── 02_qc_pca_correlation.R  QC 箱线图/密度、PCA、样本相关性
 ├── 03_deg.R                 limma 差异表达 + 火山图
@@ -275,9 +279,12 @@ scripts/
 ├── find_dataset.mjs         GEO 数据集预检（Node，不需要 R）
 └── lib/common.R             配置、日志、状态、SOFT 抓取
 tools/
-├── check_r_syntax.mjs       R 静态检查（括号配平、配置键一致性）
+├── check_r_syntax.mjs       R 静态检查（括号配平、副标题折行、配置键一致性）
 ├── check_sample_structure.mjs  样本相关结构预检（Node，不需要 R）
+├── check_clinical_endpoints.mjs 随访终点与 EPV 签名上限（Node，不需要 R）
 └── check_figures.mjs        图不是空白的（独立解码 PNG 像素，不需要 R）
 references/troubleshooting.md 运行期故障排查
 .github/workflows/geo_analysis.yml
+results/<GSE>/               运行产物，按数据集分目录
+data/<GSE>/                  清洗后的数据与元数据，按数据集分目录
 ```

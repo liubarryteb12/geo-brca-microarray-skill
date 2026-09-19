@@ -1,17 +1,23 @@
 # 故障排查
 
+> **路径约定：** 下文所有 `results/<GSE>/X` 与 `data/<GSE>/X` 里的 `<GSE>` 指
+> 当前 config 的 `dataset_id`。产物按数据集分目录，排查时先确认自己看的是哪个数据集 ——
+> 拿 GSE64790 的状态文件去解释 GSE42568 的报错是很容易犯的错。
+
 ## 流水线在 00_validate_inputs.R 就停了
 
-这是**设计如此**，不是 bug。四类硬门禁：
+这是**设计如此**，不是 bug。门禁按 `design_mode` 分两套：
 
 | 报错关键词 | 含义 | 处理 |
 | --- | --- | --- |
 | `数据类型不合规` | 数据集是 RNA-seq / ChIP-seq，不是芯片 | 换数据集。`gdstype` 必须含 `array` |
 | `物种不合规` | 非人源 | 换数据集 |
-| `样本量不合规` | ≥ 10 例 | 换数据集，或按 GSM 筛选子集另存为新的 GSE |
+| `样本量不合规` | `small_sample` 要求 < 10，`cohort` 要求 ≥ 15 | 换数据集，或改 `design_mode`（**不要为了通过而调大上限**） |
+| `每组样本数不合规` | `small_sample` 要求 ≥ 3，`cohort` 要求 ≥ 10 | 换数据集，或按 GSM 筛选子集另存为新的 GSE |
 | `分组失败` / `分组歧义` | `group_field` / `group_values` 与数据不匹配 | 用 `node scripts/find_dataset.mjs samples GSEXXXXX` 看样本真实字段值 |
 | `pairs[[k]] 必须...` | `paired: true` 但 `pairs` 里有样本不属于本数据集 / 重复 / 不成对 | 逐对核对 GSM，每对必须一例 numerator 一例 denominator |
 | 样本未配对 | `paired: true` 但有样本没出现在 `pairs` 里 | 补齐 `pairs`，或改 `paired: false` |
+| `没有指定配置文件` | 直接 `Rscript scripts/xxx.R` 没带 `--config` | `parse_args()` 故意没有默认配置，见报错里列出的可用配置 |
 
 排查分组问题：
 
@@ -36,13 +42,13 @@ node tools/check_sample_structure.mjs GSE64790 # 分组是否与批次效应混�
 ## KEGG 没有结果
 
 `enrichKEGG` 走 KEGG 在线 REST API，会因限流、网络或授权返回空/报错。
-查 `results/enrichment_status.json` 的 `kegg.status` 与 `kegg.reason`。
+查 `results/<GSE>/enrichment_status.json` 的 `kegg.status` 与 `kegg.reason`。
 
 **报告中不得写"无 KEGG 通路富集"**，只能写"本次未获得 KEGG 结果"。
 
 ## PPI 没有出图
 
-查 `results/ppi_status.json`：
+查 `results/<GSE>/ppi_status.json`：
 
 - `status: skipped` → 显著 DEG 少于 5 个，无法建网。这是 n=9 的正常表现。
 - `status: fallback` → STRINGdb 不可用，已回退为**共表达网络**。
@@ -53,7 +59,7 @@ STRINGdb 首次运行要下载约 100 MB 网络文件，超时或网络受限时
 
 ## 热图基因数不是 50
 
-`results/enrichment_status.json` 的 `heatmap_mode` 会写明实际用了什么：
+`results/<GSE>/enrichment_status.json` 的 `heatmap_mode` 会写明实际用了什么：
 
 - `top 50 significant DEG by adj.P` → 正常
 - `all N significant DEG (< 50 requested)` → 显著基因不足 50，已降级
@@ -63,7 +69,7 @@ STRINGdb 首次运行要下载约 100 MB 网络文件，超时或网络受限时
 
 ## GO 富集结果为空
 
-先看 `results/deg_summary.json` 的 `n_significant`。若只有几个显著基因，
+先看 `results/<GSE>/deg_summary.json` 的 `n_significant`。若只有几个显著基因，
 富集必然为空 —— 这是样本量的限制，不是代码问题。
 
 若显著基因很多但富集仍为空，检查 `enrichment.universe`：`detected` 会把背景限制在
