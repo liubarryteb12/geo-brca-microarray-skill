@@ -74,6 +74,7 @@ GSE64790 244s / GSE42568 400s，暖缓存整轮 6m10s / 8m49s。全冷缓存装�
 | `deg_table.csv` | 全基因 limma 结果（gene/logFC/P.Value/adj.P.Val） |
 | `volcano_plot.pdf` / `.png` | 火山图。**颜色 = 方向**（up 红 `#B2182B` / down 蓝 `#2166AC`），**alpha + 大小 = 置信度**（FDR 显著实心大点，名义显著半透明小点）。纵轴统一 raw P |
 | `top50_heatmap.pdf` / `.png` + `top50_heatmap_genes.csv` | top DEG 聚类热图（行 Z-score，euclidean + complete）。**行名放不放得下是算出来的**：一行标签要 `字号 + 2.5pt`，画布能给 `高(in) x 72 x 0.82` 点。放不下就整张不显示行名（GSE42568 实测 50 行 > 容量 45 → 隐藏），此时靠 `top50_heatmap_genes.csv` 对照，且该表是**图上的显示顺序**（行聚类自己算再传给 pheatmap，两边同一棵树） |
+| `label_decisions.csv` | **每张图的标签决策落盘**：`figure / label / n_labels / capacity / height_in / fontsize / panel_frac / min_gap / shown`。日志里有同样的算式，但 CI 日志会滚掉，文件不会 —— 想回答"这张图为什么把行名藏了"直接查这张表 |
 | `pvalue_histogram.pdf` / `.png` | DE 后 QC：p 值分布（区分"功效不足"与"模型设定错"） |
 | `GSEA_GO_dotplot.pdf` / `.png` + `GSEA_GO_table.csv` | **preranked GSEA / GO BP（主力方法）** |
 | `GSEA_KEGG_dotplot.pdf` / `.png` + `GSEA_KEGG_table.csv` | preranked GSEA / KEGG |
