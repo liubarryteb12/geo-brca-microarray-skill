@@ -53,7 +53,12 @@ gh run download --name geo-results-GSE42568
 ```
 
 手动触发时指定数据集；push 到 `main` 时**两个数据集各跑一个 job**。
-上限 20 分钟，artifact 名带数据集，下载下来不会混。
+上限 30 分钟，artifact 名带数据集，下载下来不会混。
+
+**实测（run 35438543496）**：Install R packages 66s（增量）、Run analysis
+GSE64790 244s / GSE42568 400s，暖缓存整轮 6m10s / 8m49s。全冷缓存装包约 720s、
+整轮约 20 分钟 —— 上限写 30 而不是 20，因为被掐死的 job 存不下缓存，
+下一轮又是冷缓存，会变成"每次都超时"的死循环。
 
 ## 产出
 
@@ -68,16 +73,23 @@ gh run download --name geo-results-GSE42568
 | `correlation_matrix.csv` | Pearson + Spearman 矩阵 + 离群标记 |
 | `deg_table.csv` | 全基因 limma 结果（gene/logFC/P.Value/adj.P.Val） |
 | `volcano_plot.pdf` / `.png` | 火山图。**颜色 = 方向**（up 红 `#B2182B` / down 蓝 `#2166AC`），**alpha + 大小 = 置信度**（FDR 显著实心大点，名义显著半透明小点）。纵轴统一 raw P |
-| `top50_heatmap.pdf` / `.png` | top DEG 聚类热图（行 Z-score，euclidean + complete） |
+| `top50_heatmap.pdf` / `.png` + `top50_heatmap_genes.csv` | top DEG 聚类热图（行 Z-score，euclidean + complete）。**行名放不放得下是算出来的**：一行标签要 `字号 + 2.5pt`，画布能给 `高(in) x 72 x 0.82` 点。放不下就整张不显示行名（GSE42568 实测 50 行 > 容量 45 → 隐藏），此时靠 `top50_heatmap_genes.csv` 对照，且该表是**图上的显示顺序**（行聚类自己算再传给 pheatmap，两边同一棵树） |
 | `pvalue_histogram.pdf` / `.png` | DE 后 QC：p 值分布（区分"功效不足"与"模型设定错"） |
 | `GSEA_GO_dotplot.pdf` / `.png` + `GSEA_GO_table.csv` | **preranked GSEA / GO BP（主力方法）** |
 | `GSEA_KEGG_dotplot.pdf` / `.png` + `GSEA_KEGG_table.csv` | preranked GSEA / KEGG |
-| `GO_dotplot.pdf` / `.png` + `GO_table.csv` | ORA GO BP（含 `direction` 列，上/下调分开） |
-| `KEGG_dotplot.pdf` / `.png` + `KEGG_table.csv` | ORA KEGG（含 `direction` 列） |
-| `PPI_network.pdf` / `.png` + `hub_genes.csv` + `ppi_edges.csv` + `ppi_plot_layout.csv` | STRING PPI 网络与 hub 基因。**图做过可读性过滤，并按同心圆环排布**（最大连通分量 → degree 前 200 → 最强 450 条边 → 3 环，内圈 = hub 核心；最大 4 个 Louvain 模块上色）。完整网络见 `ppi_edges.csv`，每个节点的环号/半径/角度见 `ppi_plot_layout.csv` |
+| `GO_dotplot.pdf` / `.png` + `GO_table.csv` | ORA GO BP。**按方向分面**（两个面板各有标题和条目数）—— 初版两个 x 轴标签都写成 "up in tumor"，整张图上 "down" 一次都没出现，而数据里下调比上调还多 |
+| `KEGG_dotplot.pdf` / `.png` + `KEGG_table.csv` | ORA KEGG，同样按方向分面 |
+| `PPI_network.pdf` / `.png` + `hub_genes.csv` + `ppi_edges.csv` + `ppi_plot_layout.csv` + `PPI_network_caption.txt` | STRING PPI 网络与 hub 基因。**图做过可读性过滤，并按同心圆环排布**（最大连通分量 → degree 前 200 → 最强 450 条边 → 3 环，内圈 = hub 核心；最大 4 个 Louvain 模块上色）。完整网络见 `ppi_edges.csv`，每个节点的环号/半径/角度见 `ppi_plot_layout.csv`，图注七段式（方法/输入/展示范围/视觉编码/环/陷阱/文件）另存为可检索的 txt |
+| `wgcna_modules.csv` + `wgcna_module_sizes.csv` + `wgcna_soft_power.csv` + `wgcna_module_trait.csv` + `wgcna_soft_power.pdf` + `wgcna_module_trait_heatmap.pdf` + `wgcna_status.json` | **WGCNA 共表达模块（可选，仅 `cohort`）**。只用肿瘤组（带上正常样本的话第一个模块必然是"肿瘤 vs 正常"轴，而 DEG 已经答过那件事）。软阈值取最小的 R²≥0.8 的 power，达不到就如实记录不假装通过；模块-性状做 **BH 校正**。实测 GSE42568：15 个模块（14 非 grey）、power=8（R²=0.858）、126 次检验中 30 个校正后显著 |
+| `lasso_coefficients.csv` + `lasso_coefficients_epv.csv` + `lasso_risk_scores.csv` + `lasso_stability.csv` + `lasso_selection_frequency.csv` + `lasso_cv_curve.csv` + `lasso_km.pdf` + `lasso_status.json` | **LASSO-Cox 预后签名（可选，需随访终点）**。终点由 config 显式指定（自动配对在字段名不规整时一定配错，而配错不报错）。报**三个** C-index：训练集 / 交叉验证 / 外部验证。实测 GSE42568：16 基因签名训练集 0.879、CV 0.793、**外部验证 0.672**；EPV 合规的 3 基因版本外部 0.642。重复 CV 选出 [16,3,3,22,3] → `signature_stable: false` |
 | `enrichment_status.json` | 富集模式（`fdr` / `ranked_fallback`）、GSEA 参数、去冗余阈值与原因 |
 | `ppi_status.json` | PPI 方法、节点边数、绘图过滤与环参数、回退原因 |
 | `state.json` | 每步执行状态 + 验收结果（唯一逐字节不可复现的产物：含耗时与时间戳） |
+
+> **可选步骤失败不会让 CI 变红。** 06/07 是 `required = FALSE`，实测第一次跑时
+> WGCNA 崩了而两个 job 全绿。所以两个脚本在**每一条退出路径**上都要写状态文件，
+> 验收项 `settled()` 查的就是里面的 `status` 字段 ——
+> 文件不存在或字段缺失一律记 FAIL。
 
 ### 配色
 
