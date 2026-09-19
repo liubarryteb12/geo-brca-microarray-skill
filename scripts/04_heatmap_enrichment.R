@@ -94,17 +94,23 @@ run_04a_heatmap <- function(cfg) {
   annotation_col <- data.frame(group = groups, row.names = colnames(expr))
   annotation_row <- data.frame(direction = ifelse(deg$logFC[match(genes, deg$gene)] > 0, "up", "down"),
                                row.names = genes)
+  # 注释条用与火山图/PCA 完全相同的条件色与方向色
+  annotation_colors <- list(
+    group     = group_palette(groups, cfg),
+    direction = c(up = PAL$up, down = PAL$down)
+  )
 
   save_pdf(file.path(res, "top50_heatmap.pdf"), {
     pheatmap::pheatmap(
       mat,
       annotation_col = annotation_col,
       annotation_row = annotation_row,
+      annotation_colors = annotation_colors,
       cluster_rows = TRUE, cluster_cols = TRUE,
       clustering_distance_rows = "euclidean", clustering_method = "complete",
       clustering_distance_cols = "euclidean",
       show_rownames = length(genes) <= 60, fontsize_row = 5,
-      color = grDevices::colorRampPalette(c("#2E5FA3", "white", "#C1443C"))(100),
+      color = pal_diverging(100), border_color = "white",
       breaks = seq(-3, 3, length.out = 101),
       main = sprintf("Top DEG heatmap (row Z-score) - %s", cfg$dataset_id),
       silent = FALSE
@@ -435,15 +441,22 @@ make_ora_dotplot <- function(df, cfg, title) {
   keep$Description <- factor(keep$Description,
                              levels = unique(keep$Description[order(keep$p.adjust, decreasing = TRUE)]))
   keep$direction <- factor(keep$direction, levels = c("up", "down"))
+  arms <- as.character(cfg$contrast)
+  # 方向轴用条件色（红=contrast[1]，蓝=contrast[2]），与火山图/PCA/热图一致；
+  # 显著性用 magma 序列色 —— 刻意避开红蓝，否则深色会被误读成"上调"
   ggplot2::ggplot(keep, ggplot2::aes(x = direction, y = Description)) +
     ggplot2::geom_point(ggplot2::aes(size = Count, colour = -log10(p.adjust))) +
-    ggplot2::scale_colour_viridis_c(option = "plasma", name = "-log10\nadj.P") +
+    scale_colour_seq("-log10\nadj.P") +
     ggplot2::scale_size_continuous(name = "genes", range = c(2, 7)) +
+    ggplot2::scale_x_discrete(labels = stats::setNames(
+      c(sprintf("%s\n(up in %s)", arms[1L], arms[1L]),
+        sprintf("%s\n(up in %s)", arms[2L], arms[2L])),
+      c("up", "down"))) +
     ggplot2::labs(title = title,
                   subtitle = sprintf("top %d per direction; up/down kept separate (ORA is direction-agnostic)",
                                      n),
-                  x = sprintf("direction (%s)", cfg$contrast[1L]), y = NULL) +
-    ggplot2::theme_bw(base_size = 9) +
+                  x = NULL, y = NULL) +
+    theme_paper(9) +
     ggplot2::theme(axis.text.y = ggplot2::element_text(size = 7))
 }
 
@@ -452,16 +465,24 @@ make_gsea_dotplot <- function(df, cfg, title) {
   keep <- utils::head(df[order(df$p.adjust), , drop = FALSE], 2 * cfg$enrichment$top_terms)
   keep$Description <- factor(keep$Description,
                              levels = keep$Description[order(keep$NES)])
+  arms <- as.character(cfg$contrast)
   ggplot2::ggplot(keep, ggplot2::aes(x = NES, y = Description)) +
-    ggplot2::geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.3) +
+    # 背景按方向着色：左侧（normal 一侧）淡蓝、右侧（tumor 一侧）淡红，
+    # 与火山图同一套语义
+    ggplot2::annotate("rect", xmin = -Inf, xmax = 0, ymin = -Inf, ymax = Inf,
+                      fill = PAL$down, alpha = 0.06) +
+    ggplot2::annotate("rect", xmin = 0, xmax = Inf, ymin = -Inf, ymax = Inf,
+                      fill = PAL$up, alpha = 0.06) +
+    ggplot2::geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.3,
+                        colour = PAL$ink) +
     ggplot2::geom_point(ggplot2::aes(size = setSize, colour = -log10(p.adjust))) +
-    ggplot2::scale_colour_viridis_c(option = "plasma", name = "-log10\nadj.P") +
+    scale_colour_seq("-log10\nadj.P") +
     ggplot2::scale_size_continuous(name = "set size", range = c(2, 7)) +
     ggplot2::labs(title = title,
-                  subtitle = sprintf("preranked on the full gene list (no threshold); NES > 0 = up in %s",
-                                     cfg$contrast[1L]),
+                  subtitle = sprintf("preranked on the full gene list (no threshold); right = up in %s, left = up in %s",
+                                     arms[1L], arms[2L]),
                   x = "NES (normalized enrichment score)", y = NULL) +
-    ggplot2::theme_bw(base_size = 9) +
+    theme_paper(9) +
     ggplot2::theme(axis.text.y = ggplot2::element_text(size = 7))
 }
 

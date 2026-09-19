@@ -50,7 +50,18 @@ pairs:
 # ---- 阈值 ------------------------------------------------------------------
 thresholds:
   adj_p: 0.05                  # BH 校正后 p 值
-  log2fc: 1.0                  # |log2FC| 阈值
+  # |log2FC| 阈值。0.5 = 1.41 倍表达差异。
+  #
+  # **注意：调这个值不会让火山图出现"显著"基因。** 判据是
+  # `adj.P < 0.05` **且** `|log2FC| > log2fc`，是 AND 关系。
+  # GSE64790 的最小 adj.P 是 0.394，全基因组 BH 校正下**没有任何基因**能通过
+  # adj_p 这一关，所以把 log2fc 从 1.0 降到 0.5 只会让集合更小（仍是 0 个）。
+  # 真正的限制在样本量（n=6），不在倍数阈值，见设计文档 §2.2。
+  #
+  # 火山图因此额外画一条**名义显著**层级（raw P < 0.05 且 |log2FC| > 此阈值），
+  # 用独立的橙色标注为"未过 FDR，仅供探索"，避免图形空无一物，
+  # 同时不把名义显著冒充成显著。
+  log2fc: 0.5
   string_score: 400            # STRING PPI 置信度
   outlier_cor: 0.8             # 样本相关性低于此值标记为离群
 
@@ -65,6 +76,11 @@ analysis:
   impute_k: 10                 # KNN 填补的 k
   pca_top_genes: 2000          # PCA 使用方差最大的 N 个基因（0 = 全部）
   hub_gene_count: 10           # PPI hub 基因数量
+  # PPI 网络图最多画多少个节点。**只影响图，不影响数据** ——
+  # ppi_edges.csv / hub_genes.csv 始终是完整网络。
+  # 390 节点 / 3284 边全画出来是一团毛线，读者看不出任何结构；
+  # 图里取最大连通分量 + degree 前 N 个，并 Louvain 社区着色。
+  ppi_plot_max_nodes: 200
   # 无基因通过 FDR 时，富集/PPI 退回「raw P 排序前 N 个（仍要求 |log2FC| > 阈值）」。
   # 样本数 < 10 时全基因组 BH 校正几乎不可能有基因通过，这是样本量的固有限制。
   # 降级会被写进 enrichment_status.json / ppi_status.json 的 deg_mode=ranked_fallback，

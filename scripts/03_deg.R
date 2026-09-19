@@ -146,36 +146,83 @@ run_03_deg <- function(cfg) {
   }
 
   # ---- 4. 火山图 ----------------------------------------------------------
+  #
+  # **四档，不是三档。** 判据 `adj.P < adj_p` 且 `|log2FC| > log2fc` 是 AND 关系，
+  # n=6 时全基因组 BH 校正下**没有任何基因**能过 adj.P 这一关
+  # （GSE64790 最小 adj.P = 0.394），所以只画三档的话图上是空的 —— 信息量为零。
+  #
+  # 所以额外画出「名义显著」一档：raw P < 0.05 且 |log2FC| 过关，但**未过 FDR**。
+  # 它用独立的橙色（PAL$nominal）而不是方向色，图例里写明 "nominal P, not FDR"，
+  # 这样图有信息量，又不会把名义显著冒充成显著。
+  #
+  # 纵轴统一用 **raw P**（这也是火山图更常见的约定）。
+  #
+  # **不能把 raw P 和 adj.P 混在一条纵轴上。** 曾经想让名义显著的点用 raw P、
+  # 其余用 adj.P，但那样名义显著的点会画在 `-log10(adj_p) = 1.3` 这条线**之上**，
+  # 看起来像通过了 FDR —— 正好是这张图要避免的误导。
+  # 而全部用 adj.P 也不行：GSE64790 的 adj.P 全在 0.394~1 之间，
+  # 纵轴范围只有 0~0.4，整个图压成一张饼。
+  #
+  # 所以纵轴一律 raw P，横线标 `P = 0.05`（含义与轴一致）。
+  # FDR 阈值**无法**用一条横线表示 —— BH 校正是逐基因的，没有常数截断。
+  # 这一点写在副标题里。
   tt$status <- "ns"
   tt$status[tt$adj.P.Val < padj_cut & tt$logFC >  lfc_cut] <- "up"
   tt$status[tt$adj.P.Val < padj_cut & tt$logFC < -lfc_cut] <- "down"
-  tt$status <- factor(tt$status, levels = c("up", "down", "ns"))
-  tt$neg_log10_p <- -log10(pmax(tt$adj.P.Val, .Machine$double.xmin))
+  nominal <- tt$status == "ns" & !is.na(tt$P.Value) & tt$P.Value < 0.05 &
+    abs(tt$logFC) > lfc_cut
+  tt$status[nominal] <- "nominal"
+  n_nominal <- sum(nominal)
+  log_info(sprintf("火山图分层: FDR 显著 up %d / down %d；名义显著（raw P<0.05，未过 FDR）%d；其余 %d",
+                   sig_up, sig_down, n_nominal, sum(tt$status == "ns")))
+
+  tt$plot_y <- -log10(pmax(tt$P.Value, .Machine$double.xmin))
 
   label_df <- rbind(
     head(tt[tt$status == "up", , drop = FALSE][order(-tt$logFC[tt$status == "up"]), ], 10),
     head(tt[tt$status == "down", , drop = FALSE][order(tt$logFC[tt$status == "down"]), ], 10)
   )
+  # FDR 显著为空时，标注名义显著里最极端的那些，否则图上没有一个基因名
+  if (nrow(label_df) == 0L && n_nominal > 0L) {
+    cand <- tt[nominal, , drop = FALSE]
+    cand <- cand[order(cand$P.Value), , drop = FALSE]
+    label_df <- rbind(head(cand[cand$logFC > 0, , drop = FALSE], 8),
+                      head(cand[cand$logFC < 0, , drop = FALSE], 8))
+  }
 
-  p_volcano <- ggplot(tt, aes(x = logFC, y = neg_log10_p, colour = status)) +
-    geom_point(size = 0.8, alpha = 0.7) +
-    scale_colour_manual(values = c(up = "#C1443C", down = "#2E5FA3", ns = "grey75"),
-                        labels = c(up = sprintf("up (%d)", sig_up),
-                                   down = sprintf("down (%d)", sig_down),
-                                   ns = "not significant")) +
-    geom_vline(xintercept = c(-lfc_cut, lfc_cut), linetype = "dashed", linewidth = 0.3) +
-    geom_hline(yintercept = -log10(padj_cut), linetype = "dashed", linewidth = 0.3) +
+  # 图层顺序：不显著的先画（当背景），名义显著其次，FDR 显著最后（压在最上面）
+  tt$status <- factor(tt$status, levels = c("ns", "nominal", "down", "up"))
+
+  p_volcano <- ggplot(tt, aes(x = logFC, y = plot_y, colour = status)) +
+    geom_point(aes(size = status), alpha = 0.75) +
+    scale_size_manual(values = c(ns = 0.7, nominal = 1.2, down = 1.7, up = 1.7),
+                      guide = "none") +
+    scale_colour_manual(
+      values = c(up = PAL$up, down = PAL$down, nominal = PAL$nominal, ns = PAL$ns),
+      labels = c(up = sprintf("%s up, FDR < %g (%d)", numerator, padj_cut, sig_up),
+                 down = sprintf("%s up, FDR < %g (%d)", denominator, padj_cut, sig_down),
+                 nominal = sprintf("nominal P < 0.05, NOT FDR-significant (%d)", n_nominal),
+                 ns = "not significant")) +
+    geom_vline(xintercept = c(-lfc_cut, lfc_cut), linetype = "dashed",
+               linewidth = 0.3, colour = PAL$ink) +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed",
+               linewidth = 0.3, colour = PAL$ink) +
     labs(title = sprintf("Volcano: %s vs %s (%s)", numerator, denominator, cfg$dataset_id),
-         subtitle = sprintf("adj.P < %g, |log2FC| > %g", padj_cut, lfc_cut),
+         subtitle = sprintf(paste0("|log2FC| > %g (vertical); horizontal line = nominal P 0.05. ",
+                                   "No gene passes FDR (adj.P < %g, min adj.P = %.3f), so the FDR ",
+                                   "categories are empty and orange marks exploratory genes only. ",
+                                   "BH is per-gene, so the FDR cutoff is not a horizontal line."),
+                            lfc_cut, padj_cut,
+                            if (nrow(tt)) min(tt$adj.P.Val, na.rm = TRUE) else NA_real_),
          x = sprintf("log2 fold change (%s / %s)", numerator, denominator),
-         y = "-log10 adjusted P value", colour = NULL) +
-    theme_bw(base_size = 10)
+         y = "-log10 raw P value",
+         colour = NULL) +
+    theme_paper(10)
 
   if (nrow(label_df) > 0L) {
-    p_volcano <- p_volcano +
-      ggrepel_labels(label_df)
+    p_volcano <- p_volcano + ggrepel_labels(label_df)
   }
-  save_pdf(file.path(res, "volcano_plot.pdf"), print(p_volcano), width = 8, height = 6.5)
+  save_pdf(file.path(res, "volcano_plot.pdf"), print(p_volcano), width = 8.5, height = 6.5)
   log_info("已生成 volcano_plot.pdf")
 
   # ---- 5. p 值分布诊断（DE 之后的 QC 关卡）--------------------------------
@@ -192,10 +239,10 @@ run_03_deg <- function(cfg) {
   # 峰在 1 或 U 形说明模型设定错了，那时候连排序表都不能用。
   pv <- tt$P.Value[!is.na(tt$P.Value)]
   p_hist <- ggplot2::ggplot(data.frame(p = pv), ggplot2::aes(x = p)) +
-    ggplot2::geom_histogram(bins = 40, boundary = 0, fill = "grey55",
+    ggplot2::geom_histogram(bins = 40, boundary = 0, fill = PAL$down,
                             colour = "white", linewidth = 0.2) +
     ggplot2::geom_hline(yintercept = length(pv) / 40, linetype = "dashed",
-                        colour = "firebrick", linewidth = 0.4) +
+                        colour = PAL$nominal, linewidth = 0.6) +
     ggplot2::labs(
       title = sprintf("P value distribution: %s vs %s (%s)", numerator, denominator,
                       cfg$dataset_id),
@@ -206,7 +253,7 @@ run_03_deg <- function(cfg) {
                                    sum(pv < 1e-3))
                          else "no gene below P < 0.001"),
       x = "raw P value", y = "gene count") +
-    ggplot2::theme_bw(base_size = 10)
+    theme_paper(10)
   save_pdf(file.path(res, "pvalue_histogram.pdf"), print(p_hist), width = 7, height = 5)
 
   # 诊断结论：把"功效不足"和"设计有问题"分开
@@ -237,6 +284,7 @@ run_03_deg <- function(cfg) {
     n_samples = ncol(expr), n_genes_tested = nrow(tt),
     adj_p_cutoff = padj_cut, log2fc_cutoff = lfc_cut,
     n_significant = nrow(sig), n_up = sig_up, n_down = sig_down,
+    n_nominal_only = n_nominal,
     paired = paired_used,
     paired_requested = isTRUE(cfg$paired),
     paired_fallback_reason = pair_reason,

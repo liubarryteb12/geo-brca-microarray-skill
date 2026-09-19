@@ -135,6 +135,101 @@ record_step <- function(cfg, id, status, seconds = NA_real_, message = "", requi
   invisible(state)
 }
 
+# ---- 统一调色板 -------------------------------------------------------------
+#
+# **语义固定，所有图共用同一套。** 之前每张图各自挑颜色，同一个含义在不同图里
+# 是不同颜色：PCA 把第一组画成蓝色，火山图却把上调（tumor 高）画成红色；
+# p 值直方图的参考线是第三种红（firebrick）；dotplot 用 viridis plasma，
+# 与红蓝体系毫无关系。读者要重新学一遍每张图的配色。
+#
+# 约定：
+#   * **方向 / 条件**：红 = 上调 / tumor，蓝 = 下调 / normal。
+#     红蓝是发散轴的两端，热图、火山、PCA、dotplot 的方向轴全部沿用。
+#   * **序列（显著性、强度）**：magma。刻意避开红与蓝 —— 红色已经被"方向"占了，
+#     序列色再用红就会让人以为深色代表上调。
+#   * **分类（模块、多组）**：色盲友好的定性色板，前两个仍是红蓝，
+#     这样二分类退化为方向色，超过两类时自动扩展。
+PAL <- list(
+  up       = "#C1443C",   # 上调 / tumor 一侧
+  down     = "#2E5FA3",   # 下调 / normal 一侧
+  ns       = "#BFBFBF",   # 不显著
+  nominal  = "#E0A03C",   # 名义显著但未过 FDR（单独一档，不能用方向色）
+  mid      = "#F5F5F5",   # 发散色中点
+  ink      = "#333333",   # 文字 / 参考线
+  grid     = "#E5E5E5"
+)
+
+#' 发散色板：低 = 蓝 → 中 = 近白 → 高 = 红
+#' 用于 Z-score 热图、相关性热图、logFC 类连续量
+pal_diverging <- function(n = 100) {
+  grDevices::colorRampPalette(c(PAL$down, PAL$mid, PAL$up))(n)
+}
+
+#' 序列色板（magma）：用于显著性 / 强度
+#' 刻意不用红蓝色系，避免与"方向"的语义打架
+pal_sequential <- function(n = 256) {
+  grDevices::colorRampPalette(
+    c("#FCFDBF", "#FEC98D", "#FE9F6D", "#F1605D", "#C03A83", "#8C2981", "#3B0F70"))(n)
+}
+
+#' 分类色板：前两个是方向色，之后依次扩展（色盲友好）
+pal_categorical <- function(k) {
+  base <- c(PAL$up, PAL$down, "#3E8E5A", "#8A6BBE", "#D08C34", "#4C9BB5", "#7A5C3E")
+  if (k <= length(base)) base[seq_len(k)] else grDevices::colorRampPalette(base)(k)
+}
+
+#' 按对比的两端给条件上色
+#'
+#' 两端时 tumor/上调 = 红、normal/下调 = 蓝；超过两类时退回分类色板。
+#' **这是修掉"PCA 蓝、火山红"那个不一致的地方** —— 条件色必须由
+#' `cfg$contrast` 决定，不能由分组出现的先后顺序决定。
+pal_condition <- function(arms) {
+  arms <- as.character(arms)
+  if (length(arms) == 2L) return(stats::setNames(c(PAL$up, PAL$down), arms))
+  stats::setNames(pal_categorical(length(arms)), arms)
+}
+
+#' 分组配色：按 `cfg$contrast` 的两端排序后再上色
+#'
+#' 放在 common.R 而不是 02 里，因为 04（热图注释条）也要用 ——
+#' 定义在 02 会让 `Rscript scripts/04_heatmap_enrichment.R` 单独跑时找不到函数。
+group_palette <- function(groups, cfg = NULL) {
+  lv <- unique(as.character(groups))
+  arms <- if (!is.null(cfg)) as.character(cfg$contrast) else character(0)
+  ordered <- c(intersect(arms, lv), sort(setdiff(lv, arms)))
+  stats::setNames(unname(pal_condition(ordered)), ordered)
+}
+
+# ggplot2 比例尺包装，保证同一语义在每张图上写法一致
+scale_colour_condition <- function(arms, name = NULL, ...) {
+  ggplot2::scale_colour_manual(values = pal_condition(arms), name = name, ...)
+}
+scale_fill_condition <- function(arms, name = NULL, ...) {
+  ggplot2::scale_fill_manual(values = pal_condition(arms), name = name, ...)
+}
+scale_colour_seq <- function(name, ...) {
+  ggplot2::scale_colour_gradientn(colours = pal_sequential(), name = name, ...)
+}
+scale_fill_seq <- function(name, ...) {
+  ggplot2::scale_fill_gradientn(colours = pal_sequential(), name = name, ...)
+}
+scale_fill_div <- function(name, ...) {
+  ggplot2::scale_fill_gradientn(colours = pal_diverging(), name = name, ...)
+}
+
+#' 所有图共用的主题，保证字号、网格、留白一致
+theme_paper <- function(base_size = 10) {
+  ggplot2::theme_bw(base_size = base_size) +
+    ggplot2::theme(
+      panel.grid.minor = ggplot2::element_blank(),
+      panel.grid.major = ggplot2::element_line(colour = PAL$grid, linewidth = 0.25),
+      panel.border     = ggplot2::element_rect(colour = PAL$grid, linewidth = 0.4),
+      plot.title       = ggplot2::element_text(face = "bold", size = base_size + 1),
+      plot.subtitle    = ggplot2::element_text(colour = "#666666", size = base_size - 1.5),
+      legend.key.size  = ggplot2::unit(0.9, "lines")
+    )
+}
+
 # ---- 绘图 ------------------------------------------------------------------
 
 #' 把绘图表达式同时写进 PDF 和 PNG，保证设备一定关闭

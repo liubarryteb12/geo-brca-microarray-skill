@@ -42,12 +42,11 @@ matrix_to_long <- function(m, value_name = "expression") {
   df
 }
 
-#' 统一的分组配色
-group_palette <- function(groups) {
-  lv <- sort(unique(groups))
-  base <- c("#2E5FA3", "#C1443C", "#3E8E5A", "#8A6BBE", "#D08C34", "#4C9BB5")
-  stats::setNames(rep(base, length.out = length(lv)), lv)
-}
+#' 分组配色已挪到 common.R 的 `group_palette()` ——
+#' 04 的热图注释条也要用它，定义在本文件会让 04 单独跑时找不到。
+#' 这里曾经是本仓库最明显的一处配色不一致：旧实现把**第一个出现的分组**
+#' 涂成蓝色，于是 PCA 上 tumor 是蓝的，而火山图、热图上 tumor（上调）是红的。
+#' 同一含义两种颜色，读者要重新学一遍。现在颜色由 `cfg$contrast` 决定。
 
 run_02_qc_pca_correlation <- function(cfg) {
   log_info("=== 步骤 02：QC / PCA / 样本相关性 ===")
@@ -58,6 +57,7 @@ run_02_qc_pca_correlation <- function(cfg) {
   expr <- readRDS(file.path(cfg$output$data_dir, "expr_clean.rds"))
   group <- utils::read.csv(file.path(cfg$output$data_dir, "group.csv"), stringsAsFactors = FALSE)
   groups <- factor(group$group, levels = unique(group$group))
+  gp <- group_palette(group$group, cfg)
 
   # ---- 1. 标准化前后箱线图 ------------------------------------------------
   long <- rbind(
@@ -69,22 +69,28 @@ run_02_qc_pca_correlation <- function(cfg) {
   p_box <- ggplot(long, aes(x = sample, y = expression, fill = stage)) +
     geom_boxplot(outlier.size = 0.3, linewidth = 0.25) +
     facet_wrap(~stage, ncol = 2, scales = "free_y") +
+    scale_fill_manual(values = c(before = PAL$ns, after = PAL$down)) +
     labs(title = "Expression distribution before / after quantile normalization",
          subtitle = sprintf("%s - %d genes x %d samples", cfg$dataset_id, nrow(expr), ncol(expr)),
          x = NULL, y = "log2 expression") +
-    theme_bw(base_size = 9) +
+    theme_paper(9) +
     theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 6),
           legend.position = "none")
   save_pdf(file.path(res, "boxplot_before_after.pdf"), print(p_box), width = 10, height = 6)
   log_info("已生成 boxplot_before_after.pdf")
 
   # ---- 2. 密度曲线 --------------------------------------------------------
-  p_density <- ggplot(long, aes(x = expression, colour = sample)) +
-    geom_density(linewidth = 0.4) +
+  # 按**分组**上色（不是按样本），这样密度图和 PCA 用的是同一套条件色，
+  # 一眼能看出某一组的分布是否整体偏移
+  long$group <- groups[match(long$sample, group$gsm)]
+  p_density <- ggplot(long, aes(x = expression, colour = group, group = sample)) +
+    geom_density(linewidth = 0.4, alpha = 0.85) +
     facet_wrap(~stage, ncol = 1, scales = "free_y") +
-    labs(title = "Expression density before / after normalization", x = "log2 expression", y = "density") +
-    theme_bw(base_size = 9) +
-    theme(legend.position = "none")
+    scale_colour_condition(levels(groups), name = NULL) +
+    labs(title = "Expression density before / after normalization",
+         subtitle = sprintf("coloured by group; one curve per sample (%s)", cfg$dataset_id),
+         x = "log2 expression", y = "density") +
+    theme_paper(9)
   save_pdf(file.path(res, "density_plot.pdf"), print(p_density), width = 8, height = 7)
   log_info("已生成 density_plot.pdf")
 
@@ -106,14 +112,14 @@ run_02_qc_pca_correlation <- function(cfg) {
     group = groups
   )
   p_pca <- ggplot(pca_df, aes(x = PC1, y = PC2, colour = group, label = sample)) +
-    geom_point(size = 3.2) +
-    geom_text(vjust = -1, size = 2.4, show.legend = FALSE) +
-    scale_colour_manual(values = group_palette(groups)) +
+    geom_point(size = 3.4) +
+    geom_text(vjust = -1, size = 2.4, show.legend = FALSE, colour = PAL$ink) +
+    scale_colour_condition(levels(groups), name = NULL) +
     labs(title = sprintf("PCA of %s", cfg$dataset_id),
          subtitle = sprintf("top %d variable genes", nrow(pca_input)),
          x = sprintf("PC1 (%.1f%% variance)", var_explained[1L]),
          y = sprintf("PC2 (%.1f%% variance)", var_explained[2L])) +
-    theme_bw(base_size = 10)
+    theme_paper(10)
   save_pdf(file.path(res, "pca_plot.pdf"), print(p_pca), width = 7, height = 6)
   log_info(sprintf("已生成 pca_plot.pdf（PC1=%.1f%%, PC2=%.1f%%）",
                    var_explained[1L], var_explained[2L]))
@@ -173,14 +179,19 @@ run_02_qc_pca_correlation <- function(cfg) {
   }
 
   # ---- 5. 样本间相关性热图 ------------------------------------------------
+  # 相关性全部在 0.9+ 区间，是**单向**量（越高越好），所以用序列色而不是发散色。
+  # 用发散色会让人以为 0.5 是"中性"中点，而这里根本没有负相关。
   annotation_col <- data.frame(group = groups, row.names = colnames(expr))
+  annotation_colors <- list(group = gp)
   save_pdf(file.path(res, "correlation_heatmap.pdf"), {
     pheatmap::pheatmap(
       pearson,
       annotation_col = annotation_col,
       annotation_row = annotation_col,
+      annotation_colors = annotation_colors,
       display_numbers = TRUE, number_format = "%.3f", fontsize_number = 6,
-      color = grDevices::colorRampPalette(c("#2E5FA3", "white", "#C1443C"))(100),
+      color = pal_sequential(100),
+      border_color = "white", treeheight_row = 18, treeheight_col = 18,
       main = sprintf("Sample-sample Pearson correlation (%s)", cfg$dataset_id),
       silent = FALSE
     )

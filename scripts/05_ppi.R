@@ -258,42 +258,143 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
     )
   }
 
-  # 网络图：节点大小按 degree，颜色按 degree 深浅
-  png_path <- file.path(res, "PPI_network.png")
-  plot_err <- tryCatch({
-    open_png(png_path, width = 1600, height = 1400, res = 150)
-    graphics::par(mar = c(1, 1, 3, 1))
-    # layout_with_fr 从随机初始位置开始，不设种子时每次运行的节点摆位都不同，
-    # PNG 无法逐字节复现（边和节点本身是确定的，变的只是布局）。
+  # ---- 网络图 --------------------------------------------------------------
+  #
+  # **旧版为什么丑：** 390 节点 / 3284 条边全部画出来是一团毛线，
+  # 而且按 degree 上色（连续深浅）看不出任何结构 —— 读者只能看到"中间密、边上稀"。
+  # 标签取 degree 前 20%，约 78 个，在毛线球上互相压成一团。
+  #
+  # 改法：
+  #   1. 只取**最大连通分量**（零散小碎片对"互作网络"没有信息量）
+  #   2. 节点仍超过上限时按 degree 取前 N 个 —— 这才是毛线球的根因
+  #   3. **Louvain 社区着色**，用分类色板。有结构可看，而不是一片渐变色
+  #   4. 边按权重调透明度，弱边近乎消失，强边浮现
+  #   5. 只标注 top hub，用 ggrepel 避免重叠
+  #   6. 用 ggplot2 画而不是 plot.igraph：布局坐标只算一次，
+  #      PDF 与 PNG 共用同一份坐标，天然可复现
+  plot_ppi_network <- function(cfg, g, method, status) {
+    res <- cfg$output$results_dir
+    png_path <- file.path(res, "PPI_network.png")
+
+    g_full <- g
+    # 1. 最大连通分量
+    comps <- igraph::components(g_full)
+    if (length(comps$csize) > 1L) {
+      g <- igraph::induced_subgraph(g_full, which(comps$membership == which.max(comps$csize)))
+      log_info(sprintf("网络图：%d 个连通分量，取最大的一个（%d 节点）",
+                       length(comps$csize), igraph::vcount(g)))
+    }
+    # 2. 节点上限
+    max_nodes <- cfg$analysis$ppi_plot_max_nodes
+    if (is.null(max_nodes) || max_nodes <= 0) max_nodes <- 200L
+    n_before <- igraph::vcount(g)
+    if (n_before > max_nodes) {
+      d <- igraph::degree(g)
+      keep <- names(sort(d, decreasing = TRUE))[seq_len(max_nodes)]
+      g <- igraph::induced_subgraph(g, keep)
+      log_info(sprintf("网络图：按 degree 截取前 %d 个节点（原 %d），边 %d 条",
+                       max_nodes, n_before, igraph::ecount(g)))
+    }
+    if (igraph::vcount(g) < 2L || igraph::ecount(g) == 0L) {
+      status$plot_error <- "过滤后网络为空，跳过绘图"
+      log_warn(status$plot_error)
+      return(status)
+    }
+
     seed <- cfg$analysis$seed
     if (!is.null(seed)) set.seed(seed)
-    igraph::plot.igraph(
-      g,
-      layout = igraph::layout_with_fr(g),
-      vertex.size = pmin(4 + deg_all * 1.5, 18),
-      vertex.color = grDevices::colorRampPalette(c("#AFC7E3", "#C1443C"))(max(deg_all) + 1)[deg_all + 1],
-      vertex.frame.color = "white",
-      vertex.label = ifelse(deg_all >= stats::quantile(deg_all, 0.8), names(deg_all), NA),
-      vertex.label.cex = 0.7,
-      vertex.label.color = "black",
-      edge.color = grDevices::adjustcolor("grey40", alpha.f = 0.4),
-      edge.width = 0.8,
-      main = sprintf("%s network - %s\nnodes=%d edges=%d",
-                     if (identical(method, "string_ppi")) "STRING PPI" else "Co-expression (FALLBACK)",
-                     cfg$dataset_id, igraph::vcount(g), igraph::ecount(g))
+    # 3. Louvain 社区（随机算法，必须设种子）
+    # 注意全部用 igraph:: 前缀 —— 本仓库不 attach 任何包（没有 library() 调用），
+    # 裸 V()/E() 会 "could not find function"
+    comm <- igraph::cluster_louvain(g)
+    igraph::V(g)$community <- as.character(comm$membership)
+
+    set.seed(if (is.null(seed)) 123 else seed)
+    lay <- igraph::layout_with_fr(g, niter = 2000)
+    colnames(lay) <- c("x", "y")
+
+    vdf <- data.frame(
+      name = igraph::V(g)$name,
+      x = lay[, 1L], y = lay[, 2L],
+      degree = as.integer(igraph::degree(g)),
+      community = factor(igraph::V(g)$community),
+      stringsAsFactors = FALSE
     )
-    grDevices::dev.off()
-    NULL
-  }, error = function(e) {
-    if (grDevices::dev.cur() > 1L) try(grDevices::dev.off(), silent = TRUE)
-    conditionMessage(e)
-  })
-  if (is.null(plot_err)) {
-    status$plot <- basename(png_path)
-  } else {
-    status$plot_error <- plot_err
-    log_warn(sprintf("网络图绘制失败（网络本身已构建成功，边表与 hub 基因不受影响）: %s", plot_err))
+    edf <- igraph::as_data_frame(g, what = "edges")
+    edf$x    <- lay[match(edf$from, vdf$name), 1L]
+    edf$y    <- lay[match(edf$from, vdf$name), 2L]
+    edf$xend <- lay[match(edf$to,   vdf$name), 1L]
+    edf$yend <- lay[match(edf$to,   vdf$name), 2L]
+    edf$w    <- edf$weight / max(edf$weight)
+
+    # 5. 只标注 top hub
+    hub_k <- min(20L, nrow(vdf))
+    lab <- vdf[order(-vdf$degree)[seq_len(hub_k)], , drop = FALSE]
+
+    comm_cols <- stats::setNames(pal_categorical(nlevels(vdf$community)),
+                                 levels(vdf$community))
+    n_comm <- nlevels(vdf$community)
+
+    p <- ggplot2::ggplot() +
+      ggplot2::geom_segment(
+        data = edf,
+        ggplot2::aes(x = x, y = y, xend = xend, yend = yend, alpha = w),
+        colour = "#8A8A8A", linewidth = 0.25) +
+      ggplot2::scale_alpha_continuous(range = c(0.04, 0.55), guide = "none") +
+      ggplot2::geom_point(
+        data = vdf,
+        ggplot2::aes(x = x, y = y, size = degree, fill = community),
+        shape = 21, colour = "white", stroke = 0.35) +
+      ggplot2::scale_fill_manual(values = comm_cols, name = "module",
+                                 guide = if (n_comm > 1) "legend" else "none") +
+      ggplot2::scale_size_continuous(name = "degree", range = c(1.6, 7),
+                                     breaks = pretty(range(vdf$degree), 4)) +
+      ggrepel::geom_text_repel(
+        data = lab, ggplot2::aes(x = x, y = y, label = name),
+        size = 2.4, colour = PAL$ink, fontface = "bold",
+        segment.size = 0.2, segment.colour = "#999999",
+        min.segment.length = 0, max.overlaps = Inf, box.padding = 0.35) +
+      ggplot2::labs(
+        title = sprintf("%s network - %s",
+                        if (identical(method, "string_ppi")) "STRING PPI" else "Co-expression (FALLBACK)",
+                        cfg$dataset_id),
+        subtitle = sprintf(paste0("%d nodes / %d edges shown (largest component, top %d by degree); ",
+                                  "node colour = Louvain module, size = degree, ",
+                                  "edge opacity = interaction confidence"),
+                           igraph::vcount(g), igraph::ecount(g), max_nodes),
+        x = NULL, y = NULL) +
+      ggplot2::coord_fixed() +
+      ggplot2::theme_void(base_size = 10) +
+      ggplot2::theme(
+        plot.title    = ggplot2::element_text(face = "bold", size = 11),
+        plot.subtitle = ggplot2::element_text(colour = "#666666", size = 8),
+        legend.position = "right",
+        plot.margin = ggplot2::margin(8, 8, 8, 8))
+
+    plot_err <- tryCatch({
+      save_pdf(file.path(res, "PPI_network.pdf"), print(p), width = 10, height = 8.5)
+      NULL
+    }, error = function(e) conditionMessage(e))
+
+    if (is.null(plot_err)) {
+      status$plot <- "PPI_network.png"
+      status$plot_nodes <- igraph::vcount(g)
+      status$plot_edges <- igraph::ecount(g)
+      status$plot_modules <- n_comm
+      status$plot_filtered <- igraph::vcount(g) < igraph::vcount(g_full)
+      status$plot_note <- sprintf(
+        "图为可读性做过过滤：最大连通分量 + degree 前 %d 个节点。完整网络见 ppi_edges.csv（%d 节点 %d 边）。",
+        max_nodes, igraph::vcount(g_full), igraph::ecount(g_full))
+      log_info(sprintf("已生成 PPI_network.png（%d 节点 / %d 边 / %d 个模块）",
+                       igraph::vcount(g), igraph::ecount(g), n_comm))
+    } else {
+      status$plot_error <- plot_err
+      log_warn(sprintf("网络图绘制失败（网络本身已构建成功，边表与 hub 基因不受影响）: %s", plot_err))
+    }
+    status
   }
+
+  status <- plot_ppi_network(cfg, g, method, status)
 
   write_json(file.path(res, "ppi_status.json"), status)
 
