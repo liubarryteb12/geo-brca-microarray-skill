@@ -1,6 +1,6 @@
 ---
 name: geo-brca-microarray-skill
-description: Run an end-to-end GEO gene-expression microarray data-mining pipeline for human breast cancer with fewer than 10 samples - download and clean, QC, PCA, sample correlation, limma differential expression, clustered heatmap, GO/KEGG enrichment, and STRING PPI - and ship it as a GitHub Actions workflow that uploads results as an artifact. Use when the user asks for GEO data mining, a GEO/GSE microarray analysis, a breast cancer expression analysis, a small-sample limma DEG workflow, GO/KEGG enrichment on GEO data, a GitHub Actions bioinformatics pipeline, or asks to reproduce or extend GSE64790.
+description: Run an end-to-end GEO gene-expression microarray data-mining pipeline for human breast cancer with fewer than 10 samples - download and clean, QC, PCA, sample correlation, limma differential expression, clustered heatmap, GO/KEGG enrichment, preranked GSEA, STRING PPI, WGCNA co-expression modules, LASSO-Cox prognostic signature, and transcription-factor regulon analysis (DoRothEA) - and ship it as a GitHub Actions workflow that uploads results as an artifact. Use when the user asks for GEO data mining, a GEO/GSE microarray analysis, a breast cancer expression analysis, a small-sample limma DEG workflow, GO/KEGG enrichment on GEO data, TF/regulon or transcription-factor activity analysis on bulk expression, WGCNA or LASSO-Cox on GEO data, a GitHub Actions bioinformatics pipeline, or asks to reproduce or extend GSE64790.
 license: MIT
 compatibility: R 4.3+ with Bioconductor (GEOquery, limma, clusterProfiler, org.Hs.eg.db, enrichplot, STRINGdb, pheatmap, impute, igraph). Node 18+ for the dataset pre-flight tool. Needs outbound HTTPS to NCBI GEO, STRINGdb and KEGG. Designed to fit GitHub Actions ubuntu-latest in under 20 minutes.
 metadata:
@@ -23,6 +23,8 @@ GPL19612、6 例 = 3 TNBC vs 3 配对正常乳腺组织）。
 - 「搭一个 GitHub Actions 生信流水线，跑完上传 artifact」
 - 「复现/扩展 GSE64790」
 - 任何要求「清洗 + QC + PCA + 相关性 + 差异基因 + 热图 + 富集 + PPI」全流程的任务
+- 要求**转录因子调控分析**（TF 活性 / 调控子富集）的 bulk 表达任务
+- 要求 WGCNA 共表达模块或 LASSO-Cox 预后签名的任务（需 `cohort` 模式 / 随访终点）
 
 ## 工作流
 

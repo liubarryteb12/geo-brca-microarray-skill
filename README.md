@@ -85,12 +85,20 @@ GSE64790 244s / GSE42568 400s，暖缓存整轮 6m10s / 8m49s。全冷缓存装�
 | `lasso_coefficients.csv` + `lasso_coefficients_epv.csv` + `lasso_risk_scores.csv` + `lasso_stability.csv` + `lasso_selection_frequency.csv` + `lasso_cv_curve.csv` + `lasso_km.pdf` + `lasso_status.json` | **LASSO-Cox 预后签名（可选，需随访终点）**。终点由 config 显式指定（自动配对在字段名不规整时一定配错，而配错不报错）。报**三个** C-index：训练集 / 交叉验证 / 外部验证。实测 GSE42568：16 基因签名训练集 0.879、CV 0.793、**外部验证 0.672**；EPV 合规的 3 基因版本外部 0.642。重复 CV 选出 [16,3,3,22,3] → `signature_stable: false` |
 | `enrichment_status.json` | 富集模式（`fdr` / `ranked_fallback`）、GSEA 参数、去冗余阈值与原因 |
 | `ppi_status.json` | PPI 方法、节点边数、绘图过滤与环参数、回退原因 |
+| `tf_regulon_enrichment.csv` + `tf_activity_by_sample.csv` + `tf_activity_group_test.csv` + `tf_regulon_enrichment.pdf` + `tf_activity_group_difference.pdf` + `tf_status.json` | **TF 调控（可选）**。调控子来自 `dorothea`（置信度 A/B/C，271 个 TF、13223 条关系）。两件事分开做：**调控子富集**用 Fisher 精确检验（背景集 = 检测到的基因，不依赖样本量）；**调控子活性**是靶基因 z-score 的 mor 加权均值，再做组间比较。实测 GSE42568：87 个 TF 富集 BH<0.05（top `E2F4` p=1.4e-15、`TEAD1`、`E2F1`、`KLF5` —— 全是乳腺癌经典的增殖驱动 TF）；190 个 TF 活性组间差异（top `KDM5B` d=3.38、`FOXO1` d=−3.26、`PPARA`）。n=6 的 GSE64790 走 `ranked_fallback`，top `ESR1` p=5.1e-06，**活性组间 0 个显著**（每组 3 个样本，Wilcoxon 没有功效 —— 如实报 0，不制造显著性） |
 | `state.json` | 每步执行状态 + 验收结果（唯一逐字节不可复现的产物：含耗时与时间戳） |
 
-> **可选步骤失败不会让 CI 变红。** 06/07 是 `required = FALSE`，实测第一次跑时
-> WGCNA 崩了而两个 job 全绿。所以两个脚本在**每一条退出路径**上都要写状态文件，
+> **可选步骤失败不会让 CI 变红。** 06/07/08 是 `required = FALSE`，实测第一次跑时
+> WGCNA 崩了而两个 job 全绿。所以这些脚本在**每一条退出路径**上都要写状态文件，
 > 验收项 `settled()` 查的就是里面的 `status` 字段 ——
-> 文件不存在或字段缺失一律记 FAIL。
+> 文件不存在或字段缺失一律记 FAIL。`not_done`（明确说了做不了 + 为什么）也算已定论。
+
+> **但"状态文件在"不等于"结果是对的"。** TF 那一步第一次跑时
+> `tf_status.json` 正常产出、验收全绿，而里面的 `figure_written` 其实是
+> `false` —— 图一张没出（`ggsave` 收到 `dpi = NULL` 报错，被绘图层的
+> `tryCatch` 接住），同时 121 个样本因为列名写成了 `sample` 而非 `gsm`
+> **全部匹配失败**，组间比较静默变成空操作。所以验收里多了一条
+> **读 status 的真实字段并核对文件在磁盘上**，而不只是检查文件存在。
 
 ### 配色
 
