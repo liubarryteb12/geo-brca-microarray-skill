@@ -62,6 +62,26 @@ gh workflow run geo_analysis.yml
 
 ## Gotchas
 
+- **先查分组是否与全局表达位移混杂，再解读 DEG。** GSE92252 实测：9 个样本分成
+  三个紧致簇，簇内 Pearson r > 0.92，而 **HER2− ↔ HER2+ 只有 0.31–0.38、
+  HER2− ↔ 正常只有 0.11–0.19**，三个簇恰好就是三个分组。这个结构在**原始沉积值**
+  里就存在（原始强度簇内 0.986 / 簇间 0.602），不是 log2 或 quantile 引入的。
+  后果：tumor-vs-normal 的差异分不清多少来自恶性转化、多少来自这个位移。
+  `results/qc_summary.json` 的 `group_confounded_with_global_shift` 为 `true` 时，
+  结论只能按假设生成写，不能按肿瘤特异事件写。
+- **`min Pearson < 阈值 即离群` 这条规则会整体失效。** 它假设所有样本是同一组织的
+  技术重复；一旦分组自带全局位移，**每个**样本都会与另一组的样本低相关，
+  于是报出"9 个样本全是离群"。这时要看 `mean_within_group_pearson` vs
+  `mean_between_group_pearson`，而不是离群样本个数。
+- **不要用 `STRINGdb::get_interactions()`。** 实测 v12.0 上 1321/1423 个基因映射成功、
+  links 文件也下好了，但它**返回 0 行且不报错**，流程被静默推进到共表达回退。
+  本流水线直接读 `protein.links` 文件自己取子图。
+- **`igraph::layout_with_fr()` 不接受负权重。** Spearman r 可以为负，直接把带符号的 r
+  当权重会报 `Weights must be positive for Fruchterman-Reingold layout` 并中断步骤。
+  布局权重取 `|r|`，有符号的 r 另存在边表里。
+- **先落状态 JSON，再出图。** 出图是最后一步，画不出来时如果状态还没写，
+  就会同时丢掉图和状态文件（本仓库踩过：`PPI_network.png` 和 `ppi_status.json`
+  一起消失，只剩 `hub_genes.csv`）。
 - **`GES` 不是真实的 GEO 前缀。** 正确的是 `GSE`（GEO Series）。用户说 GES 时按 GSE 处理。
 - **分组模式不要凭直觉写。** GSE92252 的 `tissue` 字段里，HER2− 肿瘤写的是
   `... HER2-negative breast tumor`，而 HER2+ 肿瘤写的是 `... HER2-positive tumor`
