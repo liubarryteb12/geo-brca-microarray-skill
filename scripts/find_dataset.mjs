@@ -85,13 +85,36 @@ function parseSamples(softText) {
   })
 }
 
+// ============================================================================
+// 门禁常量 —— **必须与 scripts/00_validate_inputs.R 保持一致**
+// ============================================================================
+//
+// 这里原来只有一套门禁（`n > 0 && n < maxSamples`，默认 10），也就是只实现了
+// `small_sample`。后果是**预检工具和真实门禁互相矛盾**：`check GSE42568`（n=121）
+// 报「样本量不合规」，而同一个数据集在 `design_mode: cohort` 下跑得好好的。
+//
+// 泛化到"任意疾病 + 任意芯片"之后这个矛盾更要紧 —— 任意疾病下用户经常需要
+// 队列级数据集（WGCNA 要 >=15，LASSO 要有足够事件），预检却说它不合规。
+//
+// 两套门禁由 `design_mode` 选择，不是一个门禁换个阈值（AGENTS.md 规则 1）。
+const GATES = {
+  small_sample: { minSamples: 1,  maxSamples: 10, minPerGroup: 3  },
+  cohort:       { minSamples: 15, maxSamples: Infinity, minPerGroup: 10 },
+}
+
 /** 对单个数据集跑全部硬约束 */
 async function checkDataset(gse, opts = {}) {
-  const maxSamples = opts.maxSamples ?? 10
+  const designMode = opts.designMode ?? 'small_sample'
+  const gate = GATES[designMode]
+  if (!gate) {
+    return { gse, ok: false, designMode,
+             failures: [`design_mode 非法: ${designMode}（只能是 ${Object.keys(GATES).join(' / ')}）`],
+             samples: [] }
+  }
   const wantOrganism = opts.organism ?? 'Homo sapiens'
   const info = await seriesInfo(gse)
   if (!info) {
-    return { gse, ok: false, failures: [`GEO 中查不到 ${gse}`], samples: [] }
+    return { gse, ok: false, designMode, failures: [`GEO 中查不到 ${gse}`], samples: [] }
   }
 
   const failures = []
@@ -107,8 +130,14 @@ async function checkDataset(gse, opts = {}) {
     failures.push(`类型不合规: ${type}`)
   }
   const n = Number(info.n_samples ?? 0)
-  if (!(n > 0 && n < maxSamples)) {
-    failures.push(`样本量不合规: ${n}（要求 > 0 且 < ${maxSamples}）`)
+  if (designMode === 'small_sample') {
+    if (!(n >= gate.minSamples && n < gate.maxSamples)) {
+      failures.push(`样本量不合规: ${n}（small_sample 要求 >= ${gate.minSamples} 且 < ${gate.maxSamples}）`)
+    }
+  } else {
+    if (!(n >= gate.minSamples)) {
+      failures.push(`样本量不合规: ${n}（cohort 要求 >= ${gate.minSamples}）`)
+    }
   }
 
   // 拉样本级信息做分组可行性判断
@@ -123,9 +152,17 @@ async function checkDataset(gse, opts = {}) {
   if (samples.length > 0 && groups.length < 2) {
     warnings.push(`样本元数据中只识别出 ${groups.length} 个候选组，可能无法构造两组对比`)
   }
+  // 每组样本数是真实门禁的一部分（R 里按 config 的 group_values 数），
+  // 预检拿不到 config，只能对候选组做启发式提示 —— 所以是 warning 不是 failure。
+  const thin = groups.filter(g => g.count < gate.minPerGroup)
+  if (thin.length > 0) {
+    warnings.push(`候选组里有 ${thin.length} 个不足 ${gate.minPerGroup} 例: ` +
+                  thin.map(g => `"${g.label}"×${g.count}`).join(', '))
+  }
 
   return {
     gse,
+    designMode,
     title: info.title,
     taxon: info.taxon,
     type,
@@ -161,8 +198,26 @@ function groupCandidates(samples) {
 }
 
 async function search(opts) {
-  const disease = opts.disease ?? 'breast cancer'
-  const maxSamples = Number(opts.maxSamples ?? 10)
+  // **`--disease` 是必填的，没有默认值。**
+  //
+  // 原来写的是 `opts.disease ?? 'breast cancer'`。本仓库的定位是"任意疾病 + 任意芯片"，
+  // 一个静默默认在这里正是最坏的情况：用户想找前列腺癌数据集、忘了加 `--disease`，
+  // 得到一份**看起来完全正常**的乳腺癌候选列表，一路做下去。
+  // 这与规则 2 对 `parse_args()` 的要求是同一个理由 —— 静默默认是"跑错数据集"的来源。
+  if (!opts.disease || !String(opts.disease).trim()) {
+    throw new Error(
+      'search 必须显式指定 --disease（没有默认值）。\n' +
+      '  例: node scripts/find_dataset.mjs search --disease "prostate cancer" --max-samples 10\n' +
+      '  静默默认成某个疾病，会让"找错数据集"看起来像正常结果。')
+  }
+  const disease = String(opts.disease).trim()
+  const designMode = opts.designMode ?? 'small_sample'
+  const gate = GATES[designMode]
+  if (!gate) {
+    throw new Error(`--design-mode 非法: ${designMode}（只能是 ${Object.keys(GATES).join(' / ')}）`)
+  }
+  const minSamples = Number(opts.minSamples ?? gate.minSamples)
+  const maxSamples = Number(opts.maxSamples ?? (designMode === 'cohort' ? 100000 : 10))
   const limit = Number(opts.limit ?? 30)
 
   const term = [
@@ -192,10 +247,10 @@ async function search(opts) {
     .filter(r => !/sequencing/i.test(r.gdstype ?? ''))
     .filter(r => /array/i.test(r.gdstype ?? ''))
     .map(r => ({ gse: r.accession, n: Number(r.n_samples ?? 0), gpl: r.gpl, title: r.title }))
-    .filter(r => r.n > 0 && r.n < maxSamples)
+    .filter(r => r.n >= minSamples && r.n < maxSamples)
     .sort((a, b) => a.n - b.n)
 
-  console.log(`\n满足「人源 + 芯片 + 样本数 < ${maxSamples}」的候选: ${candidates.length}\n`)
+  console.log(`\n满足「人源 + 芯片 + ${minSamples} <= 样本数 < ${maxSamples}」的候选: ${candidates.length}\n`)
 
   const shown = opts.twoGroups ? candidates : candidates.slice(0, limit)
   for (const c of shown) {
@@ -205,8 +260,8 @@ async function search(opts) {
     }
     // --two-groups 会逐个拉样本元数据，慢但能直接筛出可做两组对比的
     try {
-      const detail = await checkDataset(c.gse, { maxSamples })
-      const viable = detail.groups.filter(g => g.count >= 3)
+      const detail = await checkDataset(c.gse, { designMode })
+      const viable = detail.groups.filter(g => g.count >= gate.minPerGroup)
       if (viable.length >= 2) {
         console.log(`${c.gse}  n=${c.n}  GPL${c.gpl}  ${(c.title ?? '').slice(0, 80)}`)
         for (const g of detail.groups) {
@@ -234,11 +289,12 @@ async function main() {
   }
 
   if (command === 'check') {
-    if (positional.length === 0) { console.error('用法: check GSE92252 [GSE...]'); process.exit(2) }
+    if (positional.length === 0) { console.error('用法: check GSE92252 [GSE...] [--design-mode small_sample|cohort]'); process.exit(2) }
+    const designMode = opts.designMode ?? 'small_sample'
     let allOk = true
     for (const gse of positional) {
-      const r = await checkDataset(gse, { maxSamples: Number(opts.maxSamples ?? 10) })
-      console.log(`\n${'='.repeat(74)}\n${r.gse}  ${r.ok ? 'PASS' : 'FAIL'}\n${'='.repeat(74)}`)
+      const r = await checkDataset(gse, { designMode })
+      console.log(`\n${'='.repeat(74)}\n${r.gse}  ${r.ok ? 'PASS' : 'FAIL'}  (design_mode: ${r.designMode})\n${'='.repeat(74)}`)
       if (r.title) console.log(`title    : ${r.title}`)
       console.log(`taxon    : ${r.taxon ?? '(未知)'}`)
       console.log(`type     : ${r.type ?? '(未知)'}`)
@@ -271,11 +327,19 @@ async function main() {
   console.log(`find_dataset.mjs — GEO 数据集预检
 
 用法:
-  node scripts/find_dataset.mjs check GSE92252 [GSE...]
+  node scripts/find_dataset.mjs check GSE92252 [GSE...] [--design-mode small_sample|cohort]
       校验物种 / 数据类型 / 样本量，并列出候选分组
+      **两套门禁由 --design-mode 选择**（默认 small_sample），与 00_validate_inputs.R 一致：
+        small_sample: 1 <= n < 10，每组 >= 3
+        cohort:       n >= 15，每组 >= 10
 
   node scripts/find_dataset.mjs search --disease "breast cancer" --max-samples 10
       按疾病检索人源芯片数据集，筛出样本数小于阈值的候选
+      **--disease 必填**（没有默认值）；疾病名用英文，如 "prostate cancer"、"COPD"
+
+  node scripts/find_dataset.mjs search --disease "breast cancer" --design-mode cohort --limit 20
+      找**队列级**数据集（n >= 15）。cohort 模式下 --min-samples 默认 15、--max-samples 不限
+      WGCNA 要 >= 15 例；LASSO-Cox 还要有随访终点（另用 check_clinical_endpoints.mjs 查）
 
   node scripts/find_dataset.mjs search --disease "breast cancer" --max-samples 10 --two-groups
       额外拉取样本元数据，只输出能凑出两个 >=3 样本组的数据集（慢）
