@@ -147,13 +147,18 @@ run_03_deg <- function(cfg) {
 
   # ---- 4. 火山图 ----------------------------------------------------------
   #
-  # **四档，不是三档。** 判据 `adj.P < adj_p` 且 `|log2FC| > log2fc` 是 AND 关系，
-  # n=6 时全基因组 BH 校正下**没有任何基因**能过 adj.P 这一关
-  # （GSE64790 最小 adj.P = 0.394），所以只画三档的话图上是空的 —— 信息量为零。
+  # **颜色只承载方向，显著性用 alpha + 大小承载。**
   #
-  # 所以额外画出「名义显著」一档：raw P < 0.05 且 |log2FC| 过关，但**未过 FDR**。
-  # 它用独立的橙色（PAL$nominal）而不是方向色，图例里写明 "nominal P, not FDR"，
-  # 这样图有信息量，又不会把名义显著冒充成显著。
+  # 判据 `adj.P < adj_p` 且 `|log2FC| > log2fc` 是 AND 关系，n=6 时全基因组
+  # BH 校正下**没有任何基因**能过 adj.P 这一关（GSE64790 最小 adj.P = 0.394）。
+  # 早先的做法是把这批"名义显著"（raw P < 0.05 且倍数过关，但未过 FDR）
+  # 单独染成橙色 —— 结果图上**看不到任何上调/下调**，因为红蓝两档是空的。
+  #
+  # 现在改成两个正交通道：
+  #   * `direction`（颜色）：up = 红、down = 蓝、不显著 = 灰
+  #   * `tier`（alpha + 大小）：FDR 显著 = 实心大点，名义显著 = 半透明小点
+  # 这样上调红、下调蓝一眼可见，而"未过 FDR"这个事实仍然写在图例和副标题里，
+  # 不会因为染成方向色就被当成显著。**两个通道编码两个变量，不是一色两义。**
   #
   # 纵轴统一用 **raw P**（这也是火山图更常见的约定）。
   #
@@ -166,58 +171,73 @@ run_03_deg <- function(cfg) {
   # 所以纵轴一律 raw P，横线标 `P = 0.05`（含义与轴一致）。
   # FDR 阈值**无法**用一条横线表示 —— BH 校正是逐基因的，没有常数截断。
   # 这一点写在副标题里。
-  tt$status <- "ns"
-  tt$status[tt$adj.P.Val < padj_cut & tt$logFC >  lfc_cut] <- "up"
-  tt$status[tt$adj.P.Val < padj_cut & tt$logFC < -lfc_cut] <- "down"
-  nominal <- tt$status == "ns" & !is.na(tt$P.Value) & tt$P.Value < 0.05 &
-    abs(tt$logFC) > lfc_cut
-  tt$status[nominal] <- "nominal"
-  n_nominal <- sum(nominal)
-  log_info(sprintf("火山图分层: FDR 显著 up %d / down %d；名义显著（raw P<0.05，未过 FDR）%d；其余 %d",
-                   sig_up, sig_down, n_nominal, sum(tt$status == "ns")))
+  tt$direction <- ifelse(tt$logFC > 0, "up", "down")
+  tt$direction[tt$logFC == 0] <- "ns"
+  tt$tier <- "ns"
+  tt$tier[!is.na(tt$P.Value) & tt$P.Value < 0.05 & abs(tt$logFC) > lfc_cut] <- "nominal"
+  fdr_hit <- !is.na(tt$adj.P.Val) & tt$adj.P.Val < padj_cut & abs(tt$logFC) > lfc_cut
+  tt$tier[fdr_hit] <- "fdr"
+  n_nominal <- sum(tt$tier == "nominal")
+  n_fdr <- sum(tt$tier == "fdr")
+  tt$direction[tt$tier == "ns"] <- "ns"
+  log_info(sprintf("火山图分层: FDR 显著 %d（up %d / down %d）；名义显著（raw P<0.05，未过 FDR）%d（up %d / down %d）；其余 %d",
+                   n_fdr, sig_up, sig_down, n_nominal,
+                   sum(tt$tier == "nominal" & tt$direction == "up"),
+                   sum(tt$tier == "nominal" & tt$direction == "down"),
+                   sum(tt$tier == "ns")))
 
   tt$plot_y <- -log10(pmax(tt$P.Value, .Machine$double.xmin))
 
   label_df <- rbind(
-    head(tt[tt$status == "up", , drop = FALSE][order(-tt$logFC[tt$status == "up"]), ], 10),
-    head(tt[tt$status == "down", , drop = FALSE][order(tt$logFC[tt$status == "down"]), ], 10)
+    head(tt[tt$tier == "fdr" & tt$direction == "up", , drop = FALSE], 10),
+    head(tt[tt$tier == "fdr" & tt$direction == "down", , drop = FALSE], 10)
   )
   # FDR 显著为空时，标注名义显著里最极端的那些，否则图上没有一个基因名
   if (nrow(label_df) == 0L && n_nominal > 0L) {
-    cand <- tt[nominal, , drop = FALSE]
+    cand <- tt[tt$tier == "nominal", , drop = FALSE]
     cand <- cand[order(cand$P.Value), , drop = FALSE]
-    label_df <- rbind(head(cand[cand$logFC > 0, , drop = FALSE], 8),
-                      head(cand[cand$logFC < 0, , drop = FALSE], 8))
+    label_df <- rbind(head(cand[cand$direction == "up", , drop = FALSE], 8),
+                      head(cand[cand$direction == "down", , drop = FALSE], 8))
   }
 
   # 图层顺序：不显著的先画（当背景），名义显著其次，FDR 显著最后（压在最上面）
-  tt$status <- factor(tt$status, levels = c("ns", "nominal", "down", "up"))
+  tt$tier <- factor(tt$tier, levels = c("ns", "nominal", "fdr"))
+  tt$direction <- factor(tt$direction, levels = c("ns", "down", "up"))
 
-  p_volcano <- ggplot(tt, aes(x = logFC, y = plot_y, colour = status)) +
-    geom_point(aes(size = status), alpha = 0.75) +
-    scale_size_manual(values = c(ns = 0.7, nominal = 1.2, down = 1.7, up = 1.7),
-                      guide = "none") +
+  p_volcano <- ggplot(tt, aes(x = logFC, y = plot_y,
+                              colour = direction, alpha = tier, size = tier)) +
+    geom_point() +
     scale_colour_manual(
-      values = c(up = PAL$up, down = PAL$down, nominal = PAL$nominal, ns = PAL$ns),
-      labels = c(up = sprintf("%s up, FDR < %g (%d)", numerator, padj_cut, sig_up),
-                 down = sprintf("%s up, FDR < %g (%d)", denominator, padj_cut, sig_down),
+      values = c(up = PAL$up, down = PAL$down, ns = PAL$ns),
+      labels = c(up = sprintf("%s up (%d)", numerator, sum(tt$direction == "up")),
+                 down = sprintf("%s up (%d)", denominator, sum(tt$direction == "down")),
+                 ns = "not significant"),
+      name = "direction") +
+    scale_alpha_manual(
+      values = c(fdr = 0.95, nominal = 0.40, ns = 0.25),
+      labels = c(fdr = sprintf("FDR < %g (%d)", padj_cut, n_fdr),
                  nominal = sprintf("nominal P < 0.05, NOT FDR-significant (%d)", n_nominal),
-                 ns = "not significant")) +
+                 ns = "nominal P >= 0.05"),
+      name = "significance") +
+    scale_size_manual(values = c(fdr = 1.9, nominal = 1.1, ns = 0.6), guide = "none") +
     geom_vline(xintercept = c(-lfc_cut, lfc_cut), linetype = "dashed",
                linewidth = 0.3, colour = PAL$ink) +
     geom_hline(yintercept = -log10(0.05), linetype = "dashed",
                linewidth = 0.3, colour = PAL$ink) +
     labs(title = sprintf("Volcano: %s vs %s (%s)", numerator, denominator, cfg$dataset_id),
          subtitle = sprintf(paste0("|log2FC| > %g (vertical); horizontal line = nominal P 0.05. ",
-                                   "No gene passes FDR (adj.P < %g, min adj.P = %.3f), so the FDR ",
-                                   "categories are empty and orange marks exploratory genes only. ",
+                                   "Red = higher in %s, blue = higher in %s. ",
+                                   "No gene passes FDR (adj.P < %g, min adj.P = %.3f), so the ",
+                                   "semi-transparent points are exploratory: nominal P only. ",
                                    "BH is per-gene, so the FDR cutoff is not a horizontal line."),
-                            lfc_cut, padj_cut,
+                            lfc_cut, numerator, denominator, padj_cut,
                             if (nrow(tt)) min(tt$adj.P.Val, na.rm = TRUE) else NA_real_),
          x = sprintf("log2 fold change (%s / %s)", numerator, denominator),
          y = "-log10 raw P value",
-         colour = NULL) +
-    theme_paper(10)
+         colour = NULL, alpha = NULL) +
+    theme_paper(10) +
+    guides(colour = guide_legend(order = 1, override.aes = list(alpha = 1, size = 2.2)),
+           alpha = guide_legend(order = 2, override.aes = list(colour = PAL$ink, size = 2.2)))
 
   if (nrow(label_df) > 0L) {
     p_volcano <- p_volcano + ggrepel_labels(label_df, seed = cfg$analysis$seed)
@@ -314,7 +334,10 @@ ggrepel_labels <- function(label_df, seed = NULL) {
   if (requireNamespace("ggrepel", quietly = TRUE)) {
     ggrepel::geom_text_repel(
       data = label_df, aes(label = gene), size = 2.3, max.overlaps = 20,
-      segment.size = 0.2, show.legend = FALSE, seed = seed
+      segment.size = 0.2, show.legend = FALSE, seed = seed,
+      # 火山图把 alpha 映射到了 tier，标注不能继承 —— 否则名义显著的基因名
+      # 会跟着变成半透明，正好是最需要看清的那些
+      alpha = 1, fontface = "bold"
     )
   } else {
     ggplot2::geom_text(

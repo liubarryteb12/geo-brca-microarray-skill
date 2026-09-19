@@ -359,25 +359,80 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
                        n_comm_all, length(shown), sum(memb == "other")))
     }
 
-    set.seed(if (is.null(seed)) 123 else seed)
-    lay <- igraph::layout_with_fr(g, niter = 2000)
-    colnames(lay) <- c("x", "y")
-
     vdf <- data.frame(
       name = igraph::V(g)$name,
-      x = lay[, 1L], y = lay[, 2L],
       degree = as.integer(igraph::degree(g)),
       community = igraph::V(g)$community,
       stringsAsFactors = FALSE
     )
+
+    # 5. 布局：**同心圆环**，不是力导向
+    #
+    # 力导向（Fruchterman-Reingold）在这张图上是失败的：390 节点挤成一团，
+    # 中间密到看不出结构、边上又空着，而且**每次运行布局都不一样**（另一个随机源）。
+    #
+    # 同心圆环把"谁是 hub"直接编码成半径：内圈 = degree 最高的核心，
+    # 外圈 = 边缘基因。读者不用找中心，一眼就知道层次。
+    #
+    # 三条实现要点：
+    #   * **每环节点数按半径成比例**（周长 ∝ 半径），否则内圈挤成一坨、外圈稀稀拉拉
+    #   * **环内按社区排序**（同一模块占同一角度扇区）—— 这样模块内的边是短弦，
+    #     模块间的边才跨圆心，边交叉大幅减少。按 degree 排会让每条边都横穿全图
+    #   * 半径等距递增，配一圈很淡的参考圆，让"几圈"这件事看得见
+    n_rings <- cfg$analysis$ppi_plot_rings
+    if (is.null(n_rings) || n_rings < 1) n_rings <- 3L
+    n_rings <- as.integer(min(n_rings, max(1L, floor(nrow(vdf) / 12L))))
+    radii <- 1 + 0.72 * (seq_len(n_rings) - 1L)
+    # 按半径比例分配每环节点数，再修正取整误差
+    sizes_r <- pmax(1L, as.integer(round(nrow(vdf) * radii / sum(radii))))
+    while (sum(sizes_r) > nrow(vdf)) sizes_r[which.max(sizes_r)] <- sizes_r[which.max(sizes_r)] - 1L
+    while (sum(sizes_r) < nrow(vdf)) sizes_r[n_rings] <- sizes_r[n_rings] + 1L
+    # 上面两个循环可能把某一环减到 0，那样 idx[pos:(pos-1)] 会取到倒序下标。
+    # 节点数很少时才可能发生（n_rings 已被 n/12 限制过），兜一下。
+    if (any(sizes_r < 1L)) {
+      sizes_r <- rep(1L, n_rings)
+      sizes_r[n_rings] <- nrow(vdf) - (n_rings - 1L)
+    }
+
+    # 先按 degree 降序决定"谁在内圈"
+    ring_of <- integer(nrow(vdf))
+    idx <- order(-vdf$degree, vdf$name)
+    pos <- 1L
+    for (r in seq_len(n_rings)) {
+      ring_of[idx[pos:(pos + sizes_r[r] - 1L)]] <- r
+      pos <- pos + sizes_r[r]
+    }
+
+    # 环内按社区排（社区之间按模块大小），使同一模块落在同一角度扇区
+    comm_levels <- levels(vdf$community)
+    comm_rank <- match(vdf$community, comm_levels)
+    vdf$x <- NA_real_; vdf$y <- NA_real_
+    for (r in seq_len(n_rings)) {
+      mem <- which(ring_of == r)
+      mem <- mem[order(comm_rank[mem], -vdf$degree[mem], vdf$name[mem])]
+      k <- length(mem)
+      ang <- 2 * pi * (seq_len(k) - 1L) / k + pi / 2   # 从正上方开始
+      vdf$x[mem] <- radii[r] * cos(ang)
+      vdf$y[mem] <- radii[r] * sin(ang)
+    }
+    vdf$ring <- factor(sprintf("ring %d", ring_of),
+                       levels = sprintf("ring %d", seq_len(n_rings)))
+
     edf <- igraph::as_data_frame(g, what = "edges")
-    edf$x    <- lay[match(edf$from, vdf$name), 1L]
-    edf$y    <- lay[match(edf$from, vdf$name), 2L]
-    edf$xend <- lay[match(edf$to,   vdf$name), 1L]
-    edf$yend <- lay[match(edf$to,   vdf$name), 2L]
+    edf$x    <- vdf$x[match(edf$from, vdf$name)]
+    edf$y    <- vdf$y[match(edf$from, vdf$name)]
+    edf$xend <- vdf$x[match(edf$to,   vdf$name)]
+    edf$yend <- vdf$y[match(edf$to,   vdf$name)]
     edf$w    <- if (has_weight) edf$weight / max(edf$weight) else 0.5
 
-    # 5. 只标注 top hub
+    # 参考圆：让"几圈"看得见，颜色压到几乎不可见，不与数据争视觉
+    ring_path <- do.call(rbind, lapply(seq_len(n_rings), function(r) {
+      th <- seq(0, 2 * pi, length.out = 240)
+      data.frame(x = radii[r] * cos(th), y = radii[r] * sin(th),
+                 grp = factor(r), stringsAsFactors = FALSE)
+    }))
+
+    # 6. 只标注 top hub
     hub_k <- min(20L, nrow(vdf))
     lab <- vdf[order(-vdf$degree)[seq_len(hub_k)], , drop = FALSE]
 
@@ -388,11 +443,15 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
     n_comm <- length(shown_lv)
 
     p <- ggplot2::ggplot() +
+      ggplot2::geom_path(
+        data = ring_path,
+        ggplot2::aes(x = x, y = y, group = grp),
+        colour = PAL$grid, linewidth = 0.25) +
       ggplot2::geom_segment(
         data = edf,
         ggplot2::aes(x = x, y = y, xend = xend, yend = yend, alpha = w),
-        colour = "#8A8A8A", linewidth = 0.25) +
-      ggplot2::scale_alpha_continuous(range = c(0.04, 0.55), guide = "none") +
+        colour = PAL$edge, linewidth = 0.22) +
+      ggplot2::scale_alpha_continuous(range = c(0.03, 0.5), guide = "none") +
       ggplot2::geom_point(
         data = vdf,
         ggplot2::aes(x = x, y = y, size = degree, fill = community),
@@ -405,12 +464,12 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
               sprintf("other (%d)", sum(memb == "other"))),
           c(shown_lv, if ("other" %in% levels(vdf$community)) "other")),
         guide = "legend") +
-      ggplot2::scale_size_continuous(name = "degree", range = c(1.6, 7),
+      ggplot2::scale_size_continuous(name = "degree", range = c(1.5, 6.5),
                                      breaks = pretty(range(vdf$degree), 4)) +
       ggrepel::geom_text_repel(
         data = lab, ggplot2::aes(x = x, y = y, label = name),
         size = 2.4, colour = PAL$ink, fontface = "bold",
-        segment.size = 0.2, segment.colour = "#999999",
+        segment.size = 0.2, segment.colour = PAL$muted,
         min.segment.length = 0, max.overlaps = Inf, box.padding = 0.35,
         # 显式播种：不传时 ggrepel 用环境 RNG，位置会随上游随机数消耗量漂移。
         # seed 默认值是 NA（不是 NULL），所以这里要转换。
@@ -419,18 +478,22 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
         title = sprintf("%s network - %s",
                         if (identical(method, "string_ppi")) "STRING PPI" else "Co-expression (FALLBACK)",
                         cfg$dataset_id),
-        subtitle = sprintf(paste0("%d nodes / %d edges shown (largest component, top %d nodes by degree, ",
-                                  "then the %d strongest edges); node colour = Louvain module ",
-                                  "(%d modules found, top %d coloured, rest grey), ",
-                                  "size = degree, edge opacity = interaction confidence"),
-                           igraph::vcount(g), igraph::ecount(g), max_nodes, max_edges,
-                           n_comm_all, length(shown)),
+        subtitle = sprintf(paste0("%d nodes / %d edges shown, laid out on %d concentric rings: ",
+                                  "inner ring = highest degree (%d hubs labelled). ",
+                                  "Nodes ordered by degree, then grouped by module so each module ",
+                                  "occupies one angular sector; node colour = Louvain module ",
+                                  "(%d found, top %d coloured, rest grey), size = degree, ",
+                                  "edge opacity = interaction confidence. ",
+                                  "Filtered for readability - full network in ppi_edges.csv (%d nodes, %d edges)."),
+                           igraph::vcount(g), igraph::ecount(g), n_rings,
+                           nrow(lab), n_comm_all, length(shown),
+                           igraph::vcount(g_full), igraph::ecount(g_full)),
         x = NULL, y = NULL) +
       ggplot2::coord_fixed() +
       ggplot2::theme_void(base_size = 10) +
       ggplot2::theme(
         plot.title    = ggplot2::element_text(face = "bold", size = 11),
-        plot.subtitle = ggplot2::element_text(colour = "#666666", size = 8),
+        plot.subtitle = ggplot2::element_text(colour = PAL$muted, size = 8),
         legend.position = "right",
         plot.margin = ggplot2::margin(8, 8, 8, 8))
 
@@ -445,13 +508,18 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
       status$plot_edges <- igraph::ecount(g)
       status$plot_modules <- n_comm
       status$plot_modules_total <- n_comm_all
+      status$plot_rings <- n_rings
+      status$plot_ring_sizes <- as.integer(sizes_r)
+      status$plot_layout <- "concentric_rings"
       status$plot_filtered <- igraph::vcount(g) < igraph::vcount(g_full)
       status$plot_note <- sprintf(
-        paste0("图为可读性做过过滤：最大连通分量 → degree 前 %d 个节点 → 最强的 %d 条边。",
+        paste0("图为可读性做过过滤：最大连通分量 → degree 前 %d 个节点 → 最强的 %d 条边；",
+               "布局为 %d 个同心圆环（内圈 = degree 最高），环内按社区排序。",
                "完整网络见 ppi_edges.csv（%d 节点 %d 边）。"),
-        max_nodes, max_edges, igraph::vcount(g_full), igraph::ecount(g_full))
-      log_info(sprintf("已生成 PPI_network.png（%d 节点 / %d 边 / %d 个模块）",
-                       igraph::vcount(g), igraph::ecount(g), n_comm))
+        max_nodes, max_edges, n_rings, igraph::vcount(g_full), igraph::ecount(g_full))
+      log_info(sprintf("已生成 PPI_network.png（%d 节点 / %d 边 / %d 个模块 / %d 个同心环 %s）",
+                       igraph::vcount(g), igraph::ecount(g), n_comm, n_rings,
+                       paste(sizes_r, collapse = "-")))
     } else {
       status$plot_error <- plot_err
       log_warn(sprintf("网络图绘制失败（网络本身已构建成功，边表与 hub 基因不受影响）: %s", plot_err))

@@ -137,75 +137,72 @@ record_step <- function(cfg, id, status, seconds = NA_real_, message = "", requi
 
 # ---- 统一调色板 -------------------------------------------------------------
 #
-# **语义固定，所有图共用同一套。** 之前每张图各自挑颜色，同一个含义在不同图里
-# 是不同颜色：PCA 把第一组画成蓝色，火山图却把上调（tumor 高）画成红色；
-# p 值直方图的参考线是第三种红（firebrick）；dotplot 用 viridis plasma，
-# 与红蓝体系毫无关系。读者要重新学一遍每张图的配色。
+# **语义固定，所有图共用同一套，色值全部取自 SCI 发表常用色板。**
 #
-# **这套色值是算出来的，不是挑出来的。** 判据取自 better-colors skill：
+# | 角色 | 来源 |
+# | --- | --- |
+# | 上调 / tumor、下调 / normal | **ColorBrewer RdBu** 的两个端点 —— 基因组学论文里最通用的发散尺，方向色与发散尺同源 |
+# | 显著性（连续） | **viridis**（Nature Methods 推荐；感知均匀、灰度单调、色盲安全） |
+# | 模块 / 多组（分类） | **Okabe-Ito** 及其加深变体，穷举筛出的 4 色 |
+#
+# **色值是算出来的，不是挑出来的。** 判据取自 better-colors skill：
 #   * 色相相差 15° 以内视为**同一个颜色** —— 承载不同含义的颜色必须拉开 15° 以上
-#   * 颜色从不是唯一的语义载体（见各图的 shape / 位置编码）
+#   * 颜色从不是唯一的语义载体（见各图的 shape / alpha / 位置编码）
 #   * 报告任何对比度之前先测量，不要估
 #
-# 实测（`_palette_audit.py`）暴露了三个凭眼睛看不出的问题：
-#   1. 旧 p 值直方图用的 `firebrick` 与 up 红**只差 0.4°** —— 按上述判据就是同一个颜色
-#   2. 旧分类色板**不是色盲安全的**：protanopia 下 up 红与 cat brown 距离 0.002
-#      （几乎完全重合），deuteranopia 下 up 红与 cat green 距离 0.043
-#   3. magma 序列色的中段 #F1605D 色相 24.3°，**距 up 红仅 2.9°** ——
-#      序列色的中段就是"上调红"，深色点会被误读成上调
-#
-# 约定：
-#   * **方向 / 条件**：红 = 上调 / tumor，蓝 = 下调 / normal
-#   * **序列（显著性、强度）**：紫色单色相 ramp。刻意避开红与蓝 ——
-#     红色已经被"方向"占了。magma 的色相跨度 171.7°，本 ramp 只有 9.8°，
-#     亮度步长也更均匀（最大 0.122 vs 0.157），彩度峰值落在中段。
-#   * **分类（模块、多组）**：Okabe-Ito 的色盲安全子集，
-#     剔除 orange（距 nominal 仅 10°）与 blue（距 down 仅 13°）。
-#     三种色盲下两两最小 OKLab 距离 0.076，阈值 0.05。
+# 实测暴露过的四个问题（`_pal_sci.py` 可复算）：
+#   1. 旧 p 值直方图的 `firebrick` 与 up 红**只差 0.4°** —— 按判据就是同一个颜色
+#   2. 旧分类色板在 protanopia 下 up 红与棕距离 **0.002**（几乎重合）
+#   3. magma 序列色中段距 up 红仅 **2.9°** —— 序列色中段就是"上调红"
+#   4. **viridis 的暗端 `#365C8D` 距 down 蓝只有 3.1°** ——
+#      所以 viridis 必须**截去暗端**，从 `#277F8E`（距 down 41.1°）起用
 PAL <- list(
-  up       = "#C1443C",   # 上调 / tumor 一侧      h=27.2
-  down     = "#2E5FA3",   # 下调 / normal 一侧     h=257.2
-  ns       = "#BFBFBF",   # 不显著（近中性灰，不承载色相语义）
-  nominal  = "#C07A1E",   # 名义显著但未过 FDR（h=67.1，距 up 红 40°，白底 3.5:1）
-  mid      = "#F5F5F5",   # 发散色中点
-  ink      = "#333333",   # 文字 / 参考线（白底 12.6:1）
-  grid     = "#E5E5E5"
+  up       = "#B2182B",   # ColorBrewer RdBu 红端     h=22.4  白底 6.6:1
+  down     = "#2166AC",   # ColorBrewer RdBu 蓝端     h=252.4 白底 6.4:1
+  ns       = "#BDBDBD",   # 不显著（中性灰，不承载色相语义）
+  mid      = "#F7F7F7",   # 发散色中点（RdBu 的中性色）
+  ink      = "#1A1A1A",   # 文字 / 参考线（白底 17.4:1）
+  muted    = "#666666",   # 副标题 / 次要说明
+  edge     = "#8A8A8A",   # 网络边（中性灰，不承载语义）
+  grid     = "#E8E8E8"
 )
 
-#' 发散色板：低 = 蓝 → 中 = 近白 → 高 = 红
-#' 用于 Z-score 热图、logFC 类连续量
+#' 发散色板：**ColorBrewer RdBu**（蓝 → 近白 → 红）
+#'
+#' 用于 Z-score 热图。**与方向色同源** —— 热图上的红就是火山图上"上调"的那个红，
+#' 不需要读者重新学一遍。RdBu 是基因组学论文里最常用的发散尺。
 pal_diverging <- function(n = 100) {
   grDevices::colorRampPalette(c(PAL$down, PAL$mid, PAL$up))(n)
 }
 
-#' 序列色板：紫色单色相 ramp，用于显著性 / 强度
+#' 序列色板：**viridis**（截去与 down 蓝撞色相的暗端）
 #'
-#' **刻意不用 magma。** 实测 magma 中段 #F1605D 的色相是 24.3°，
-#' 而 up 红是 27.2° —— 只差 2.9°，按 15° 判据就是同一个颜色。
-#' 也就是说 magma 中段的点会被读成"上调"。本 ramp 色相跨度 9.8°，
-#' 亮度单调递减且步长均匀，彩度峰值在中段，距 up 红 70°、距 down 蓝 50°。
+#' 完整 viridis 的暗端三档色相是 318 / 292 / **255**，其中 `#365C8D` 距
+#' down 蓝（252.4）只有 **3.1°** —— 按 15° 判据就是"下调蓝"，
+#' 深色点会被读成"下调"。从 `#277F8E`（h=211.3，距 down 41.1°）起截断，
+#' 保留 viridis 的感知均匀性与灰度单调性（亮度 0.552 → 0.918）。
 pal_sequential <- function(n = 256) {
   grDevices::colorRampPalette(
-    c("#F4ECF7", "#DDC8E8", "#C09FD6", "#9E74BE", "#7B4E9E", "#5A3279", "#3B1F52"))(n)
+    c("#277F8E", "#1FA187", "#4AC16D", "#A0DA39", "#FDE725"))(n)
 }
 
-#' 分类色板（模块 / 多组）：经计算验证的色盲安全四色
+#' 分类色板（模块 / 多组）：穷举出的色盲安全四色
 #'
-#' 这四个不是挑的，是搜出来的（`_palette_search.py`）：在候选池里贪心挑选，
-#' 同时满足三条约束 ——
-#'   * 与 up 红 / down 蓝 / nominal 橙 / 序列紫 的色相都拉开 15° 以上
-#'   * 与它们、以及彼此之间，在 protanopia / deuteranopia / tritanopia 下
-#'     OKLab 距离都 >= 0.05
+#' 这四个不是挑的，是搜出来的（`_pal_sci.py`）。**不是贪心** ——
+#' 贪心会选出两个绿色（h=149.9 / 165.5，只差 15.6°）。这里在可行集里
+#' 穷举所有 4 色组合，取**最小两两 OKLab 距离最大**的那组（实测 0.246）。
+#' 约束三条：
+#'   * 与 up / down / 序列色 的色相都拉开 15° 以上
+#'   * 与它们、以及彼此之间，在 protanopia / deuteranopia / tritanopia 下距离 >= 0.05
 #'   * 白底对比度 >= 2.0（实心圆点仍清晰可见的底线）
 #'
-#' 被剔除的典型：`#E69F00`（距 nominal 仅 10°）、`#0072B2`（距 down 仅 13°）、
-#' `#007A59` `#14606D` `#4A4E8C`（都撞 down）、`#A65A2E`（撞 up）、
-#' `#F0E442`（白底仅 1.32:1，小圆点看不见）。
+#' 被剔除的典型：`#0072B2`（距 down 仅 13°）、`#1B7C8C` `#8E5A9E`（撞 down）、
+#' `#C9B800`（撞序列色）、`#F0E442`（白底仅 1.32:1，小圆点看不见）、
+#' 灰色（灰已被 ns / other 占用）。
 #'
-#' **超过 4 个模块时降级**：在四色之间插值。插出来的颜色**没有**经过上面的
-#' 验证，可能色盲下不可分。实测 GSE64790 的 PPI 是 4 个模块，正好用满。
+#' **超过 4 个模块时降级**：在四色之间插值，插出来的颜色**没有**经过上面的验证。
 pal_categorical <- function(k) {
-  base <- c("#009E73", "#56B4E9", "#C9B800", "#6E7B8B")
+  base <- c("#2E6B3E", "#B5527A", "#56B4E9", "#E69F00")   # 绿 / 玫红 / 天蓝 / 橙
   if (k <= length(base)) return(base[seq_len(k)])
   grDevices::colorRampPalette(base)(k)
 }
@@ -259,7 +256,7 @@ theme_paper <- function(base_size = 10) {
       panel.grid.major = ggplot2::element_line(colour = PAL$grid, linewidth = 0.25),
       panel.border     = ggplot2::element_rect(colour = PAL$grid, linewidth = 0.4),
       plot.title       = ggplot2::element_text(face = "bold", size = base_size + 1),
-      plot.subtitle    = ggplot2::element_text(colour = "#666666", size = base_size - 1.5),
+      plot.subtitle    = ggplot2::element_text(colour = PAL$muted, size = base_size - 1.5),
       legend.key.size  = ggplot2::unit(0.9, "lines")
     )
 }

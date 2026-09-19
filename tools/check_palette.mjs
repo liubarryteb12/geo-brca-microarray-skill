@@ -107,7 +107,6 @@ const grab = (name) => {
 const SEMANTIC = {
   "up / tumor": grab("up"),
   "down / normal": grab("down"),
-  nominal: grab("nominal"),
   ns: grab("ns"),
   ink: grab("ink"),
 };
@@ -170,21 +169,29 @@ for (const [n, hx] of Object.entries(ALL)) {
 }
 
 // ---- 判据 3：序列色板 ------------------------------------------------------
+//
+// **多色相 ramp 不能用"色相跨度小"来要求。** viridis 按设计就横跨 100° 以上，
+// 要求它单色相等于要求它放弃感知均匀性。真正要守的不变量是：
+//   * 亮度单调（否则深浅无法解读大小，灰度打印也会乱）
+//   * **没有任何一档落在 up / down 的色相 15° 以内** ——
+//     这一条正是逼出"viridis 必须截去暗端"的那条：完整 viridis 的 `#365C8D`
+//     距 down 蓝只有 3.1°，深色点会被读成"下调"
 const seqL = SEQ.map((h) => oklch(hexToRgb(h)).L);
 const seqH = SEQ.map((h) => oklch(hexToRgb(h)).h);
 const seqC = SEQ.map((h) => oklch(hexToRgb(h)).C);
-const monotonic = seqL.every((v, i) => i === 0 || v < seqL[i - 1]);
-if (!monotonic) problems.push("序列色板亮度不是单调递减");
+const monotonic = seqL.every((v, i) => i === 0 || v > seqL[i - 1]);
+if (!monotonic) problems.push("序列色板亮度不是单调递增");
 
 const hueSpan = Math.max(...seqH.map((h) => hueGap(h, seqH[0])));
-if (hueSpan > 30) {
-  problems.push(`序列色板色相跨度 ${hueSpan.toFixed(1)}° > 30°，不再是"保持色相"的 ramp`);
-}
 for (const [lbl, target] of [["up 红", oklch(hexToRgb(SEMANTIC["up / tumor"])).h],
                              ["down 蓝", oklch(hexToRgb(SEMANTIC["down / normal"])).h]]) {
   const worst = Math.min(...seqH.map((h) => hueGap(h, target)));
   if (worst < MIN_HUE) {
-    problems.push(`序列色板与 ${lbl} 色相只差 ${worst.toFixed(1)}°，深色会被误读`);
+    const which = SEQ[seqH.findIndex((h) => hueGap(h, target) === worst)];
+    problems.push(
+      `序列色板有一档 ${which} 与 ${lbl} 色相只差 ${worst.toFixed(1)}° < ${MIN_HUE}°，` +
+        `该档会被读成方向色 —— 截掉这一段`
+    );
   }
 }
 
