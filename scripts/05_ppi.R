@@ -411,7 +411,10 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
         data = lab, ggplot2::aes(x = x, y = y, label = name),
         size = 2.4, colour = PAL$ink, fontface = "bold",
         segment.size = 0.2, segment.colour = "#999999",
-        min.segment.length = 0, max.overlaps = Inf, box.padding = 0.35) +
+        min.segment.length = 0, max.overlaps = Inf, box.padding = 0.35,
+        # 显式播种：不传时 ggrepel 用环境 RNG，位置会随上游随机数消耗量漂移。
+        # seed 默认值是 NA（不是 NULL），所以这里要转换。
+        seed = if (is.null(seed)) NA else seed) +
       ggplot2::labs(
         title = sprintf("%s network - %s",
                         if (identical(method, "string_ppi")) "STRING PPI" else "Co-expression (FALLBACK)",

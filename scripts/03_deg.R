@@ -220,7 +220,7 @@ run_03_deg <- function(cfg) {
     theme_paper(10)
 
   if (nrow(label_df) > 0L) {
-    p_volcano <- p_volcano + ggrepel_labels(label_df)
+    p_volcano <- p_volcano + ggrepel_labels(label_df, seed = cfg$analysis$seed)
   }
   save_pdf(file.path(res, "volcano_plot.pdf"), print(p_volcano), width = 8.5, height = 6.5)
   log_info("已生成 volcano_plot.pdf")
@@ -302,11 +302,19 @@ run_03_deg <- function(cfg) {
 }
 
 #' 火山图基因标注（ggrepel 存在时用它，否则退回 geom_text）
-ggrepel_labels <- function(label_df) {
+#'
+#' **必须传 seed。** `geom_text_repel` 用环境 RNG 做标签排布的模拟退火，
+#' 不指定 seed 时位置取决于"此刻"的随机数状态 —— 而 `save_pdf` 会把同一个
+#' 绘图表达式求值两次（一次 PDF、一次 PNG），第二次接着第一次消耗过的状态跑，
+#' 于是两次的标签位置本来就不同；跨运行更会随上游随机数消耗量漂移。
+#' 实测两轮 CI 的 12 张图里 11 张逐字节一致，只有火山图不一致，根因就是这里。
+ggrepel_labels <- function(label_df, seed = NULL) {
+  # ggrepel 的 seed 默认值是 NA（不是 NULL），NULL 会被当成缺参
+  if (is.null(seed)) seed <- NA
   if (requireNamespace("ggrepel", quietly = TRUE)) {
     ggrepel::geom_text_repel(
       data = label_df, aes(label = gene), size = 2.3, max.overlaps = 20,
-      segment.size = 0.2, show.legend = FALSE
+      segment.size = 0.2, show.legend = FALSE, seed = seed
     )
   } else {
     ggplot2::geom_text(
