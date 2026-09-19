@@ -133,6 +133,46 @@ run_02_qc_pca_correlation <- function(cfg) {
                      cfg$thresholds$outlier_cor))
   }
 
+  # ---- 4b. 组内 vs 组间相关性 ---------------------------------------------
+  #
+  # "min Pearson < 阈值 即离群"隐含一个假设：所有样本是同一组织的技术重复。
+  # 当分组本身对应一个巨大的整体表达位移（批次效应，或组织成分差异）时，
+  # 每个样本都会与另一组的样本低相关，于是**全部样本都被判为离群**。
+  # 这是规则失效，不是 9 个样本都坏了 —— 所以必须把组内/组间拆开报告。
+  grp_chr <- as.character(groups)
+  ns <- ncol(pearson)
+  same_grp <- outer(grp_chr, grp_chr, "==")
+  upper <- upper.tri(pearson)
+  within_r  <- pearson[which(same_grp & upper, arr.ind = TRUE)]
+  between_r <- pearson[which(!same_grp & upper, arr.ind = TRUE)]
+  mean_within  <- if (length(within_r)  > 0L) mean(within_r)  else NA_real_
+  mean_between <- if (length(between_r) > 0L) mean(between_r) else NA_real_
+
+  # 每个样本自身的组内/组间平均相关
+  mw_by_sample <- vapply(seq_len(ns), function(i) {
+    j <- setdiff(seq_len(ns), i); j <- j[grp_chr[j] == grp_chr[i]]
+    if (length(j) == 0L) NA_real_ else mean(pearson[i, j])
+  }, numeric(1))
+  mb_by_sample <- vapply(seq_len(ns), function(i) {
+    j <- setdiff(seq_len(ns), i); j <- j[grp_chr[j] != grp_chr[i]]
+    if (length(j) == 0L) NA_real_ else mean(pearson[i, j])
+  }, numeric(1))
+
+  # 组间平均相关低于离群阈值 => 分组与一个全局表达位移混杂，
+  # tumor-vs-normal 的差异里分不清多少是分组、多少是这个位移
+  confounded <- is.finite(mean_within) && is.finite(mean_between) &&
+    mean_between < cfg$thresholds$outlier_cor
+  log_info(sprintf("组内平均 Pearson = %.3f，组间平均 Pearson = %.3f",
+                   mean_within, mean_between))
+  if (confounded) {
+    log_warn(sprintf(paste0(
+      "组间平均相关 %.3f 低于离群阈值 %.2f：分组与一个全局表达位移高度混杂。",
+      "此时 tumor-vs-normal 的差异无法与批次/组织成分差异分离，",
+      "limma 结果只能作为假设生成，不能当作肿瘤特异事件。"),
+      mean_between, cfg$thresholds$outlier_cor))
+  }
+
+  # ---- 5. 样本间相关性热图 ------------------------------------------------
   annotation_col <- data.frame(group = groups, row.names = colnames(expr))
   save_pdf(file.path(res, "correlation_heatmap.pdf"), {
     pheatmap::pheatmap(
@@ -147,11 +187,13 @@ run_02_qc_pca_correlation <- function(cfg) {
   }, width = 8, height = 7)
   log_info("已生成 correlation_heatmap.pdf")
 
-  # ---- 5. 相关性矩阵落盘 --------------------------------------------------
+  # ---- 6. 相关性矩阵落盘 --------------------------------------------------
   cor_df <- data.frame(
     sample = rownames(pearson),
     group = as.character(groups),
     min_pearson = round(min_cor[rownames(pearson)], 4),
+    mean_within_group = round(mw_by_sample, 4),
+    mean_between_group = round(mb_by_sample, 4),
     outlier = rownames(pearson) %in% outlier,
     pearson, spearman,
     check.names = FALSE
@@ -167,7 +209,10 @@ run_02_qc_pca_correlation <- function(cfg) {
     pc3_variance = if (length(var_explained) >= 3L) round(var_explained[3L], 2) else NA,
     outlier_samples = outlier,
     outlier_threshold = cfg$thresholds$outlier_cor,
-    median_min_pearson = round(stats::median(min_cor), 4)
+    median_min_pearson = round(stats::median(min_cor), 4),
+    mean_within_group_pearson = round(mean_within, 4),
+    mean_between_group_pearson = round(mean_between, 4),
+    group_confounded_with_global_shift = confounded
   ))
 
   log_info(sprintf("已生成 correlation_matrix.csv（离群样本 %d 个）", length(outlier)))
