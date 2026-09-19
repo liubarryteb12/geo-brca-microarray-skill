@@ -52,20 +52,23 @@ artifact `geo-results`。
 
 | 文件 | 内容 |
 | --- | --- |
-| `boxplot_before_after.pdf` | 标准化前后表达分布箱线图 |
-| `density_plot.pdf` | 标准化前后密度曲线 |
-| `pca_plot.pdf` | PCA（PC1/PC2 方差解释率） |
-| `correlation_heatmap.pdf` | 样本间 Pearson 相关热图 |
+| `boxplot_before_after.pdf` / `.png` | 标准化前后表达分布箱线图 |
+| `density_plot.pdf` / `.png` | 标准化前后密度曲线 |
+| `pca_plot.pdf` / `.png` | PCA（PC1/PC2 方差解释率） |
+| `correlation_heatmap.pdf` / `.png` | 样本间 Pearson 相关热图 |
 | `correlation_matrix.csv` | Pearson + Spearman 矩阵 + 离群标记 |
 | `deg_table.csv` | 全基因 limma 结果（gene/logFC/P.Value/adj.P.Val） |
-| `volcano_plot.pdf` | 火山图（标注 top 基因） |
-| `top50_heatmap.pdf` | top DEG 聚类热图（行 Z-score，euclidean + complete） |
-| `GO_dotplot.pdf` / `GO_table.csv` | GO BP 富集 |
-| `KEGG_dotplot.pdf` / `KEGG_table.csv` | KEGG 通路富集 |
-| `PPI_network.png` / `hub_genes.csv` / `ppi_edges.csv` | STRING PPI 网络与 hub 基因 |
+| `volcano_plot.pdf` / `.png` | 火山图（标注 top 基因） |
+| `top50_heatmap.pdf` / `.png` | top DEG 聚类热图（行 Z-score，euclidean + complete） |
+| `GO_dotplot.pdf` / `.png` + `GO_table.csv` | GO BP 富集 |
+| `KEGG_dotplot.pdf` / `.png` + `KEGG_table.csv` | KEGG 通路富集 |
+| `PPI_network.png` + `hub_genes.csv` + `ppi_edges.csv` | STRING PPI 网络与 hub 基因 |
 | `enrichment_status.json` | 富集模式（`fdr` / `ranked_fallback`）与原因 |
 | `ppi_status.json` | PPI 方法、节点边数与回退原因 |
 | `state.json` | 每步执行状态 + 验收结果 |
+
+> 每张图都同时出 **PDF（矢量，放大不失真）** 和 **PNG（150 dpi，可直接预览）**。
+> artifact 是 zip，PDF 在里面看不了，PNG 是为了打开就能看到。
 
 ## 配置
 

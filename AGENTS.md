@@ -43,12 +43,19 @@ node scripts/find_dataset.mjs check GSE64790
 # 样本相关结构（是否分组与全局表达位移混杂，不需要 R）
 node tools/check_sample_structure.mjs GSE64790
 
+# 图不是空白的（独立解码 PNG 像素，不需要 R）
+node tools/check_figures.mjs results
+
 # 端到端（需要 R + Bioconductor）
 Rscript scripts/main_analysis.R --config assets/config.yml
 ```
 
 CI 在 GitHub Actions 上跑 `geo_analysis.yml`，`timeout-minutes: 20` 是硬上限。
-实测：冷缓存 14m58s，暖缓存 3m45s（R 库由 `actions/cache` 缓存）。
+实测：冷缓存 14m58s，暖缓存 3m33s（R 库由 `actions/cache` 缓存）。
+
+> **验收不等于验图。** `check_acceptance()` 只看文件在不在，看不出图是不是空白。
+> 出图代码的静默失败（设备开了又关、绘图没执行）会产出"存在、大小正常、纯白"的图。
+> 所以 CI 里额外有 `check_figures.mjs` 这一道。
 
 ## 禁止
 

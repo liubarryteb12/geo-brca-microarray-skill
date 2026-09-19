@@ -110,6 +110,14 @@ gh workflow run geo_analysis.yml
   `<<-` 从**外层**环境开始找，于是本地变量没被赋值、外层环境被悄悄创建了一个同名变量。
   本仓库踩过：配对设计实际生效（残差 df = 2），摘要却报 `paired: false`。
   要在 `tryCatch` 里改本地变量，就把赋值挪到 `tryCatch` 外面。
+- **`force(expr)` 两次不等于跑两遍。** R 的 promise 有记忆，第二次 force 直接返回
+  缓存值。想用同一段绘图代码出两种格式，必须 `substitute()` 抓住**未求值**的表达式
+  再 `eval()` 两次。本仓库踩过：`save_pdf()` 里 `force(expr); force(expr)`
+  让 PNG 设备开了又关、什么都没画，产出 8 张空白 PNG，而 PDF 正常、日志无警告、
+  验收全过 —— 因为验收只判断文件**存在**。所以 CI 里另有一道
+  `node tools/check_figures.mjs results`，独立解码 PNG 像素判空。
+- **每张图同时出 PDF 和 PNG。** PDF 是矢量图，PNG 是为了能直接看 ——
+  artifact 是打包成 zip 的，PDF 在里面不能预览。PNG 失败只记 warning，不中断流程。
 - **`GES` 不是真实的 GEO 前缀。** 正确的是 `GSE`（GEO Series）。用户说 GES 时按 GSE 处理。
 - **分组模式不要凭直觉写。** GSE92252 的 `tissue` 字段里，HER2− 肿瘤写的是
   `... HER2-negative breast tumor`，而 HER2+ 肿瘤写的是 `... HER2-positive tumor`
@@ -166,7 +174,8 @@ scripts/
 └── lib/common.R             配置、日志、状态、SOFT 抓取
 tools/
 ├── check_r_syntax.mjs       R 静态检查（括号配平、配置键一致性）
-└── check_sample_structure.mjs  样本相关结构预检（Node，不需要 R）
+├── check_sample_structure.mjs  样本相关结构预检（Node，不需要 R）
+└── check_figures.mjs        图不是空白的（独立解码 PNG 像素，不需要 R）
 references/troubleshooting.md 运行期故障排查
 .github/workflows/geo_analysis.yml
 ```

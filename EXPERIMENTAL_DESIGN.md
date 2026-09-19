@@ -504,22 +504,26 @@ tumor-vs-normal 的差异基因表里，**分不清多少来自恶性转化、�
 
 ## 4. 产出清单
 
+**每张图都同时出 PDF 和 PNG**：PDF 是矢量图（放大不失真），PNG 是为了能直接看 ——
+artifact 是打包成 zip 下载的，PDF 在里面不能预览，得先解压再找阅读器。
+PNG 由 `save_pdf()` 在 150 dpi 下渲染，PNG 失败只记 warning，不影响 PDF 与流程。
+
 ```
 results/
-├── boxplot_before_after.pdf      QC：标准化前后箱线图
-├── density_plot.pdf              QC：密度曲线
-├── pca_plot.pdf                  PCA（含方差解释率）
-├── correlation_heatmap.pdf       样本相关性热图
-├── correlation_matrix.csv        Pearson + Spearman 矩阵 + 离群标记
-├── deg_table.csv                 全基因差异分析表
-├── volcano_plot.pdf              火山图
-├── top50_heatmap.pdf             top DEG 聚类热图（Z-score）
-├── GO_dotplot.pdf / GO_table.csv       GO BP 富集
-├── KEGG_dotplot.pdf / KEGG_table.csv   KEGG 富集
-├── PPI_network.png / hub_genes.csv / ppi_edges.csv   STRING PPI 与 hub 基因
-├── enrichment_status.json        富集模式（fdr / ranked_fallback）及原因
-├── ppi_status.json               PPI 方法、节点边数及回退原因
-└── state.json                    各步骤执行状态 + 验收结果
+├── boxplot_before_after.pdf/.png  QC：标准化前后箱线图
+├── density_plot.pdf/.png          QC：密度曲线
+├── pca_plot.pdf/.png              PCA（含方差解释率）
+├── correlation_heatmap.pdf/.png   样本相关性热图
+├── correlation_matrix.csv         Pearson + Spearman 矩阵 + 离群标记
+├── deg_table.csv                  全基因差异分析表
+├── volcano_plot.pdf/.png          火山图
+├── top50_heatmap.pdf/.png         top DEG 聚类热图（Z-score）
+├── GO_dotplot.pdf/.png + GO_table.csv       GO BP 富集
+├── KEGG_dotplot.pdf/.png + KEGG_table.csv   KEGG 富集
+├── PPI_network.png + hub_genes.csv + ppi_edges.csv   STRING PPI 与 hub 基因
+├── enrichment_status.json         富集模式（fdr / ranked_fallback）及原因
+├── ppi_status.json                PPI 方法、节点边数及回退原因
+└── state.json                     各步骤执行状态 + 验收结果
 ```
 
 ---

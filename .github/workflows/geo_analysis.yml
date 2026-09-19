@@ -90,6 +90,14 @@ jobs:
       - name: Run analysis pipeline
         run: Rscript scripts/main_analysis.R --config assets/config.yml
 
+      # 验收只判断文件**存在**，不判断图**有没有画出来**。
+      # 出图代码有一类静默失败：设备开了、绘图没执行、设备关了 —— 文件在、大小正常、
+      # 就是白图（本仓库真踩过：save_pdf 里 force(expr) 两次只跑一遍绘图代码）。
+      # 所以独立解码 PNG 像素再判一次。不加 if: always()，它是**分析产出的门禁**，
+      # 只在该有产出的时候才该发声；分析本身失败时另有那一步的红灯。
+      - name: Verify figures are not blank
+        run: node tools/check_figures.mjs results
+
       # always() 保证即使分析失败也能拿到中间产物用于排查
       - name: Upload results artifact
         if: always()
