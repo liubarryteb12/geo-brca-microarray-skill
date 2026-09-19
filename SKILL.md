@@ -63,6 +63,11 @@ gh workflow run geo_analysis.yml
 ## Gotchas
 
 - **`GES` 不是真实的 GEO 前缀。** 正确的是 `GSE`（GEO Series）。用户说 GES 时按 GSE 处理。
+- **分组模式不要凭直觉写。** GSE92252 的 `tissue` 字段里，HER2− 肿瘤写的是
+  `... HER2-negative breast tumor`，而 HER2+ 肿瘤写的是 `... HER2-positive tumor`
+  —— **没有 "breast"**。用 `"breast tumor"` 作模式会漏掉 3 个样本，第 00 步直接报
+  「分组失败」。判别子串要用 `"tumor"`。改任何数据集前先跑
+  `node scripts/find_dataset.mjs samples GSEXXXXX` 看真实取值。
 - **样本量 < 10 且要两组对比，几乎排除了所有组织样本数据集。** 人源乳腺癌芯片里
   n<10 的绝大多数是细胞系加药实验，没有"肿瘤 vs 正常"两组。GSE92252 是少数例外
   （6 肿瘤 + 3 正常）。若用户给的数据集是细胞系，分组字段应改为 treatment/control，

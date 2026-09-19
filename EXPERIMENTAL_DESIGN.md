@@ -194,6 +194,24 @@ spec 要求单次运行 < 20 分钟。实测（run 35407402496）各步骤耗时
 所以「20 分钟」这个指标的正确说法是：**暖缓存 < 20 分钟；冷缓存需要约 20 分钟以上**，
 首次运行请按 30 分钟预期。这个区别必须写进任何引用本流水线运行时间的地方。
 
+### 2.8 分组模式的坑（实跑踩到）
+
+首次跑通流水线时，第 00 步报「分组失败」，3 个样本未命中任何组。原因是分组模式写成了
+`"breast tumor"`，而 `tissue` 字段的实际取值并不一致：
+
+| 组 | `characteristics_ch1` 中的 tissue 值 | 含 "breast tumor"？ |
+| --- | --- | --- |
+| HER2− 肿瘤（3 例） | `AR-positive, ER-/PR-negative, HER2-negative breast tumor` | ✅ |
+| HER2+ 肿瘤（3 例） | `AR-positive, ER-/PR-negative, HER2-positive tumor` | ❌ **没有 "breast"** |
+| 正常组织（3 例） | `Normal breast tissue` | ❌ |
+
+正确的判别子串是 `"tumor"`（正常样本里不含该词）。**换任何数据集之前，先跑
+`node scripts/find_dataset.mjs samples GSEXXXXX` 看真实的 characteristics 取值，
+不要根据数据集标题推断。**
+
+顺带一提，这个错误被第 00 步拦下了，而不是让 6 个肿瘤样本里只有 3 个进入分析 ——
+这正是硬门禁存在的意义。
+
 ---
 
 ## 3. 分析流程

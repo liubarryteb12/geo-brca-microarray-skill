@@ -91,11 +91,21 @@ run_05_ppi <- function(cfg) {
       if (!dir.exists(input_dir)) dir.create(input_dir, recursive = TRUE, showWarnings = FALSE)
       log_info("连接 STRINGdb（首次运行需下载网络文件，约 100 MB）...")
 
-      sdb <- STRINGdb::STRINGdb$new(
-        version = "11.5", species = 9606,
-        score_threshold = cfg$thresholds$string_score,
-        input_directory = input_dir
-      )
+      # STRING 会随年份下线旧版本；按新到旧依次尝试，避免写死一个版本后静默失效
+      sdb <- NULL
+      last_err <- NULL
+      for (v in c("12.0", "11.5", "11.0")) {
+        sdb <- tryCatch(
+          STRINGdb::STRINGdb$new(version = v, species = 9606,
+                                 score_threshold = cfg$thresholds$string_score,
+                                 input_directory = input_dir),
+          error = function(e) { last_err <<- conditionMessage(e); NULL }
+        )
+        if (!is.null(sdb)) { log_info(sprintf("STRING 数据库版本 %s 可用", v)); break }
+        log_warn(sprintf("STRING 版本 %s 不可用: %s", v, last_err))
+      }
+      if (is.null(sdb)) stop(sprintf("STRING 各版本均不可用: %s", last_err))
+
       mapped <- sdb$map(data.frame(gene = sig), "gene", removeUnmappedRows = TRUE)
       if (nrow(mapped) < MIN_GENES_FOR_NETWORK) {
         stop(sprintf("STRING 仅映射到 %d 个基因", nrow(mapped)))

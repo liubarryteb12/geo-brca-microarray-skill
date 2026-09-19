@@ -67,7 +67,8 @@ artifact `geo-results`。
 dataset_id: GSE92252
 group_field: characteristics_ch1
 group_values:
-  tumor:  ["breast tumor"]
+  # 判别子串用 "tumor"：HER2+ 样本写的是 "...HER2-positive tumor"，没有 "breast"
+  tumor:  ["tumor"]
   normal: ["normal breast tissue"]
 contrast: ["tumor", "normal"]      # log2FC > 0 表示 tumor 中上调
 thresholds:

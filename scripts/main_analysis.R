@@ -119,9 +119,12 @@ main <- function() {
 
   aborted <- FALSE
   for (step in STEPS) {
-    if (aborted && isTRUE(step$required)) {
-      log_warn(sprintf("跳过必需步骤 %s（前序必需步骤已失败）", step$id))
-      record_step(cfg, step$id, "skipped", required = TRUE, message = "upstream required step failed")
+    # 一旦某个必需步骤失败，后续所有步骤都失去输入，无论必需与否都跳过，
+    # 否则会看到一串"文件不存在"的次级报错，掩盖真正的原因
+    if (aborted) {
+      log_warn(sprintf("跳过步骤 %s（前序必需步骤已失败）", step$id))
+      record_step(cfg, step$id, "skipped", required = step$required,
+                  message = "upstream required step failed")
       next
     }
     log_info(sprintf("---- 开始 %s ----", step$id))

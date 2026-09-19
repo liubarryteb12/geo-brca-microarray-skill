@@ -18,8 +18,14 @@ platform_id: GPL16025          # 可留空，由 GEOquery 自动识别
 group_field: characteristics_ch1
 
 # 每个样本按「小写子串」匹配；命中多个组会直接报错退出，避免静默错分
+#
+# GSE92252 的 tissue 字段实际取值（实测，不要凭直觉写 "breast tumor"）：
+#   3 个 HER2- 肿瘤: "AR-positive, ER-/PR-negative, HER2-negative breast tumor"
+#   3 个 HER2+ 肿瘤: "AR-positive, ER-/PR-negative, HER2-positive tumor"   <- 没有 "breast"
+#   3 个正常组织  : "Normal breast tissue"
+# 所以判别子串用 "tumor"（正常样本里不含该词），而不是 "breast tumor"。
 group_values:
-  tumor:  ["breast tumor"]
+  tumor:  ["tumor"]
   normal: ["normal breast tissue"]
 
 # 对比方向：[分子, 分母]。log2FC > 0 表示在 tumor 中上调
