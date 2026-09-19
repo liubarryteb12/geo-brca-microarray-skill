@@ -37,6 +37,15 @@ node scripts/find_dataset.mjs search --disease "breast cancer" --max-samples 10
 GSE197894 被描述为"表达谱芯片"，实际 `gdstype` 是 RNA-seq，样本 20 例，
 照它做流水线会在第一步就终止。**类型必须以 `gdstype` / `GPL` 为准。**
 
+然后查样本相关结构，确认分组没有被批次效应混杂：
+
+```bash
+node tools/check_sample_structure.mjs GSE92252
+```
+
+这一步同样是"先花 10 秒，省掉 15 分钟"：等 R 流水线跑完才发现分组与一个全局表达位移
+共线，DEG 结果就已经不可用了。GSE92252 正是在这里被查出问题的（见 Gotchas 第一条）。
+
 ### 2. 改配置，不改代码
 
 所有可调项都在 [`assets/config.yml`](assets/config.yml)：数据集、分组字段、
@@ -130,6 +139,9 @@ scripts/
 ├── 05_ppi.R                 STRING PPI（含共表达回退）
 ├── find_dataset.mjs         GEO 数据集预检（Node，不需要 R）
 └── lib/common.R             配置、日志、状态、SOFT 抓取
+tools/
+├── check_r_syntax.mjs       R 静态检查（括号配平、配置键一致性）
+└── check_sample_structure.mjs  样本相关结构预检（Node，不需要 R）
 references/troubleshooting.md 运行期故障排查
 .github/workflows/geo_analysis.yml
 ```

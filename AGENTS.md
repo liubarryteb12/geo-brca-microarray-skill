@@ -34,11 +34,15 @@ node tools/check_r_syntax.mjs
 # GEO 数据集合规性
 node scripts/find_dataset.mjs check GSE92252
 
+# 样本相关结构（是否分组与全局表达位移混杂，不需要 R）
+node tools/check_sample_structure.mjs GSE92252
+
 # 端到端（需要 R + Bioconductor）
 Rscript scripts/main_analysis.R --config assets/config.yml
 ```
 
 CI 在 GitHub Actions 上跑 `geo_analysis.yml`，`timeout-minutes: 20` 是硬上限。
+实测：冷缓存 14m58s，暖缓存 4m8s（R 库由 `actions/cache` 缓存）。
 
 ## 禁止
 
