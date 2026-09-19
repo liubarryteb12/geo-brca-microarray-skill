@@ -3,8 +3,11 @@
 # ============================================================================
 # spec 的 validate_inputs 步骤 + fetch_geo 的 validate 部分。
 #
-# 这是整个流水线的硬门禁：数据集必须是人源、芯片、乳腺癌、样本数 < 10，
-# 且两组样本数均 >= 3。任一不满足直接 stop()，不进入任何分析。
+# 这是整个流水线的硬门禁：数据集必须是人源、芯片、乳腺癌，且满足
+# config 里 design_mode 对应的样本量判据：
+#   small_sample  总样本 < 10，每组 >= 3
+#   cohort        总样本 >= 15，每组 >= 10
+# 任一不满足直接 stop()，不进入任何分析。
 #
 # 只用 base R 抓 GEO SOFT 元数据，因此这一步在装任何 Bioconductor 包之前就能跑完。
 # 输出：data/group.csv, data/meta.csv, data/platform.txt, data/geo_metadata.json
@@ -31,7 +34,19 @@ local({
   source(hit[[1L]])
 })
 
-MIN_PER_GROUP <- 3L
+# 两套门禁，由 config 的 design_mode 选择。**不是同一个门禁换个阈值** ——
+# 两种设计的失败模式不同，所以判据不同：
+#
+#   small_sample  探索性小样本。上限 10 是硬性的：n >= 10 时全基因组 BH 校正
+#                 通常能出结果，就不再需要 ranked_fallback 那套降级路径和
+#                 相应的措辞约束，应该走 cohort 模式。
+#   cohort        队列级。下限 15 来自 WGCNA 的通行要求（低于 15 相关矩阵
+#                 不稳定，模块划分不可复现）。每组下限 10 是 limma 给出
+#                 可用统计量的实际要求。
+MIN_PER_GROUP        <- 3L    # small_sample：每组最少样本数
+SMALL_SAMPLE_MAX     <- 10L   # small_sample：总样本数上限（不含）
+COHORT_MIN_SAMPLES   <- 15L   # cohort：总样本数下限（WGCNA 通行下限）
+COHORT_MIN_PER_GROUP <- 10L   # cohort：每组最少样本数
 
 #' 把 SOFT 行按 ^SAMPLE 切成每样本一块
 split_soft_samples <- function(lines) {
@@ -116,14 +131,23 @@ run_00_validate_inputs <- function(cfg) {
   }
   log_info(sprintf("物种 OK: %s (%d 个样本)", paste(organisms, collapse = ", "), nrow(meta)))
 
-  # ---- 5. 硬门禁：样本量 < 10 ---------------------------------------------
+  # ---- 5. 硬门禁：样本量（按 design_mode 分别判定）-------------------------
   n <- nrow(meta)
-  if (n >= 10L) {
-    stop(sprintf(
-      "样本量不合规：%s 共 %d 个样本，spec 要求 < 10。\n  请更换数据集，或按 GSM 重新筛选子集后另存为新的 GSE。",
-      gse, n))
+  if (identical(cfg$design_mode, "small_sample")) {
+    if (n >= SMALL_SAMPLE_MAX) {
+      stop(sprintf(
+        "样本量不合规：design_mode=small_sample 要求 < %d，%s 共 %d 个样本。\n  这个规模应该用 design_mode: cohort（下限 %d）。\n  不要为了让它通过而调大上限 —— 两种设计的降级路径和措辞约束不同。",
+        SMALL_SAMPLE_MAX, gse, n, COHORT_MIN_SAMPLES))
+    }
+    log_info(sprintf("样本量 OK: %d (< %d, design_mode=small_sample)", n, SMALL_SAMPLE_MAX))
+  } else {
+    if (n < COHORT_MIN_SAMPLES) {
+      stop(sprintf(
+        "样本量不合规：design_mode=cohort 要求 >= %d，%s 只有 %d 个样本。\n  低于此规模 WGCNA 的相关矩阵不稳定、模块划分不可复现。\n  这个规模应该用 design_mode: small_sample。",
+        COHORT_MIN_SAMPLES, gse, n))
+    }
+    log_info(sprintf("样本量 OK: %d (>= %d, design_mode=cohort)", n, COHORT_MIN_SAMPLES))
   }
-  log_info(sprintf("样本量 OK: %d (< 10)", n))
 
   # ---- 6. 分组 ------------------------------------------------------------
   hits <- lapply(strsplit(meta$group_field, " \\| "), classify_sample, cfg$group_values)
@@ -150,11 +174,12 @@ run_00_validate_inputs <- function(cfg) {
   log_info(sprintf("分组结果: %s", paste(sprintf("%s=%d", names(counts), as.integer(counts)),
                                           collapse = ", ")))
 
-  # ---- 7. 硬门禁：两组样本数均 >= 3 ---------------------------------------
-  thin <- names(counts)[as.integer(counts) < MIN_PER_GROUP]
+  # ---- 7. 硬门禁：每组样本数下限（按 design_mode）--------------------------
+  min_per_group <- if (identical(cfg$design_mode, "cohort")) COHORT_MIN_PER_GROUP else MIN_PER_GROUP
+  thin <- names(counts)[as.integer(counts) < min_per_group]
   if (length(thin) > 0L) {
-    stop(sprintf("分组样本数不足：组 %s 的样本数 < %d，limma 无法给出有意义的统计量",
-                 paste(thin, collapse = ", "), MIN_PER_GROUP))
+    stop(sprintf("分组样本数不足：组 %s 的样本数 < %d（design_mode=%s），limma 无法给出有意义的统计量",
+                 paste(thin, collapse = ", "), min_per_group, cfg$design_mode))
   }
   if (!all(cfg$contrast %in% names(cfg$group_values))) {
     stop("contrast 引用了未定义的组")
@@ -216,6 +241,8 @@ run_00_validate_inputs <- function(cfg) {
     series_type = series_type,
     platform_id = platform_id,
     n_samples = n,
+    design_mode = cfg$design_mode,
+    min_per_group = min_per_group,
     organisms = organisms,
     group_counts = as.list(as.integer(counts)),
     group_names = names(counts),

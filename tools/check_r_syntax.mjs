@@ -126,13 +126,25 @@ if (unused.length > 0) {
   problems.push(`定义了但从未被引用的步骤函数: ${unused.join(', ')}`)
 }
 
-// 配置字段引用一致性：cfg$xxx 必须出现在 config.yml 里
-const configPath = join(root, 'assets', 'config.yml')
-if (existsSync(configPath)) {
-  const configText = readFileSync(configPath, 'utf8')
-  const configKeys = new Set(
-    [...configText.matchAll(/^([a-z_][a-z0-9_]*):/gim)].map(m => m[1])
-  )
+// 配置字段引用一致性：cfg$xxx 必须出现在**某个** assets/config.<GSE>.yml 里
+//
+// 一个数据集一个配置文件，所以取所有配置的字段并集。
+//
+// **一个配置都没找到时必须报错，不能跳过。** 原来写的是
+// `if (existsSync(configPath)) { ... }` —— 配置文件改名后这个判断为假，
+// 整段校验静默消失，门禁看着还在、其实已经不检查任何东西了。
+// 这类"门禁自己失效"比门禁报错危险得多。
+const configFiles = readdirSync(join(root, 'assets'))
+  .filter(f => /^config\..*\.ya?ml$/.test(f))
+  .sort()
+if (configFiles.length === 0) {
+  problems.push('assets/ 下没有找到任何 config.<GSE>.yml，配置字段校验无法执行')
+} else {
+  const configKeys = new Set()
+  for (const f of configFiles) {
+    const configText = readFileSync(join(root, 'assets', f), 'utf8')
+    for (const m of configText.matchAll(/^([a-z_][a-z0-9_]*):/gim)) configKeys.add(m[1])
+  }
   const defaults = new Set(['thresholds', 'analysis', 'enrichment', 'output', 'contrast', 'paired'])
   const referenced = new Set()
   for (const file of files) {
@@ -141,7 +153,7 @@ if (existsSync(configPath)) {
   }
   for (const key of [...referenced].sort()) {
     if (!configKeys.has(key) && !defaults.has(key)) {
-      problems.push(`代码引用了 cfg$${key}，但 assets/config.yml 中没有该字段`)
+      problems.push(`代码引用了 cfg$${key}，但 ${configFiles.join(' / ')} 中都没有该字段`)
     }
   }
 }

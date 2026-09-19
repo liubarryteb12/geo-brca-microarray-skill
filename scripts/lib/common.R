@@ -23,9 +23,14 @@ log_error <- function(...) .geo_log("ERROR", ...)
 # ---- 配置 ------------------------------------------------------------------
 
 #' 解析 `--config <path>` 命令行参数
-#' @return 配置文件路径（默认 assets/config.yml）
+#'
+#' **不再有默认配置。** 仓库现在有多个数据集各自的配置（`assets/config.<GSE>.yml`），
+#' 静默默认到其中某一个正是"跑错数据集"的来源 —— 产物目录、分组、阈值全都不同，
+#' 而日志开头那行 dataset 很容易被跳过。所以不给默认值，让调用方显式指定。
+#'
+#' @return 配置文件路径
 parse_args <- function(argv = commandArgs(trailingOnly = TRUE)) {
-  cfg <- "assets/config.yml"
+  cfg <- NULL
   i <- 1L
   while (i <= length(argv)) {
     if (argv[i] %in% c("--config", "-c")) {
@@ -33,13 +38,20 @@ parse_args <- function(argv = commandArgs(trailingOnly = TRUE)) {
       cfg <- argv[i + 1L]
       i <- i + 2L
     } else if (argv[i] %in% c("--help", "-h")) {
-      cat("用法: Rscript <script>.R [--config assets/config.yml]\n")
+      cat("用法: Rscript <script>.R --config assets/config.<GSE>.yml\n")
       quit(save = "no", status = 0L)
     } else {
       # 允许直接传位置参数作为配置路径
       cfg <- argv[i]
       i <- i + 1L
     }
+  }
+  if (is.null(cfg)) {
+    avail <- list.files("assets", pattern = "^config\\..*\\.ya?ml$")
+    stop(sprintf(
+      "没有指定配置文件。用法: Rscript <script>.R --config assets/config.<GSE>.yml\n  可用配置: %s",
+      if (length(avail) == 0L) "（assets/ 下没有找到 config.*.yml）"
+      else paste0("\n    ", paste(avail, collapse = "\n    "))))
   }
   cfg
 }
@@ -83,8 +95,33 @@ load_config <- function(path = parse_args()) {
          qvalue_cutoff = 0.2, top_terms = 15, ont = "BP", kegg_organism = "hsa"),
     cfg$enrichment %||% list()
   )
+
+  # ---- design_mode ---------------------------------------------------------
+  # 两套**不同**的门禁，不是一个门禁加个阈值：
+  #
+  #   small_sample（默认）探索性小样本。n < 10。功效不足是预期内的，
+  #               FDR 显著基因可能为 0，走 ranked_fallback 降级路径。
+  #               WGCNA / LASSO 在这个尺度上做不了，门禁直接拒绝。
+  #   cohort     队列级。n >= 15（WGCNA 的通行下限）。要求每个组
+  #               至少有 COHORT_MIN_PER_GROUP 个样本，否则组间比较没有意义。
+  #
+  # **不要为了"让某个数据集跑通"把 small_sample 的上限调大。**
+  # 那是把两种设计混成一个门禁，契约会变得含糊。要跑队列就显式写 cohort。
+  cfg$design_mode <- cfg$design_mode %||% "small_sample"
+  if (!cfg$design_mode %in% c("small_sample", "cohort")) {
+    stop(sprintf("design_mode 只能是 small_sample 或 cohort，收到: %s", cfg$design_mode))
+  }
+
+  # ---- 输出目录按数据集分目录 ---------------------------------------------
+  # results/<GSE>/ 与 data/<GSE>/。
+  #
+  # 原来所有产物平铺在 results/ 下，**跑第二个数据集会直接覆盖第一个**。
+  # 放在这里派生而不是让每个脚本自己拼路径：全部 9 个脚本都读
+  # cfg$output$results_dir，改这一处就全都跟着走，不会有漏改的。
+  # 需要旧行为时在配置里显式写 output.results_dir 即可覆盖。
   cfg$output             <- utils::modifyList(
-    list(results_dir = "results", data_dir = "data"),
+    list(results_dir = file.path("results", cfg$dataset_id),
+         data_dir    = file.path("data", cfg$dataset_id)),
     cfg$output %||% list()
   )
   cfg

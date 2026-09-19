@@ -81,21 +81,28 @@ check_acceptance <- function(cfg) {
     !is.null(st) && !identical(st, "not_run")
   }
 
+  # name 用 file.path(res, ...) 而不是字面量 "results/..." —— 产物现在按数据集
+  # 分目录（results/GSE42568/），写死的前缀会让验收日志指向一个不存在的路径，
+  # 排查时先被误导一次。
+  chk <- function(f, required = TRUE, ok = has(f)) {
+    list(name = file.path(res, f), ok = ok, required = required)
+  }
+
   checks <- list(
-    list(name = "results/boxplot_before_after.pdf", ok = has("boxplot_before_after.pdf"), required = TRUE),
-    list(name = "results/density_plot.pdf",         ok = has("density_plot.pdf"),         required = TRUE),
-    list(name = "results/pca_plot.pdf",             ok = has("pca_plot.pdf"),             required = TRUE),
+    chk("boxplot_before_after.pdf"),
+    chk("density_plot.pdf"),
+    chk("pca_plot.pdf"),
     # 椭圆坐标落盘：从 PNG 反推"椭圆画没画、多大"是猜（实测 stat_ellipse 在 n=3 时
     # 静默产出空数据，图上只有点）。有这张表就能直接核对。
-    list(name = "results/pca_ellipse.csv",          ok = has("pca_ellipse.csv"),          required = FALSE),
-    list(name = "results/correlation_heatmap.pdf",  ok = has("correlation_heatmap.pdf"),  required = TRUE),
-    list(name = "results/correlation_matrix.csv",   ok = has("correlation_matrix.csv"),   required = TRUE),
-    list(name = "results/deg_table.csv",            ok = has("deg_table.csv"),            required = TRUE),
-    list(name = "results/volcano_plot.pdf",         ok = has("volcano_plot.pdf"),         required = TRUE),
-    list(name = "results/top50_heatmap.pdf",        ok = has("top50_heatmap.pdf"),        required = TRUE),
+    chk("pca_ellipse.csv", required = FALSE),
+    chk("correlation_heatmap.pdf"),
+    chk("correlation_matrix.csv"),
+    chk("deg_table.csv"),
+    chk("volcano_plot.pdf"),
+    chk("top50_heatmap.pdf"),
     # DE 之后的 QC 关卡（bulk-rnaseq skill）：p 值分布要"均匀 + 0 附近有峰"。
     # 它区分"功效不足"和"设计有问题"，对 n<10 的设计尤其关键，所以是必需项。
-    list(name = "results/pvalue_histogram.pdf",     ok = has("pvalue_histogram.pdf"),     required = TRUE),
+    chk("pvalue_histogram.pdf"),
     list(name = "GO 富集（结果或空原因）",
          ok = has("GO_dotplot.pdf") || documented(enrich, "go"),   required = TRUE),
     list(name = "KEGG 富集（结果或空原因）",

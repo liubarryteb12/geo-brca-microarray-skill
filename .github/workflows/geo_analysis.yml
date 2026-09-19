@@ -1,13 +1,23 @@
 name: GEO breast cancer microarray analysis
 
-# 手动触发，或推送到 main 时自动运行
+# 手动触发（可指定数据集），或推送到 main 时自动运行（两个数据集都跑）
 on:
   workflow_dispatch:
+    inputs:
+      dataset:
+        description: '要跑的数据集（对应 assets/config.<dataset>.yml）'
+        required: true
+        default: 'GSE42568'
+        type: choice
+        options:
+          - GSE42568
+          - GSE64790
   push:
     branches: [main]
     paths:
       - 'scripts/**'
       - 'assets/**'
+      - 'tools/**'
       - '.github/workflows/geo_analysis.yml'
 
 permissions:
@@ -15,8 +25,14 @@ permissions:
 
 jobs:
   analysis:
-    name: R/Bioconductor pipeline (GSE92252)
+    # 一个数据集一个 job，产物各落在 results/<GSE>/ 下，互不覆盖。
+    # 手动触发时只跑指定的那一个；push 时两个都跑，保证两条路径都还在绿。
+    name: R/Bioconductor pipeline (${{ matrix.dataset }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dataset: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.event.inputs.dataset)) || fromJSON('["GSE64790","GSE42568"]') }}
     # spec 要求单次运行 < 20 分钟。实测冷缓存整轮 14m58s（run 35409119340），
     # 其中 Install R packages 722s、分析流水线 115s，20 分钟够用。
     # 之所以不写更紧的值：冷缓存下装包要 12 分钟，留给分析只有 8 分钟，
@@ -38,6 +54,8 @@ jobs:
       OMP_NUM_THREADS: 1
       OPENBLAS_NUM_THREADS: 1
       MKL_NUM_THREADS: 1
+      DATASET: ${{ matrix.dataset }}
+      CONFIG: assets/config.${{ matrix.dataset }}.yml
 
     steps:
       - name: Checkout
@@ -107,8 +125,20 @@ jobs:
           Rscript -e 'cat(R.version.string, "\n"); if (requireNamespace("BiocVersion", quietly=TRUE)) cat("Bioconductor:", as.character(BiocVersion::version()), "\n"); cat("lib:", .libPaths()[1], "\n")'
           Rscript -e 'for (p in c("GEOquery","limma","clusterProfiler","org.Hs.eg.db","enrichplot","STRINGdb","pheatmap","impute","igraph","yaml","ggrepel","statmod")) cat(sprintf("%-16s %s\n", p, if (requireNamespace(p, quietly=TRUE)) as.character(packageVersion(p)) else "MISSING"))'
 
+      # 数据集预检：物种 / 数据类型 / 样本量 / 分组。
+      # 00_validate_inputs.R 内部还会再判一次，这里只是让失败发生在**装包之前**。
+      - name: Pre-flight the dataset
+        run: node scripts/find_dataset.mjs check "$DATASET" || true
+
+      # 临床终点是**选数据集时**要看的，不是每次运行的硬门禁：
+      # 没有随访的数据集照样能跑完整条流程，只是做不了预后模型。
+      # 所以这里只报告，不拦。见 tools/check_clinical_endpoints.mjs 头部注释。
+      - name: Report clinical endpoints (informational)
+        continue-on-error: true
+        run: node tools/check_clinical_endpoints.mjs "$DATASET"
+
       - name: Run analysis pipeline
-        run: Rscript scripts/main_analysis.R --config assets/config.yml
+        run: Rscript scripts/main_analysis.R --config "$CONFIG"
 
       # 静态检查不依赖 R，可以在装包之前就拦下来，但放在这里是为了让
       # "分析跑通了" 与 "代码/配色合格" 在同一段日志里能对照着看。
@@ -128,7 +158,7 @@ jobs:
       # 所以独立解码 PNG 像素再判一次。不加 if: always()，它是**分析产出的门禁**，
       # 只在该有产出的时候才该发声；分析本身失败时另有那一步的红灯。
       - name: Verify figures are not blank
-        run: node tools/check_figures.mjs results
+        run: node tools/check_figures.mjs "results/$DATASET"
 
       # **给图加带版本号的副本。**
       #
@@ -150,40 +180,43 @@ jobs:
           short="${GITHUB_SHA:0:7}"
           shopt -s nullglob
           n=0
-          for f in results/*.png results/*.pdf; do
+          for f in results/"$DATASET"/*.png results/"$DATASET"/*.pdf; do
             base="${f%.*}"
             ext="${f##*.}"
             cp "$f" "${base}__${short}.${ext}"
             n=$((n + 1))
           done
           echo "已写出 $n 份带版本号的副本（后缀 $short）"
-          ls -1 results/*__*.png 2>/dev/null | head -20 || true
+          ls -1 results/"$DATASET"/*__*.png 2>/dev/null | head -20 || true
 
       # always() 保证即使分析失败也能拿到中间产物用于排查
       - name: Upload results artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: geo-results
+          # artifact 名带数据集：两个 job 的产物不再混在一起，
+          # 下载下来就是 geo-results-GSE42568/ 这样一个明确的目录。
+          name: geo-results-${{ matrix.dataset }}
           path: |
-            results/
-            data/group.csv
-            data/clean_stats.json
-            data/feature_mode.json
+            results/${{ matrix.dataset }}/
+            data/${{ matrix.dataset }}/group.csv
+            data/${{ matrix.dataset }}/clean_stats.json
+            data/${{ matrix.dataset }}/feature_mode.json
+            data/${{ matrix.dataset }}/geo_metadata.json
           if-no-files-found: warn
           retention-days: 30
 
       - name: Summarise run
         if: always()
         run: |
-          echo "### GEO pipeline summary" >> "$GITHUB_STEP_SUMMARY"
-          if [ -f results/state.json ]; then
+          echo "### GEO pipeline summary — $DATASET" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "results/$DATASET/state.json" ]; then
             echo '```json' >> "$GITHUB_STEP_SUMMARY"
-            cat results/state.json >> "$GITHUB_STEP_SUMMARY"
+            cat "results/$DATASET/state.json" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           else
             echo "_no state.json produced_" >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Artifacts:" >> "$GITHUB_STEP_SUMMARY"
-          ls -la results/ 2>/dev/null >> "$GITHUB_STEP_SUMMARY" || true
+          ls -la "results/$DATASET/" 2>/dev/null >> "$GITHUB_STEP_SUMMARY" || true
