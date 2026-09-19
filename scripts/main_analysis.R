@@ -38,7 +38,7 @@ options(geo.orchestrated = TRUE)
 
 for (f in c("00_validate_inputs.R", "01_download_clean.R", "02_qc_pca_correlation.R",
             "03_deg.R", "04_heatmap_enrichment.R", "05_ppi.R",
-            "06_wgcna.R", "07_lasso.R")) {
+            "06_wgcna.R", "07_lasso.R", "08_tf_regulation.R")) {
   p <- file.path(.geo_scripts_dir, f)
   if (!file.exists(p)) stop(sprintf("缺少步骤脚本: %s", p))
   source(p)
@@ -60,7 +60,8 @@ STEPS <- list(
   list(id = "go_kegg_enrich",     fn = run_04b_enrichment,         required = FALSE),
   list(id = "ppi_string",         fn = run_05_ppi,                 required = FALSE),
   list(id = "wgcna",              fn = run_06_wgcna,               required = FALSE),
-  list(id = "lasso_cox",          fn = run_07_lasso,               required = FALSE)
+  list(id = "lasso_cox",          fn = run_07_lasso,               required = FALSE),
+  list(id = "tf_regulation",      fn = run_08_tf_regulation,       required = FALSE)
 )
 
 # ---- 验收项（直接对应 spec 的 acceptance_criteria）-------------------------
@@ -79,6 +80,7 @@ check_acceptance <- function(cfg) {
   ppi <- read_status("ppi_status.json")
   wgcna <- read_status("wgcna_status.json")
   lasso <- read_status("lasso_status.json")
+  tf <- read_status("tf_status.json")
   # 富集/PPI 允许"为空/回退"，但必须留下原因记录
   # 状态文件有两种形状：
   #   enrichment_status.json -> {"go": {"status": ...}, "kegg": {...}}
@@ -97,11 +99,12 @@ check_acceptance <- function(cfg) {
   # too_few_events / package_missing / endpoint_error（有理由地没跑）。
   # 不允许：文件不存在，或者 status 还是 not_run —— 那说明脚本压根没执行到，
   # 而不是"这一步不适用"。
+  # not_done 也是**已定论**：明确说了"做不了 + 为什么"，比编个代理指标好。
   settled <- function(s) {
     if (is.null(s) || is.null(s$status)) return(FALSE)
     s$status %in% c("ok", "not_applicable", "not_configured", "too_few_events",
                     "too_few_samples", "package_missing", "endpoint_error",
-                    "empty_signature")
+                    "empty_signature", "not_done")
   }
 
   # name 用 file.path(res, ...) 而不是字面量 "results/..." —— 产物现在按数据集
@@ -181,7 +184,18 @@ check_acceptance <- function(cfg) {
          ok = has("cox_zph.csv") || documented(lasso, "ph_assumption") ||
               (settled(lasso) && !identical(lasso$status, "ok")),
          required = FALSE),
-    list(name = "LASSO-Cox（结果或不适用原因）", ok = settled(lasso), required = FALSE)
+    list(name = "LASSO-Cox（结果或不适用原因）", ok = settled(lasso), required = FALSE),
+    # TF 调控。判据同样是"有一个已定论的状态"，不是"有没有出图" ——
+    # 没有 dorothea 又没有回退表时写 not_done + reason 也算定论，
+    # 但**文件不存在或 status 缺失就是 FAIL**（AGENTS.md 规则 24）。
+    list(name = "TF 调控（结果或不可得原因）", ok = settled(tf), required = FALSE),
+    # 有了 TF 结果就必须说明它**不是**什么。这条是 honesty 类：
+    # 一个 TF 富集表很容易被读成"这个 TF 在调控这些基因"，而
+    # bulk 的 TF mRNA 水平与其蛋白活性经常不相关。
+    list(name = "TF 状态写明了方法学限定（not_decoupler / limitations）",
+         ok = !is.null(tf) && !is.null(tf$not_decoupler) &&
+              !is.null(tf$limitations) && length(tf$limitations) >= 3L,
+         required = FALSE)
   )
 
   # deg_table.csv 必须含 spec 要求的四列

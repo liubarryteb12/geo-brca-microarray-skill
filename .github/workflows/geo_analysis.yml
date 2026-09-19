@@ -111,11 +111,12 @@ jobs:
       # v1 -> v2：加入 fgsea（preranked GSEA 的引擎）。
       # v2 -> v3：加入 WGCNA（共表达网络）、glmnet + survival（LASSO-Cox 与
       #          KM 曲线）、matrixStats（WGCNA 的依赖，显式列出以免被间接装成旧版）。
+      # v3 -> v4：加入 dorothea（TF 调控子，08_tf_regulation.R 的主来源）。
       - name: Cache R library
         uses: actions/cache@v4
         with:
           path: ${{ env.R_LIBS_USER }}
-          key: rlib-${{ runner.os }}-bioc-v3
+          key: rlib-${{ runner.os }}-bioc-v4
           restore-keys: |
             rlib-${{ runner.os }}-
 
@@ -142,6 +143,7 @@ jobs:
             any::glmnet
             any::survival
             any::matrixStats
+            any::dorothea
           cache-version: 1
 
       # 纯诊断步骤，不允许它拖垮整条流水线
@@ -149,7 +151,7 @@ jobs:
         continue-on-error: true
         run: |
           Rscript -e 'cat(R.version.string, "\n"); if (requireNamespace("BiocVersion", quietly=TRUE)) cat("Bioconductor:", as.character(BiocVersion::version()), "\n"); cat("lib:", .libPaths()[1], "\n")'
-          Rscript -e 'for (p in c("GEOquery","limma","clusterProfiler","org.Hs.eg.db","enrichplot","STRINGdb","pheatmap","impute","igraph","yaml","ggrepel","statmod","WGCNA","glmnet","survival","matrixStats")) cat(sprintf("%-16s %s\n", p, if (requireNamespace(p, quietly=TRUE)) as.character(packageVersion(p)) else "MISSING"))'
+          Rscript -e 'for (p in c("GEOquery","limma","clusterProfiler","org.Hs.eg.db","enrichplot","STRINGdb","pheatmap","impute","igraph","yaml","ggrepel","statmod","WGCNA","glmnet","survival","matrixStats","dorothea")) cat(sprintf("%-16s %s\n", p, if (requireNamespace(p, quietly=TRUE)) as.character(packageVersion(p)) else "MISSING"))'
 
       # 数据集预检：物种 / 数据类型 / 样本量 / 分组。
       # 00_validate_inputs.R 内部还会再判一次，这里只是让失败发生在**装包之前**。

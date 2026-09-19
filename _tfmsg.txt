@@ -1,0 +1,42 @@
+补上 TF 调控分析（Part 1 缺的最后一整块）
+
+用户文档把 TF 调控列为 bulk 部分的必做项，而仓库里完全没有，
+也没有任何地方声明"没做" —— 正是那种静默缺口。
+
+两个分析，回答两个不同的问题：
+
+1. 调控子富集（Fisher 精确检验）：某个 TF 的靶基因在差异基因里是否
+   过度出现。这是主分析 —— 不依赖样本量，n<10 时仍然成立。
+2. 调控子活性分数（按样本）：靶基因 z-score 的 mor 加权均值，
+   再做组间比较。n<10 时噪声很大，所以只报效应量。
+
+数据来源与回退：
+
+  主路径：dorothea::dorothea_hs（置信度 A/B/C）
+  回退：assets/tf_regulons_minimal.tsv（44 个 TF、547 条关系）
+        —— coverage 标为 minimal，结论只能当示例
+  都没有：status = not_done + reason，不产出任何"结果"
+
+踩到的坑：
+
+read.delim 默认 comment.char = ""，不把 # 当注释 —— 回退表开头
+18 行说明文字会被当成数据行读进来，tf 列变成一堆 # ===...，
+靶基因匹配全部落空。而这个失败不报错，只是结果为空。
+加 comment.char = "#" 修掉。
+
+诚实性约束（写进状态文件并被验收检查）：
+
+- 这不是 decoupleR 的 ULM（那是单样本线性模型 + 置换检验）。
+  产物里 not_decoupler 字段写明差异。
+- bulk 里 TF 的 mRNA 水平与其蛋白活性经常不相关（翻译后修饰、
+  核转位都不反映在 mRNA 上）—— 这是本分析的根本限制。
+- 靶基因集合大量重叠，各 TF 的 p 值不独立，BH 校正偏保守。
+
+三处同步（AGENTS.md 规则 8）：
+
+- 脚本：scripts/08_tf_regulation.R
+- STEPS：加入 tf_regulation（required = FALSE）
+- 验收：settled(tf_status) + 一条 honesty 检查（必须写明方法学限定）
+
+另外 settled() 加入 not_done —— 做不了 + 为什么也是已定论。
+workflow 的 packages 加 dorothea，缓存键 bioc-v3 -> bioc-v4。
