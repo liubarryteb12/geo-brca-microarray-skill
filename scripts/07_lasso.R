@@ -514,6 +514,65 @@ run_07_lasso <- function(cfg) {
     }
   }
 
+  # ---- 4c. 比例风险（PH）假设检验 ----------------------------------------
+  #
+  # **这一步原来完全没有，而且不是"漏了一行"那么简单。**
+  # 全流程用的是 `glmnet(family="cox")` + 手写的 `harrell_c`，
+  # **从来没有拟合过一个标准的多因素 Cox 模型** —— 所以 `cox.zph` 根本没有对象可跑。
+  # 补这一步等于先把 coxph 拟合出来。
+  #
+  # PH 是 Cox 模型的核心前提：协变量的 HR 不随时间变化。违反了并不让 C-index 失效，
+  # 但**风险分的含义会变成"平均效应"** —— "某基因早期有害、晚期保护"这种情形
+  # 会被平均掉，而报告里读起来和真正的恒定效应一模一样。
+  #
+  # **只在 EPV 合规模型上跑。** 16 基因配 35 个事件时 coxph 的 16 个参数估不准，
+  # cox.zph 的输出只是噪声 —— 拿噪声下"PH 成立"的结论比不跑更糟。
+  if (!is.null(cap_info)) {
+    ph <- tryCatch({
+      d <- data.frame(time = time, event = event, stringsAsFactors = FALSE)
+      for (g in cap_genes) d[[g]] <- as.numeric(x[, g])
+      fit_cox <- survival::coxph(survival::Surv(time, event) ~ ., data = d)
+      z <- survival::cox.zph(fit_cox)
+      tab <- as.data.frame(z$table)
+      tab$term <- rownames(tab)
+      rownames(tab) <- NULL
+      list(ok = TRUE, table = tab, global_p = unname(z$table["GLOBAL", "p"]))
+    }, error = function(e) list(ok = FALSE, reason = conditionMessage(e)))
+
+    if (isTRUE(ph$ok)) {
+      utils::write.csv(ph$table, file.path(res, "cox_zph.csv"), row.names = FALSE)
+      bad <- setdiff(ph$table$term[ph$table$p < 0.05], "GLOBAL")
+      status$ph_assumption <- list(
+        status = "ok",
+        test = "survival::cox.zph（scaled Schoenfeld 残差）",
+        model = "EPV-compliant signature",
+        n_genes = length(cap_genes),
+        global_p = ph$global_p,
+        violated_terms = as.list(bad),
+        verdict = if (ph$global_p < 0.05) "violated" else "not_violated")
+      if (ph$global_p < 0.05) {
+        log_warn(sprintf(
+          "PH 假设被拒绝（全局 p=%.4g）：风险分的效应随时间变化，HR 只能当平均效应读",
+          ph$global_p))
+      } else {
+        log_info(sprintf("PH 假设未被拒绝（全局 p=%.3f，Schoenfeld 残差）", ph$global_p))
+      }
+      if (length(bad) > 0L) {
+        log_warn(sprintf("个别协变量 PH 不成立: %s", paste(bad, collapse = ", ")))
+      }
+    } else {
+      status$ph_assumption <- list(status = "failed", reason = ph$reason)
+      log_warn(sprintf("cox.zph 失败: %s", ph$reason))
+    }
+  } else {
+    status$ph_assumption <- list(
+      status = "not_applicable",
+      reason = sprintf(
+        "没有 EPV 合规模型（%d 个事件 -> 上限 %d 个变量）；%d 基因签名配 %d 个事件时 coxph 估不准，cox.zph 只会给出噪声",
+        surv$n_events, epv_cap, nrow(coef_df), surv$n_events))
+    log_warn("跳过 PH 假设检验：没有 EPV 合规模型可作为检验对象")
+  }
+
   # ---- 5. 训练集风险分与 C-index ------------------------------------------
   risk_train <- as.numeric(predict(fit, newx = x, type = "link"))
   names(risk_train) <- common

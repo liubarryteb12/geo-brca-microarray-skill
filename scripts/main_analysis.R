@@ -166,6 +166,15 @@ check_acceptance <- function(cfg) {
          ok = has("PPI_network_caption.txt") || !has("PPI_network.png"),
          required = FALSE),
     list(name = "WGCNA（结果或不适用原因）", ok = settled(wgcna), required = FALSE),
+    # PH 假设检验。**判据要分三种情况**，否则会在绿 job 上印出误导性的 FAIL：
+    #   - 有 cox_zph.csv            -> 真跑了
+    #   - ph_assumption 有终态      -> 跑了但失败/不适用，有理由
+    #   - LASSO 整步就没适用        -> 无从检验，理由在 step 级别
+    # 只有"LASSO 说 ok 却没有 ph_assumption"才算 FAIL —— 那说明这一段没执行到。
+    list(name = "PH 假设检验 cox.zph（结果或不适用原因）",
+         ok = has("cox_zph.csv") || documented(lasso, "ph_assumption") ||
+              (settled(lasso) && !identical(lasso$status, "ok")),
+         required = FALSE),
     list(name = "LASSO-Cox（结果或不适用原因）", ok = settled(lasso), required = FALSE)
   )
 
