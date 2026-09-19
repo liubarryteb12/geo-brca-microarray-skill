@@ -178,6 +178,14 @@ jobs:
       - name: Check the palette is still one-colour-one-meaning
         run: node tools/check_palette.mjs
 
+      # 验收查的是 **runner 的工作目录**，artifact 的 path 是**另一份清单**。
+      # 两者不一致时验收全绿而下载到的产物缺文件 —— 实测踩过：
+      # batch_assessment.json 验收 PASS 但没进 artifact，另外还漏了
+      # expr_clean.csv（清洗后的表达矩阵）和 meta.csv，一直没被发现。
+      # 这个检查把两份清单交叉核对，是纯静态的、不需要 R。
+      - name: Check data/ outputs are all in the artifact list
+        run: node tools/check_artifact_paths.mjs
+
       # 验收只判断文件**存在**，不判断图**有没有画出来**。
       # 出图代码有一类静默失败：设备开了、绘图没执行、设备关了 —— 文件在、大小正常、
       # 就是白图（本仓库真踩过：save_pdf 里 force(expr) 两次只跑一遍绘图代码）。
@@ -222,15 +230,32 @@ jobs:
         with:
           # artifact 名带数据集：两个 job 的产物不再混在一起，
           # 下载下来就是 geo-results-GSE42568/ 这样一个明确的目录。
+          #
+          # **这里必须逐个列举 data/ 的文件。**
+          # 实测踩过：batch_assessment.json 写出来了、验收也 PASS（文件在
+          # runner 上确实存在），但**没进 artifact** —— 于是用户下载到的
+          # 产物里缺这份记录，而验收日志说它通过了。
+          # 验收查的是 runner 的工作目录，artifact 是另一份路径清单，
+          # 两者不一致时**只有下载下来才会发现**。
+          #
+          # 用 `node tools/check_artifact_paths.mjs` 交叉核对这两份清单。
+          # 它当初一次就找出 6 个漏掉的文件，包括 expr_clean.csv
+          # （清洗后的表达矩阵 —— 核心交付物）和 meta.csv。
           name: geo-results-${{ matrix.dataset }}
           path: |
             results/${{ matrix.dataset }}/
             data/${{ matrix.dataset }}/group.csv
+            data/${{ matrix.dataset }}/meta.csv
+            data/${{ matrix.dataset }}/platform.txt
             data/${{ matrix.dataset }}/clean_stats.json
             data/${{ matrix.dataset }}/feature_mode.json
             data/${{ matrix.dataset }}/geo_metadata.json
             data/${{ matrix.dataset }}/clinical.csv
             data/${{ matrix.dataset }}/clinical_fields.json
+            data/${{ matrix.dataset }}/batch_assessment.json
+            data/${{ matrix.dataset }}/expr_clean.csv
+            data/${{ matrix.dataset }}/expr_clean.rds
+            data/${{ matrix.dataset }}/expr_raw.rds
           if-no-files-found: warn
           retention-days: 30
 

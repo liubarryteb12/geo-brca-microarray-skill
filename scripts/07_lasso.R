@@ -681,6 +681,37 @@ run_07_lasso <- function(cfg) {
     }
   }, width = 7.5, height = 5.5)
 
+  # ---- 8. 推荐哪一个签名 --------------------------------------------------
+  #
+  # **EPV 超标不做硬拒绝，而是明确"推荐哪一个"。**
+  # 我最初的想法是把超标直接拒掉，想清楚后改了 —— 那是错的：
+  # 16 基因配 35 个事件是 glmnet 在 lambda.1se 下的**真实输出**，
+  # 把它删掉恰好掩盖了"这个方法在这个样本量下就会产出过拟合签名"这个事实本身，
+  # 而那是这份分析最该说出来的话。
+  #
+  # 真正的问题是**两个签名都报 C-index 却不说哪个该用**，读者会拿错那个看
+  # （16 基因训练集 0.879 看着比 3 基因的 0.806 漂亮得多，而外部验证是反的）。
+  # 所以加机器可读的推荐字段，而不是指望读者自己判断。
+  if (!isTRUE(status$exceeds_epv)) {
+    status$signature_recommended <- "lasso_1se"
+    status$recommendation_reason <- sprintf(
+      "lambda.1se 签名 %d 个基因配 %d 个事件，EPV = %.1f >= %d，本身已合规",
+      nrow(coef_df), surv$n_events, surv$n_events / max(nrow(coef_df), 1L), EPV_MIN)
+  } else if (!is.null(cap_info)) {
+    status$signature_recommended <- "epv_compliant"
+    status$recommendation_reason <- sprintf(
+      "lambda.1se 签名 %d 个基因配 %d 个事件，EPV = %.1f < %d（超标）；推荐 EPV 合规的 %d 基因版本。两个都落盘并各报三个 C-index，代价可自行核对",
+      nrow(coef_df), surv$n_events, surv$n_events / max(nrow(coef_df), 1L), EPV_MIN,
+      cap_info$n_genes)
+  } else {
+    status$signature_recommended <- "none"
+    status$recommendation_reason <- sprintf(
+      "lambda.1se 签名 %d 个基因配 %d 个事件，EPV = %.1f < %d，且没有可用的 EPV 合规替代（正则化最强的 lambda 下仍有 %d 个非零系数）。这份签名不应作为预后模型使用",
+      nrow(coef_df), surv$n_events, surv$n_events / max(nrow(coef_df), 1L), EPV_MIN, epv_cap)
+  }
+  log_info(sprintf("推荐签名: %s —— %s", status$signature_recommended,
+                   status$recommendation_reason))
+
   status$status <- "ok"
   write_json(file.path(res, "lasso_status.json"), status)
   log_info(paste0("已生成 lasso_coefficients.csv / lasso_risk_scores.csv / lasso_stability.csv / ",
