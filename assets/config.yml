@@ -82,7 +82,9 @@ analysis:
   # 低表达基因的 logFC 噪声很大）。
   gsea_min_set: 15             # 丢弃过小的基因集（少量基因就能显著）
   gsea_max_set: 500            # 丢弃过大的泛化基因集（"metabolic process" 这类）
-  gsea_seed: 123               # fgsea 随机置换的种子，保证 p 值可复现
+  # 注意：GSEA 的随机性由上面的 analysis.seed 统一控制。
+  # 曾经在这里单独放过 gsea_seed 并传给 gseGO(seed=)，实测**不足以保证复现**
+  # （参数被接受但没转发到 fgsea 的采样器），所以改成调用前直接 set.seed()。
 
 enrichment:
   # genome   = 全基因组背景（OrgDb 默认）

@@ -369,6 +369,25 @@ reduce_terms_by_overlap <- function(tab, threshold = 0.5, gene_col = "geneID") {
   tab
 }
 
+#' 把富集结果里的基因列表列排序归一化
+#'
+#' `enrichGO` / `gseGO` 写出的 `geneID` / `core_enrichment` 是 `/` 分隔的基因串，
+#' 其**内部顺序不稳定** —— 同样的基因、同样的 p 值，两轮运行的行顺序可以不同
+#' （实测 234 行里 230 行的 `geneID` 排列不同，而 p 值、计数完全一致）。
+#' 这对科学结论没有影响，但让产物无法逐字节比对，
+#' "两轮结果是否一致" 这种验证就做不了。
+#'
+#' 按字母排序即可消除这一差异。GSEA 的 `core_enrichment` 是 leading-edge 子集，
+#' 顺序本来也没有语义，排序是安全的。
+normalise_gene_lists <- function(tab, cols = c("geneID", "core_enrichment")) {
+  if (is.null(tab) || nrow(tab) == 0L) return(tab)
+  for (cl in intersect(cols, colnames(tab))) {
+    tab[[cl]] <- vapply(strsplit(as.character(tab[[cl]]), "/", fixed = TRUE),
+                        function(g) paste(sort(g), collapse = "/"), character(1))
+  }
+  tab
+}
+
 #' 安全地调用一个可选包；缺失时返回 NULL 而不是报错
 require_pkg <- function(pkg) {
   if (!requireNamespace(pkg, quietly = TRUE)) {

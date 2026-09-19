@@ -205,12 +205,20 @@ run_04b_enrichment <- function(cfg) {
     }
   }
 
-  # seed 参数在不同 clusterProfiler 版本上支持不一致，失败就退回默认
+  # fgsea 的 p 值是蒙特卡洛估计的（fgseaMultilevel 自适应采样），因此必须固定 RNG。
+  #
+  # **注意：`gseGO(seed=123)` 这个参数不足以复现。** 实测连续两轮 CI 的
+  # GSEA 显著条目数是 1072 和 1095 —— 参数被接受了（日志里没有退回警告），
+  # 但结果仍然每次都不同，说明它没有被真正转发到 fgsea 的采样器。
+  # 所以在调用**之前**直接设 RNG 状态，不依赖 clusterProfiler 的转发。
   gsea_call <- function(f, ...) {
-    seed <- cfg$analysis$gsea_seed
+    seed <- cfg$analysis$seed
     if (is.null(seed)) seed <- 123
+    # 两处都设：set.seed 管 R 全局 RNG；显式 seed= 管那些自己开 RNG 流的实现
+    set.seed(seed)
     tryCatch(f(seed = seed, ...), error = function(e) {
       log_warn(sprintf("GSEA 传 seed 失败，退回默认置换: %s", conditionMessage(e)))
+      set.seed(seed)
       f(...)
     })
   }
@@ -233,6 +241,7 @@ run_04b_enrichment <- function(cfg) {
       df <- as.data.frame(gsea_go_res)
       if (nrow(df) > 0L) {
         df <- reduce_terms_by_overlap(df, jac, gene_col = "core_enrichment")
+        df <- normalise_gene_lists(df)
         utils::write.csv(df, file.path(res, "GSEA_GO_table.csv"), row.names = FALSE)
         n_rep <- length(unique(stats::na.omit(df$representative)))
         log_info(sprintf("GSEA (GO %s): %d 条显著，去冗余后 %d 个代表条目",
@@ -274,6 +283,7 @@ run_04b_enrichment <- function(cfg) {
       df <- as.data.frame(gsea_kegg_res)
       if (nrow(df) > 0L) {
         df <- reduce_terms_by_overlap(df, jac, gene_col = "core_enrichment")
+        df <- normalise_gene_lists(df)
         utils::write.csv(df, file.path(res, "GSEA_KEGG_table.csv"), row.names = FALSE)
         n_rep <- length(unique(stats::na.omit(df$representative)))
         log_info(sprintf("GSEA (KEGG): %d 条显著，去冗余后 %d 个代表条目", nrow(df), n_rep))
@@ -386,6 +396,7 @@ run_04b_enrichment <- function(cfg) {
       reduce_terms_by_overlap(d, jac, gene_col = "geneID")
     }))
     rownames(out) <- NULL
+    out <- normalise_gene_lists(out)
     utils::write.csv(out, file.path(res, paste0(file_base, "_table.csv")), row.names = FALSE)
     n_rep <- length(unique(stats::na.omit(out$representative)))
     log_info(sprintf("%s: %d 条（上/下调分开），去冗余后 %d 个代表条目", label, nrow(out), n_rep))
@@ -407,7 +418,7 @@ run_04b_enrichment <- function(cfg) {
   # 排序指标与置换设置要记录 —— 可复现性清单要求
   status$gsea_ranking_metric <- "limma moderated t statistic (sign = direction)"
   status$gsea_engine <- "clusterProfiler::gseGO / gseKEGG (fgsea)"
-  status$gsea_seed <- cfg$analysis$gsea_seed
+  status$gsea_seed <- cfg$analysis$seed
   status$gsea_set_size <- c(cfg$analysis$gsea_min_set, cfg$analysis$gsea_max_set)
   status$redundancy_jaccard <- jac
   write_json(file.path(res, "enrichment_status.json"), status)

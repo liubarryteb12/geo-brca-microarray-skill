@@ -263,6 +263,10 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
   plot_err <- tryCatch({
     open_png(png_path, width = 1600, height = 1400, res = 150)
     graphics::par(mar = c(1, 1, 3, 1))
+    # layout_with_fr 从随机初始位置开始，不设种子时每次运行的节点摆位都不同，
+    # PNG 无法逐字节复现（边和节点本身是确定的，变的只是布局）。
+    seed <- cfg$analysis$seed
+    if (!is.null(seed)) set.seed(seed)
     igraph::plot.igraph(
       g,
       layout = igraph::layout_with_fr(g),
