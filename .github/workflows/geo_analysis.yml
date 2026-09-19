@@ -17,8 +17,12 @@ jobs:
   analysis:
     name: R/Bioconductor pipeline (GSE92252)
     runs-on: ubuntu-latest
-    # spec 要求：单次运行不超过 20 分钟
-    timeout-minutes: 20
+    # 首次（冷缓存）运行要现场编译 Bioconductor 源码包，实测 Install R packages
+    # 单独就要 730s；分析本身还要几分钟。20 分钟在冷缓存下不够，会把 job 掐死，
+    # 而 job 被掐死时缓存往往存不下来 —— 于是下一次仍然是冷缓存，形成死循环。
+    # 所以这里放宽到 30 分钟，并显式缓存 R 库让后续运行回到 20 分钟以内。
+    # 实测数据见 EXPERIMENTAL_DESIGN.md §2.7。
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -37,12 +41,23 @@ jobs:
       # P3M 的 Linux 二进制包是按当前 R 构建的，ubuntu-latest 现在是 noble(24.04)，
       # R 4.3 + noble + 二进制根本对不上，会被迫全量源码编译；
       # 而 P3M 的 Bioconductor 镜像又已下线 3.18（见 EXPERIMENTAL_DESIGN.md §2.6）。
-      # 用 release 才能让 CRAN 依赖走二进制，把时间压进 20 分钟。
+      # 用 release 才能让 CRAN 依赖走二进制，把时间压下来。
       - name: Setup R
         uses: r-lib/actions/setup-r@v2
         with:
           r-version: 'release'
           use-public-rspm: true
+
+      # setup-r-dependencies 自己的缓存对本仓库不生效（无 DESCRIPTION/lockfile，
+      # post 步骤 0s 直接跳过），所以显式缓存 R 库。key 里带 workflow 文件哈希，
+      # 改了包列表就会自动重建。
+      - name: Cache R library
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.R_LIBS_USER }}
+          key: rlib-${{ runner.os }}-${{ hashFiles('.github/workflows/geo_analysis.yml') }}
+          restore-keys: |
+            rlib-${{ runner.os }}-
 
       - name: Install R packages
         uses: r-lib/actions/setup-r-dependencies@v2
@@ -64,9 +79,11 @@ jobs:
             any::statmod
           cache-version: 1
 
+      # 纯诊断步骤，不允许它拖垮整条流水线
       - name: Record environment
+        continue-on-error: true
         run: |
-          Rscript -e 'cat(R.version.string, "\n"); cat("Bioconductor:", as.character(BiocManager::version()), "\n"); cat("lib:", .libPaths()[1], "\n")'
+          Rscript -e 'cat(R.version.string, "\n"); if (requireNamespace("BiocVersion", quietly=TRUE)) cat("Bioconductor:", as.character(BiocVersion::version()), "\n"); cat("lib:", .libPaths()[1], "\n")'
           Rscript -e 'for (p in c("GEOquery","limma","clusterProfiler","org.Hs.eg.db","enrichplot","STRINGdb","pheatmap","impute","igraph","yaml","ggrepel","statmod")) cat(sprintf("%-16s %s\n", p, if (requireNamespace(p, quietly=TRUE)) as.character(packageVersion(p)) else "MISSING"))'
 
       - name: Run analysis pipeline

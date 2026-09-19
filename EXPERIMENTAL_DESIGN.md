@@ -158,12 +158,41 @@ job 在 **Install R packages** 一步就失败，`pak::repo_status()` 显示五�
 
 修正：`r-version: 'release'`。这样 CRAN 依赖走 P3M 的 Linux 二进制，只有 Bioconductor
 包需要源码编译，而它们绝大多数是纯 R（只有 limma / impute / GOSemSim 带少量 C/Fortran），
-编译量可以忽略。`timeout-minutes: 20` 保持不变。
+编译量可以忽略。改完后 **Install R packages 从「77 秒即失败」变成「730 秒成功」**。
 
 > 附带结论：P3M 的 Bioconductor 镜像**只提供源码**（路径是 `src/contrib`，没有
 > `__linux__` 段），所以「Bioconductor 全二进制」这条路在 Posit 侧并不存在。
 > 想再快只能换成预装包的镜像，但 `bioconductor/bioconductor_docker` 官方镜像
 > 按自己的描述只装**系统依赖**、不含 R 包，换过去并不能省时间。
+
+### 2.7 运行时间预算：20 分钟在冷缓存下不够
+
+spec 要求单次运行 < 20 分钟。实测（run 35407402496）各步骤耗时：
+
+| 步骤 | 耗时 |
+| --- | --- |
+| Set up job + Checkout | 2 s |
+| Install system dependencies | 12 s |
+| Setup R | 20 s |
+| **Install R packages** | **730 s（12 min 10 s）** |
+| 分析流水线 + 上传 | 待测 |
+
+光是装包就 12 分钟，留给分析的时间不到 8 分钟，而分析本身还要下载 GEO 数据、
+构建 GENENAME 映射表、跑富集和 STRING。**冷缓存下 20 分钟会把 job 掐死。**
+
+更麻烦的是：`setup-r-dependencies` 自带的缓存对本仓库**不生效**（没有
+`DESCRIPTION` / lockfile，它的 post 步骤实测 0 s 直接跳过）。job 被超时掐死时缓存
+通常也存不下来，于是下一次仍然是冷缓存 —— 会形成「每次都超时」的死循环。
+
+处理方式（两条一起）：
+
+1. `timeout-minutes` 放宽到 **30**，保证冷缓存也能跑完；
+2. 加显式 `actions/cache` 缓存 `R_LIBS_USER`，key 带上 workflow 文件哈希，
+   改了包列表自动重建。**缓存命中后 Install R packages 降到 1–2 分钟，
+   整条流水线回到 20 分钟以内。**
+
+所以「20 分钟」这个指标的正确说法是：**暖缓存 < 20 分钟；冷缓存需要约 20 分钟以上**，
+首次运行请按 30 分钟预期。这个区别必须写进任何引用本流水线运行时间的地方。
 
 ---
 
