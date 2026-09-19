@@ -54,8 +54,8 @@ artifact `geo-results`。
 | --- | --- |
 | `boxplot_before_after.pdf` / `.png` | 标准化前后表达分布箱线图 |
 | `density_plot.pdf` / `.png` | 标准化前后密度曲线 |
-| `pca_plot.pdf` / `.png` | PCA（PC1/PC2 方差解释率） |
-| `correlation_heatmap.pdf` / `.png` | 样本间 Pearson 相关热图 |
+| `pca_plot.pdf` / `.png` + `pca_ellipse.csv` | PCA 散点，分组用**颜色 + 形状**双重编码；组内 95% 正态椭圆（半径 2.45 SD，坐标落在 `pca_ellipse.csv` 里可核对） |
+| `correlation_heatmap.pdf` / `.png` | 样本间 Pearson 相关热图（序列色，相关性无负值故不用发散色） |
 | `correlation_matrix.csv` | Pearson + Spearman 矩阵 + 离群标记 |
 | `deg_table.csv` | 全基因 limma 结果（gene/logFC/P.Value/adj.P.Val） |
 | `volcano_plot.pdf` / `.png` | 火山图。**颜色 = 方向**（up 红 `#B2182B` / down 蓝 `#2166AC`），**alpha + 大小 = 置信度**（FDR 显著实心大点，名义显著半透明小点）。纵轴统一 raw P |
