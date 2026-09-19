@@ -287,10 +287,14 @@ run_06_wgcna <- function(cfg) {
   # 挂载前先记下它是否已经在搜索路径上，避免把调用方原有的状态拆掉。
   wgcna_attached <- "package:WGCNA" %in% search()
   if (!wgcna_attached) {
-    suppressPackageStartupMessages(
-      library(WGCNA, character.only = TRUE, warn.conflicts = FALSE))
+    # **`library("WGCNA")`，不能写 `library(WGCNA, character.only = TRUE)`。**
+    # 后者会去**求值** `WGCNA` 这个符号，而它当然不存在 ——
+    # 实测报 `object 'WGCNA' not found`，而那个报错看着像"包没装"，
+    # 完全指不到真正的原因。character.only=TRUE 是给"包里存了个变量名"用的，
+    # 这里直接给字符串就行。
+    suppressPackageStartupMessages(library("WGCNA", warn.conflicts = FALSE))
     on.exit({
-      try(detach("package:WGCNA", unload = FALSE, character.only = TRUE), silent = TRUE)
+      try(detach("package:WGCNA", unload = FALSE), silent = TRUE)
     }, add = TRUE)
   }
 

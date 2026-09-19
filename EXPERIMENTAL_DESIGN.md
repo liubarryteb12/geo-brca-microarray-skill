@@ -991,14 +991,64 @@ GSE42568 是**同一个对比的放大版**，用途是把 GSE64790 上"信号�
 > ⚠️ GSE20685 的事件列与时间列**名称对不上**（`event_death` 配
 > `follow_up_duration (years)`），工具会如实报"需人工确认配对关系"而不是猜。
 
-### 6.5 尚未做的（本设计范围之外）
+### 6.5 WGCNA 与 LASSO-Cox（步骤 06 / 07，已实现）
 
-- **WGCNA 尚未实现。** n=121 满足 WGCNA 的通行下限（≥15），可以做，
-  但**应该只用 104 例癌**，不要带那 17 例正常 —— 否则第一个模块必然是
-  "肿瘤 vs 正常"轴，反映的是组织成分而不是肿瘤内部的共表达结构。
-- **LASSO 尚未实现。** 终点和事件数都已确认可用，但签名规模必须受 §6.3 的
-  EPV 上限约束，且**必须在 GSE20685 上做外部验证** —— 只在训练集上报
-  C-index 的预后签名没有意义。
+两个都是**可选步骤**（`STEPS` 里 `required = FALSE`）：不适用时写状态文件说明原因，
+而不是静默跳过。**"失败"和"不适用"是两回事** —— 它们都让 job 保持绿色，
+所以验收项查的是状态文件里的 `status` 字段（`settled()`），
+文件不存在或字段缺失一律记 FAIL。实测第一次跑时 WGCNA 崩了而 CI 全绿，
+就是这个验收项把它揪出来的。
+
+#### 步骤 06：WGCNA 共表达网络
+
+- **只用 104 例癌，不带那 17 例正常。** 带上正常样本的话第一个模块必然是
+  "肿瘤 vs 正常"轴，反映的是组织成分 —— 而 DEG 已经答过那件事了。
+  WGCNA 要回答的是癌组织**内部**的异质性。
+- 门禁：`design_mode == "cohort"`、n ≥ 15、基因数 ≥ 2000。
+  **GSE64790（n=6）必然跳过**，状态是 `not_applicable` 并写明原因。
+- 输入取方差最大的 5000 个基因；`goodSamplesGenes` 过滤。
+- 软阈值：取**最小**的 power 使 scale-free R² ≥ 0.8；达不到就记录最大 R²
+  并标 `reached: false`，**不假装通过**。实测 GSE42568 得 power=8（R²=0.858）。
+- `blockwiseModules(networkType="signed", TOMType="signed", mergeCutHeight=0.25,
+  randomSeed=<seed>)`。`randomSeed` 必须显式传（规则 11）。
+  **`corFnc` 传函数对象没用** —— 见 AGENTS.md 规则 23，包内按字符串查函数，
+  必须临时挂载 WGCNA。
+- 模块-性状关联：**Pearson + BH 校正**。几十上百次检验不校正的话，
+  p<0.05 的格子会有一堆是偶然的，而它们在热图上和真信号长得一样。
+- 产物：`wgcna_modules.csv`、`wgcna_module_sizes.csv`、`wgcna_soft_power.csv`、
+  `wgcna_module_trait.csv`、`wgcna_soft_power.pdf`、
+  `wgcna_module_trait_heatmap.pdf`、`wgcna_status.json`。
+
+#### 步骤 07：LASSO-Cox 预后签名
+
+- **终点必须由 config 显式指定**（`survival.time_column` / `event_column` /
+  `event_value`），不做关键词自动配对。实测 GSE20685 是 `event_death` 配
+  `follow_up_duration (years)` —— 名字里没有共同词，自动配对一定会配错，
+  而**配错不报错**，只会算出错的 C-index。
+- EPV 门禁（规则 7）：GSE42568 的 OS 只有 35 个事件 → 上限 3 个基因。
+- 候选基因 = FDR 显著 DEG；没有显著基因时退到 `ranked_fallback_genes`
+  并按原始 P 排序，**状态里标明是降级**。
+- `glmnet(family="cox", alpha=1)` + 重复 CV（显式 `foldid`）+ `lambda.1se`。
+- **C-index 用自己实现的 `harrell_c()`，不用 `survival::concordance()` 的公式接口** ——
+  实测后者在 `Surv(time, event) ~ risk` 下返回 1 - Harrell C（训练集 0.121
+  vs 交叉验证 0.793，正好互补），而 0.121 看着像个正常数字，不会引起怀疑。
+- 报**三个** C-index：训练集、交叉验证、外部验证（GSE20685）。
+  验证集用**训练集的均值方差**标准化，KM 切点用**训练集的中位数** ——
+  在验证集里重新取中位数会让两个队列的"高风险"不是同一个定义。
+- 报重复 CV 选出基因数的**分布**（实测 [16, 3, 3, 22, 3]，只换 foldid 就差 7 倍）
+  和 `signature_stable`。只报"最终签名 N 个基因"是把不稳定性藏起来。
+- 当 `lambda.1se` 超出 EPV 上限时，**额外给一个显式满足 EPV 的版本**
+  （`lasso_coefficients_epv.csv`，取"非零系数 ≤ epv_cap"的最大 lambda），
+  两个都在外部队列上打分，让读者看到少要基因的代价。
+- 产物：`lasso_coefficients.csv`、`lasso_coefficients_epv.csv`、
+  `lasso_risk_scores.csv`、`lasso_stability.csv`、
+  `lasso_selection_frequency.csv`、`lasso_cv_curve.csv`、`lasso_km.pdf`、
+  `lasso_status.json`。
+
+> **GSE64790 做不了 LASSO**：没有随访终点，且 `min(n, p) = 6`、
+> 最大事件数 6 → EPV 上限 0。状态是 `not_applicable`。
+
+### 6.6 尚未做的（本设计范围之外）
 
 ---
 
