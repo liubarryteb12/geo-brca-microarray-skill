@@ -169,6 +169,12 @@ run_05_ppi <- function(cfg) {
                        nrow(edges), cfg$thresholds$string_score, chosen))
 
       g <- igraph::graph_from_data_frame(edges[, c("from_gene", "to_gene")], directed = FALSE)
+      # **必须显式补上边权。** 上面只传了两列，图里没有 weight 属性；
+      # 而出图代码要按边强度筛选、要按权重调透明度，拿到 NULL 会直接报错
+      # （实测踩过两次：`edf$weight / max(edf$weight)` 得到长度 0 的向量 ->
+      # "replacement has 0 rows"；`order(NULL)` -> 全 NA 的边索引 ->
+      # "argument 1 is not a vector"）。两次都让 STRING 静默退化成共表达网络。
+      igraph::E(g)$weight <- as.numeric(edges$score)
       status$string_version <- chosen
       write_ppi_outputs(cfg, g, edges, "string_ppi", status)
       string_ok <- TRUE
@@ -303,9 +309,17 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
       g <- igraph::induced_subgraph(g, keep)
     }
     # 3. 按边权保留最强的 max_edges 条，再丢掉因此变成孤立的节点
-    if (igraph::ecount(g) > max_edges) {
-      w <- igraph::E(g)$weight
-      strong <- order(w, decreasing = TRUE)[seq_len(max_edges)]
+    #
+    # **先确认图真的有边权。** 没有 weight 时 `order(NULL)` 会返回 integer(0)，
+    # 再取 `[seq_len(max_edges)]` 得到一整条 NA，传给 subgraph.edges 直接报
+    # "argument 1 is not a vector"。宁可跳过滤，也不要静默把整个 STRING 路径
+    # 打进回退分支 —— 那会让"PPI 网络"变成共表达网络而不自知。
+    w_all <- igraph::E(g)$weight
+    has_weight <- !is.null(w_all) && length(w_all) == igraph::ecount(g)
+    if (!has_weight) {
+      log_warn("图没有边权属性，跳过按强度筛选（保留全部边）")
+    } else if (igraph::ecount(g) > max_edges) {
+      strong <- order(w_all, decreasing = TRUE)[seq_len(max_edges)]
       g <- igraph::subgraph.edges(g, strong, delete.vertices = TRUE)
     }
     log_info(sprintf("网络图：%d 节点 / %d 边 → 过滤后 %d 节点 / %d 边",
@@ -361,7 +375,7 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
     edf$y    <- lay[match(edf$from, vdf$name), 2L]
     edf$xend <- lay[match(edf$to,   vdf$name), 1L]
     edf$yend <- lay[match(edf$to,   vdf$name), 2L]
-    edf$w    <- edf$weight / max(edf$weight)
+    edf$w    <- if (has_weight) edf$weight / max(edf$weight) else 0.5
 
     # 5. 只标注 top hub
     hub_k <- min(20L, nrow(vdf))
@@ -442,7 +456,22 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
     status
   }
 
-  status <- plot_ppi_network(cfg, g, method, status)
+  # **绘图必须与网络构建隔离。** 出图代码里的任何错误如果逃逸出去，会被
+  # 调用方的 `tryCatch` 当成"STRING 失败"接住，于是整条路径静默退化成共表达网络 ——
+  # 一个画图的 bug 悄悄换掉了分析方法，而日志里只留一句"STRINGdb 失败"。
+  # 实测正是如此：`E(g)$weight` 缺失导致出图报错，连续两轮 CI 的 PPI 都变成了
+  # 共表达网络，而 ppi_status.json 里看起来"有图、有 hub 基因"，一切正常。
+  #
+  # 所以这里自己兜住：出图失败只影响图，方法本身（string_ppi）如实记录。
+  status <- tryCatch(
+    plot_ppi_network(cfg, g, method, status),
+    error = function(e) {
+      status$plot_error <- conditionMessage(e)
+      log_warn(sprintf("网络图绘制失败（网络本身已构建成功，边表与 hub 基因不受影响）: %s",
+                       conditionMessage(e)))
+      status
+    }
+  )
 
   write_json(file.path(res, "ppi_status.json"), status)
 
