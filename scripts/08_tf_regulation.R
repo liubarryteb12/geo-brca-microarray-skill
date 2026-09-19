@@ -30,6 +30,20 @@
 #         —— **回退时 coverage 标为 minimal，结论不能当全基因组结论**
 #   都没有：写 status = "not_done" + reason，不产出任何"结果"
 #
+# ## §1.5 的 TRRUST / ChEA3 怎么落地
+#
+# **TRRUST 接入为独立交叉验证，不替换主来源。** 它没有 CRAN 包，
+# 官方分发方式是直接下 TSV，所以用 base R 的 `download.file`（不引新依赖），
+# 下到 `data/<GSE>/trrust_cache/` 并记 sha256。
+# 比对报三件事：配对重叠（Jaccard）、**重叠部分的 mor 符号一致率**、
+# 各自独有部分的大小。**mor 冲突是最该看的数** —— 两个库对同一对
+# TF-靶基因的调控方向就不一致时，基于 mor 定符号的活性打分要打折。
+#
+# **ChEA3 未接入，理由写在 limitations 里**：它是 web 服务、无 CRAN 包，
+# 调用需要 httr/curl（CI 的 R 包列表里没有）。而 dorothea 的置信度 A 档
+# 本身就整合了 ChEA，覆盖率上不缺 —— 缺的是"用另一个服务独立复核富集
+# 结果"这一步。**这是如实记录的缺口，不是"已经做了"。**
+#
 # ## 产物
 #
 #   results/<GSE>/tf_regulon_enrichment.csv   每个 TF 的 Fisher 检验
@@ -137,6 +151,182 @@ load_tf_regulons <- function(cfg) {
 
   # ---- 都没有 ----
   NULL
+}
+
+
+# ============================================================================
+# TRRUST（文档 §1.5 点名）
+# ============================================================================
+# **TRRUST 没有 CRAN/Bioconductor 包**（实测查过 cran.r-project.org 的
+# TRRUST / trrust / ChEA3 / chea3 四个名字，全无）。官方分发方式是
+# 直接下 TSV，所以这里用 base R 的 `utils::download.file`，不引新依赖。
+#
+# 实测格式（trrust_rawdata.human.tsv，9396 行 / 795 个 TF / 4 列无表头）：
+#     AATF<TAB>BAX<TAB>Repression<TAB>22909821
+#     AATF<TAB>CDKN2A<TAB>Activation<TAB>...
+# 第 3 列取值只有 Activation / Repression / Unknown 三种。
+#
+# **它是 dorothea 的独立交叉验证，不是替代品。** 两个库的收录标准不同
+# （TRRUST 要求有文献报道的调控关系；dorothea 整合 ChEA/TRRUST/文献并按
+# 置信度分档），所以**对不上的部分本身就是信息**：
+#   - 只在 dorothea 里：多为高通量/预测来源
+#   - 只在 TRRUST 里：文献报道但未进 dorothea 的
+#   - **两边都有但 mor 符号相反**：最值得看的 —— 说明"激活还是抑制"
+#     这件事在两个库之间就不一致，任何基于 mor 的活性打分都要谨慎。
+# **只用人类文件，不做物种分支。** 本仓库从头到尾硬编码人类：
+# `00_validate_inputs.R` 遇到非 Homo sapiens 样本直接 stop()，
+# 富集用 `org.Hs.eg.db`，PPI 用 `species = 9606`。
+# 写一个从配置读物种的分支是**永远走不到的死代码**，
+# 而且会让静态检查报"引用了配置里不存在的字段"（实测报过）。
+# 真要放开物种，先改门禁，再在这里加 mouse 分支。
+TRRUST_URL <- "https://www.grnpedia.org/trrust/data/trrust_rawdata.human.tsv"
+# 需要小鼠时的地址（TRRUST v2 同样提供）：
+#   https://www.grnpedia.org/trrust/data/trrust_rawdata.mouse.tsv
+
+
+#' 下载（带缓存）并解析 TRRUST
+#'
+#' 返回 list(regulons, source, coverage, n_tf, n_pairs, url, sha256, cache_path)
+#' 或 NULL（任何一步失败都不抛异常 —— 它是交叉验证，不该拖垮主分析）。
+load_trrust_regulons <- function(cfg) {
+  url <- TRRUST_URL
+  cache_dir <- file.path(cfg$output$data_dir, "trrust_cache")
+  cache_path <- file.path(cache_dir, basename(url))
+
+  # ---- 取文件（缓存优先）----
+  got <- FALSE
+  if (file.exists(cache_path) && file.size(cache_path) > 1000) {
+    got <- TRUE
+    log_info(sprintf("TRRUST 用缓存：%s", cache_path))
+  } else {
+    dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
+    ok <- tryCatch({
+      # mode = "wb" 是必须的：默认 "w" 在 Windows 上会把行尾改写，
+      # 而哈希是用来核对"这份文件有没有变"的 —— 改写会让哈希失去意义。
+      utils::download.file(url, cache_path, quiet = TRUE, mode = "wb")
+      file.exists(cache_path) && file.size(cache_path) > 1000
+    }, error = function(e) {
+      log_warn(sprintf("TRRUST 下载失败：%s", conditionMessage(e)))
+      FALSE
+    })
+    if (!ok) {
+      # 下载失败时清掉可能写了一半的文件，避免下轮拿半截文件当缓存
+      if (file.exists(cache_path)) unlink(cache_path)
+      return(NULL)
+    }
+    got <- TRUE
+    log_info(sprintf("TRRUST 已下载：%s", cache_path))
+  }
+  if (!got) return(NULL)
+
+  # ---- 解析 ----
+  db <- tryCatch(
+    utils::read.delim(cache_path, header = FALSE, stringsAsFactors = FALSE,
+                      quote = "", comment.char = "",
+                      col.names = c("tf", "target", "mor_raw", "pmid")),
+    error = function(e) {
+      log_warn(sprintf("TRRUST 解析失败：%s", conditionMessage(e)))
+      NULL
+    })
+  if (is.null(db) || nrow(db) == 0L) return(NULL)
+
+  # ---- 列数与列名校验 ----
+  # **不校验的话，上游改格式会静默产出错的结果**：比如加了表头行，
+  # 那么第一行会变成 tf="tf" 这种，而它照样能算出一个数来。
+  if (ncol(db) != 4L) {
+    log_warn(sprintf("TRRUST 列数是 %d，预期 4 —— 上游格式变了，放弃", ncol(db)))
+    return(NULL)
+  }
+  mode_vals <- unique(db$mor_raw)
+  known <- c("Activation", "Repression", "Unknown")
+  if (!all(mode_vals %in% known)) {
+    log_warn(sprintf("TRRUST 第 3 列出现未知取值：%s —— 上游格式变了，放弃",
+                     paste(setdiff(mode_vals, known), collapse = ", ")))
+    return(NULL)
+  }
+
+  # ---- mor 映射 ----
+  # **Unknown 映射成 NA，不映射成 0。** 0 在加权平均里等于"这条关系不贡献"，
+  # 而 NA 会被 na.rm 显式跳过 —— 前者把"不知道"混进了分母。
+  db$mor <- ifelse(db$mor_raw == "Activation", 1L,
+                   ifelse(db$mor_raw == "Repression", -1L, NA_integer_))
+  db$confidence <- "TRRUST"
+  db <- db[, c("tf", "target", "mor", "confidence")]
+
+  n_tf <- length(unique(db$tf))
+  n_unk <- sum(is.na(db$mor))
+  log_info(sprintf("TRRUST(human)：%d 个 TF，%d 条关系（其中 %d 条 mor 未知）",
+                   n_tf, nrow(db), n_unk))
+
+  list(regulons = db,
+       source = "TRRUST v2 (human)",
+       coverage = "genome_wide",
+       n_tf = n_tf,
+       n_pairs = nrow(db),
+       n_mor_unknown = n_unk,
+       url = url,
+       sha256 = file_hash(cache_path)$hash,
+       cache_path = cache_path)
+}
+
+
+#' 两个调控子库的交叉核对
+#'
+#' **报三件事，缺一不可：**
+#'   1. 配对层面的重叠（Jaccard）—— 两个库收录范围差多少
+#'   2. **重叠部分里 mor 符号相反的比例** —— 这是最该看的数
+#'   3. 只在一边的条数 —— 说明"独立验证"到底验证到了多少
+#'
+#' 只报"两个库都有几万条关系"是没有信息量的：数量大不等于一致。
+compare_regulon_databases <- function(a, b, a_name = "dorothea",
+                                      b_name = "TRRUST") {
+  out <- list(compared = FALSE, a = a_name, b = b_name)
+  if (is.null(a) || is.null(b) || nrow(a) == 0L || nrow(b) == 0L) {
+    out$reason <- "有一侧为空，无法比较"
+    return(out)
+  }
+  ka <- paste(a$tf, a$target, sep = "|")
+  kb <- paste(b$tf, b$target, sep = "|")
+  ua <- unique(ka); ub <- unique(kb)
+  both <- intersect(ua, ub)
+
+  out$compared <- TRUE
+  out$a_pairs <- length(ua)
+  out$b_pairs <- length(ub)
+  out$n_common_pairs <- length(both)
+  out$n_a_only <- length(setdiff(ua, ub))
+  out$n_b_only <- length(setdiff(ub, ua))
+  out$jaccard <- round(length(both) / length(union(ua, ub)), 4)
+  out$a_tfs <- length(unique(a$tf))
+  out$b_tfs <- length(unique(b$tf))
+  out$n_common_tfs <- length(intersect(unique(a$tf), unique(b$tf)))
+
+  # ---- mor 符号一致性（只在两边都有 mor 且都非 NA 的重叠对上算）----
+  ma <- a[!duplicated(ka), c("tf", "target", "mor")]
+  mb <- b[!duplicated(kb), c("tf", "target", "mor")]
+  ma$key <- paste(ma$tf, ma$target, sep = "|")
+  mb$key <- paste(mb$tf, mb$target, sep = "|")
+  mm <- merge(ma[, c("key", "mor")], mb[, c("key", "mor")],
+              by = "key", suffixes = c("_a", "_b"))
+  mm <- mm[!is.na(mm$mor_a) & !is.na(mm$mor_b), , drop = FALSE]
+  if (nrow(mm) > 0L) {
+    out$n_mor_comparable <- nrow(mm)
+    out$n_mor_agree <- sum(mm$mor_a == mm$mor_b)
+    out$n_mor_conflict <- sum(mm$mor_a != mm$mor_b)
+    out$mor_agreement <- round(out$n_mor_agree / nrow(mm), 4)
+    # 冲突的具体例子（最多 20 条）—— 只给比例的话没法核对
+    cf <- mm[mm$mor_a != mm$mor_b, , drop = FALSE]
+    if (nrow(cf) > 0L) {
+      out$mor_conflict_examples <- utils::head(
+        data.frame(key = cf$key,
+                   mor_a = cf$mor_a, mor_b = cf$mor_b,
+                   stringsAsFactors = FALSE), 20L)
+    }
+  } else {
+    out$n_mor_comparable <- 0L
+    out$mor_agreement <- NA_real_
+  }
+  out
 }
 
 
@@ -483,11 +673,51 @@ run_08_tf_regulation <- function(cfg) {
     NULL
   }
 
+  # ---- §1.5 TRRUST 交叉验证 -------------------------------------------------
+  # 失败不抛异常：它是交叉验证，不该拖垮主分析。但**必须留下为什么没做**。
+  trrust <- load_trrust_regulons(cfg)
+  trrust_cmp <- if (is.null(trrust)) {
+    list(compared = FALSE,
+         reason = "TRRUST 不可用（下载失败或格式变了）—— 详见上面的 WARN")
+  } else {
+    compare_regulon_databases(tfdb$regulons, trrust$regulons,
+                              a_name = tfdb$source, b_name = trrust$source)
+  }
+  if (isTRUE(trrust_cmp$compared)) {
+    log_info(sprintf(
+      "TRRUST vs dorothea：共有 %d 对（Jaccard %.4f），仅 dorothea %d，仅 TRRUST %d",
+      trrust_cmp$n_common_pairs, trrust_cmp$jaccard,
+      trrust_cmp$n_a_only, trrust_cmp$n_b_only))
+    if (!is.na(trrust_cmp$mor_agreement)) {
+      log_info(sprintf(
+        "  mor 符号一致率 %.4f（%d/%d 可比），**冲突 %d 条**",
+        trrust_cmp$mor_agreement, trrust_cmp$n_mor_agree,
+        trrust_cmp$n_mor_comparable, trrust_cmp$n_mor_conflict))
+    }
+  } else {
+    log_warn(sprintf("TRRUST 交叉验证未完成：%s", trrust_cmp$reason))
+  }
+
   write_json(status_path, list(
     status = "ok",
     regulon_source = tfdb$source,
     coverage = tfdb$coverage,
     confidence_levels = tfdb$confidence_levels,
+    trrust = if (is.null(trrust)) {
+      list(status = "not_used",
+           reason = "下载失败或上游格式变了（见 WARN 日志）")
+    } else {
+      list(status = "ok",
+           source = trrust$source,
+           n_tf = trrust$n_tf,
+           n_pairs = trrust$n_pairs,
+           n_mor_unknown = trrust$n_mor_unknown,
+           url = trrust$url,
+           sha256 = trrust$sha256,
+           is_primary = FALSE,
+           role = "独立交叉验证，不替换主来源")
+    },
+    trrust_vs_dorothea = trrust_cmp,
     n_tfs_total = length(unique(tfdb$regulons$tf)),
     n_interactions = nrow(tfdb$regulons),
     deg_mode = deg_mode,
@@ -524,7 +754,20 @@ run_08_tf_regulation <- function(cfg) {
       "bulk 数据里 TF 的 mRNA 水平与其**蛋白活性**经常不相关",
       "（翻译后修饰、核转位都不反映在 mRNA 上）—— 这是本分析的根本限制。",
       "靶基因集合之间大量重叠（一个基因受多个 TF 调控），",
-      "所以各 TF 的 p 值**不独立**，BH 校正偏保守。"),
+      "所以各 TF 的 p 值**不独立**，BH 校正偏保守。",
+      if (isTRUE(trrust_cmp$compared) && !is.na(trrust_cmp$mor_agreement))
+        sprintf(paste0("**两个库对同一对 TF-靶基因的调控方向就不完全一致**：",
+                       "dorothea 与 TRRUST 重叠 %d 对里，mor 符号一致率仅 %.1f%%，",
+                       "冲突 %d 条。任何基于 mor 定符号的活性打分都要按此打折。"),
+                trrust_cmp$n_mor_comparable,
+                100 * trrust_cmp$mor_agreement,
+                trrust_cmp$n_mor_conflict)
+      else
+        "TRRUST 交叉验证未完成，调控方向没有第二个库背书。",
+      "**ChEA3 未接入**：它是 Ma'ayan Lab 的 web 服务，无 CRAN/Bioconductor 包，",
+      "      调用需要 httr/curl（本仓库 CI 的 R 包列表里没有）。",
+      "      而 dorothea 的置信度 A 档本身就整合了 ChEA —— 覆盖率上不缺，",
+      "      缺的是「用另一个服务独立复核富集结果」这一步。已如实记在 trrust 字段旁。"),
     outputs = c("tf_regulon_enrichment.csv", "tf_activity_by_sample.csv",
                 "tf_activity_group_test.csv", figs_written)))
 

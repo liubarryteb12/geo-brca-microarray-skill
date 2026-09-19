@@ -245,6 +245,28 @@ check_acceptance <- function(cfg) {
     list(name = "TF 状态写明了方法学限定（not_decoupler / limitations）",
          ok = !is.null(tf) && !is.null(tf$not_decoupler) &&
               !is.null(tf$limitations) && length(tf$limitations) >= 3L,
+         required = FALSE),
+    # ---- §1.5 TRRUST 交叉验证 -----------------------------------------------
+    # **不阻断，但必须可见。** TRRUST 是独立第二个库；它没跑成时
+    # "dorothea 跑通了"会被当成"§1.5 做完了"，而实际上少了独立背书。
+    list(name = "TRRUST 交叉验证（§1.5）",
+         ok = !is.null(tf) && !is.null(tf$trrust) &&
+              identical(tf$trrust$status, "ok"),
+         required = FALSE),
+    # **一致性必须量化，不能只说"两个库高度一致"。**
+    # 尤其是 mor 符号一致率 —— 两个库对同一对关系方向不一致时，
+    # 任何基于 mor 定符号的活性打分都要打折，而这件事只有算出来才知道。
+    list(name = "TRRUST 与 dorothea 的差异已量化（含 mor 符号一致率）",
+         ok = local({
+           if (is.null(tf) || is.null(tf$trrust_vs_dorothea)) return(FALSE)
+           c <- tf$trrust_vs_dorothea
+           if (!isTRUE(c$compared)) {
+             # 没比成也算"已定论"，但必须给出原因（同规则 24）
+             return(!is.null(c$reason) && nzchar(as.character(c$reason)))
+           }
+           !is.null(c$n_common_pairs) && !is.null(c$jaccard) &&
+             !is.null(c$n_mor_comparable) && !is.null(c$mor_agreement)
+         }),
          required = FALSE)
   )
 
