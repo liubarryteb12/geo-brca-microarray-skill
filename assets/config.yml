@@ -66,16 +66,39 @@ analysis:
   # 结论中不得把它当成显著差异基因。设为 0 可关闭降级（富集/PPI 直接跳过）。
   ranked_fallback_genes: 500
 
+  # ---- preranked GSEA ------------------------------------------------------
+  # **这是弱功效数据集的主力富集方法。** K-Dense `pathway-enrichment` skill：
+  #   "a discrete hit list → ORA; a ranked table with per-gene scores → GSEA"
+  #   "Never threshold a list and then feed it to GSEA"
+  #   "Better when effects are broad/subtle or when a hit list would be very
+  #    short or very long"（> 2000 个基因的 ORA 列表会失去特异性）
+  # 所以 GSEA 用**完整的 16,487 基因排序表**，不卡任何阈值；
+  # 排序指标用 limma 的 moderated t 统计量（比 log2FC 稳定，
+  # 低表达基因的 logFC 噪声很大）。
+  gsea_min_set: 15             # 丢弃过小的基因集（少量基因就能显著）
+  gsea_max_set: 500            # 丢弃过大的泛化基因集（"metabolic process" 这类）
+  gsea_seed: 123               # fgsea 随机置换的种子，保证 p 值可复现
+
 enrichment:
-  # genome   = 全基因组背景（spec 要求，OrgDb 默认）
-  # detected = 仅用芯片实测基因作背景（方法学上更严谨，结果会不同）
-  universe: genome
+  # genome   = 全基因组背景（OrgDb 默认）
+  # detected = 仅用芯片实测基因作背景
+  #
+  # **默认用 detected。** spec 里写的是"全基因组背景"，但 K-Dense 的
+  # `pathway-enrichment` skill 明确指出：背景应该是"本实验**可能**检出的基因"，
+  # 用过大的背景会让管家类条目假显著，这是 ORA 结果误导人最常见的方式。
+  # 实测两者结果确实不同（见 EXPERIMENTAL_DESIGN.md §2.11）。
+  # 需要按 spec 口径复现时把这里改回 genome 即可。
+  universe: detected
   p_adjust: BH
   pvalue_cutoff: 0.05
   qvalue_cutoff: 0.2
   top_terms: 15                # dotplot 展示条目数
   ont: BP                      # GO 本体：BP / MF / CC
   kegg_organism: hsa
+  # GO 条目去冗余：GO 会返回大量近义条目（"mitotic cell cycle" 的几十个变体）。
+  # 按基因重叠 Jaccard 做单链接聚类，每组只保留 adj.P 最小的那个作代表。
+  # 设为 1 可关闭去冗余。
+  redundancy_jaccard: 0.5
 
 # ---- 输出 ------------------------------------------------------------------
 output:

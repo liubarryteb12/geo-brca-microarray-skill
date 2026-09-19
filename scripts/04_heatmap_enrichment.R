@@ -1,15 +1,30 @@
 # ============================================================================
-# 04_heatmap_enrichment.R — 聚类热图 + GO/KEGG 富集
+# 04_heatmap_enrichment.R — 聚类热图 + preranked GSEA + GO/KEGG 富集
 # ============================================================================
 # spec 的 deg_heatmap + go_kegg_enrich 步骤。
 #
 # 热图：top N 显著 DEG（按 adj.P.Val），不足时自动降级；行 Z-score，euclidean + complete。
-# 富集：GO BP（enrichGO）+ KEGG（enrichKEGG）。
-#       富集为空或 KEGG 接口失败时写空表 + 状态文件，**不终止流程**。
+#
+# 富集分两条路，来自 K-Dense `pathway-enrichment` skill 的指引：
+#   "a discrete hit list → ORA; a ranked table with per-gene scores → GSEA"
+#   "Never threshold a list and then feed it to GSEA"
+#
+#   A. preranked GSEA（主力）—— 用**完整的 16,487 基因排序表**，不卡阈值，
+#      排序指标是 limma 的 moderated t 统计量。弱功效、效应弥散的数据集
+#      正是 GSEA 被设计出来处理的场景；卡阈值再跑 ORA 会扔掉排序信息。
+#   B. ORA（辅助）—— 按上/下调**分开**跑。ORA 本身方向无关，混在一起
+#      "富集到 X 通路"由上调还是下调基因驱动就分不清了。
+#
+# 两条路的结果都做**基因重叠去冗余**：GO 会返回几十个近义条目，
+# 那是 1 个发现重复几十次，不是几十个发现。
+#
+# 富集为空或 KEGG 接口失败时写空表 + 状态文件，**不终止流程**。
 #
 # 输出：results/top50_heatmap.pdf
-#       results/GO_dotplot.pdf / GO_table.csv
-#       results/KEGG_dotplot.pdf / KEGG_table.csv
+#       results/GSEA_GO_dotplot.pdf  / GSEA_GO_table.csv
+#       results/GSEA_KEGG_dotplot.pdf / GSEA_KEGG_table.csv
+#       results/GO_dotplot.pdf  / GO_table.csv      （含 direction 列）
+#       results/KEGG_dotplot.pdf / KEGG_table.csv   （含 direction 列）
 #       results/enrichment_status.json
 # ============================================================================
 
@@ -100,15 +115,15 @@ run_04a_heatmap <- function(cfg) {
 }
 
 run_04b_enrichment <- function(cfg) {
-  log_info("=== 步骤 04b：GO / KEGG 富集 ===")
+  log_info("=== 步骤 04b：preranked GSEA + GO / KEGG 富集 ===")
   ensure_dirs(cfg)
 
   res <- cfg$output$results_dir
   deg <- utils::read.csv(file.path(res, "deg_table.csv"), stringsAsFactors = FALSE)
   expr <- readRDS(file.path(cfg$output$data_dir, "expr_clean.rds"))
 
-  # ---- 富集分析 -----------------------------------------------------------
-  status <- list(go = list(status = "not_run"), kegg = list(status = "not_run"))
+  status <- list(go = list(status = "not_run"), kegg = list(status = "not_run"),
+                 gsea_go = list(status = "not_run"), gsea_kegg = list(status = "not_run"))
 
   # 富集需要基因 symbol；01 若只能拿到探针 ID，这里必须跳过而不是硬凑
   feat_path <- file.path(cfg$output$data_dir, "feature_mode.json")
@@ -123,139 +138,340 @@ run_04b_enrichment <- function(cfg) {
     write_empty_enrichment(cfg, status, reason)
     return(invisible(NULL))
   }
-  # FDR 显著基因；样本数很小时全基因组 BH 校正几乎不可能有基因通过，
-  # 此时退回按 raw P 排序的前 N 个（见 common.R 的 select_degs），并标注在 status 里
+
   sel <- select_degs(deg, cfg, min_genes = 5L)
   sig_genes <- sel$genes
   status$deg_mode <- sel$mode
   status$deg_reason <- sel$reason
+  status$input_genes <- length(sig_genes)
+  status$universe <- cfg$enrichment$universe
   if (identical(sel$mode, "ranked_fallback")) {
-    log_warn(sprintf("无基因通过 FDR，富集改用 raw P 排序前 %d 个基因（假设生成，非显著 DEG）",
+    log_warn(sprintf("无基因通过 FDR，ORA 改用 raw P 排序前 %d 个基因（假设生成，非显著 DEG）",
                      length(sig_genes)))
   }
 
-  if (length(sig_genes) < 5L) {
-    log_warn(sprintf("可用于富集的基因仅 %d 个（< 5），跳过 GO/KEGG", length(sig_genes)))
-    write_empty_enrichment(cfg, status, sprintf("只有 %d 个基因可用于富集，不足 5 个",
-                                                length(sig_genes)))
-    return(invisible(NULL))
-  }
-  log_info(sprintf("富集输入基因数: %d（模式: %s）", length(sig_genes), sel$mode))
-
-  # 背景集：genome = OrgDb 全部基因；detected = 芯片实测基因
+  # 背景集：genome = OrgDb 全部基因；detected = 芯片实测基因。
+  # 默认 detected —— 背景应当是"本实验可能检出的基因"，用全基因组会让管家类
+  # 条目假显著（K-Dense pathway-enrichment 点名的 ORA 头号误导来源）。
   universe_symbols <- NULL
   if (identical(cfg$enrichment$universe, "detected")) {
     universe_symbols <- rownames(expr)
-    log_info(sprintf("富集背景: 实测基因集（%d 个）", length(universe_symbols)))
+    log_info(sprintf("ORA 背景: 实测基因集（%d 个）", length(universe_symbols)))
   } else {
-    log_info("富集背景: 全基因组（OrgDb 默认）")
+    log_info("ORA 背景: 全基因组（OrgDb 默认）—— 注意这会让泛化条目显得更显著")
   }
 
-  # ---- 2a. GO -------------------------------------------------------------
-  go_res <- tryCatch({
-    clusterProfiler::enrichGO(
-      gene = sig_genes, OrgDb = org.Hs.eg.db, keyType = "SYMBOL",
-      ont = cfg$enrichment$ont,
-      universe = universe_symbols,
-      pAdjustMethod = cfg$enrichment$p_adjust,
-      pvalueCutoff = cfg$enrichment$pvalue_cutoff,
-      qvalueCutoff = cfg$enrichment$qvalue_cutoff,
-      readable = TRUE
-    )
-  }, error = function(e) {
-    log_warn(sprintf("GO 富集失败: %s", conditionMessage(e)))
-    status$go <<- list(status = "failed", reason = conditionMessage(e))
-    NULL
-  })
+  jac <- cfg$enrichment$redundancy_jaccard
+  if (is.null(jac)) jac <- 0.5
 
-  if (!is.null(go_res)) {
-    go_df <- as.data.frame(go_res)
-    utils::write.csv(go_df, file.path(res, "GO_table.csv"), row.names = FALSE)
-    if (nrow(go_df) > 0L) {
-      save_pdf(file.path(res, "GO_dotplot.pdf"),
-               print(make_dotplot(go_res, cfg, sprintf("GO %s enrichment - %s",
-                                                       cfg$enrichment$ont, cfg$dataset_id))),
-               width = 9, height = 7)
-      log_info(sprintf("GO %s 富集: %d 条通路，已生成 GO_dotplot.pdf",
-                       cfg$enrichment$ont, nrow(go_df)))
-      status$go <- list(status = "ok", terms = nrow(go_df),
-                        top = head(go_df$Description, 5))
-    } else {
-      log_warn("GO 富集结果为空，写空表")
-      status$go <- list(status = "empty", reason = "no term passed the cutoff")
+  # ==========================================================================
+  # A. preranked GSEA —— 弱功效数据集的主力方法
+  # ==========================================================================
+  #
+  # **为什么 GSEA 是主力而不是 ORA：** K-Dense `pathway-enrichment`：
+  #   "a discrete hit list → ORA; a ranked table with per-gene scores → GSEA"
+  #   "Never threshold a list and then feed it to GSEA"
+  #   "Better when effects are broad/subtle or when a hit list would be very
+  #    short or very long"（> 2000 个基因的 ORA 列表会失去特异性）
+  #
+  # 本设计手上是完整的 16,487 基因排序表，效应弥散、无一通过 FDR ——
+  # 正是 GSEA 被设计出来处理的场景。用 ORA 需要先卡阈值，
+  # 而卡阈值恰好扔掉了 GSEA 所依赖的排序信息。
+  #
+  # 排序指标用 limma 的 moderated t 统计量，不是 log2FC：
+  #   "Rank by the test statistic (sign = direction, magnitude = evidence).
+  #    This is more stable than ranking by log2FoldChange, which is noisy for
+  #    low-count genes."
+  gsea_ranks <- NULL
+  {
+    gl <- deg$t
+    names(gl) <- deg$gene
+    gl <- gl[!is.na(gl) & is.finite(gl) & nzchar(names(gl))]
+    gl <- gl[!duplicated(names(gl))]
+    gl <- sort(gl, decreasing = TRUE)
+    if (length(gl) >= 100L) {
+      map <- tryCatch(
+        clusterProfiler::bitr(names(gl), fromType = "SYMBOL", toType = "ENTREZID",
+                              OrgDb = org.Hs.eg.db),
+        error = function(e) NULL)
+      if (!is.null(map) && nrow(map) > 0L) {
+        gl_e <- gl[map$SYMBOL]
+        names(gl_e) <- map$ENTREZID
+        gl_e <- gl_e[!duplicated(names(gl_e))]
+        gsea_ranks <- sort(gl_e, decreasing = TRUE)
+        log_info(sprintf("GSEA 排序表: %d 个基因（指标 = limma moderated t，未卡阈值）",
+                         length(gsea_ranks)))
+      }
     }
   }
 
-  # ---- 2b. KEGG -----------------------------------------------------------
-  # KEGG 走在线 REST API，可能因网络/限流/授权失败 —— 按 spec 不终止流程
-  kegg_res <- tryCatch({
-    entrez <- clusterProfiler::bitr(sig_genes, fromType = "SYMBOL", toType = "ENTREZID",
-                                    OrgDb = org.Hs.eg.db)$ENTREZID
-    universe_entrez <- NULL
-    if (!is.null(universe_symbols)) {
-      universe_entrez <- clusterProfiler::bitr(universe_symbols, fromType = "SYMBOL",
-                                               toType = "ENTREZID",
-                                               OrgDb = org.Hs.eg.db)$ENTREZID
-    }
-    log_info(sprintf("KEGG 输入: %d 个基因映射到 ENTREZ", length(entrez)))
-    r <- clusterProfiler::enrichKEGG(
-      gene = entrez, organism = cfg$enrichment$kegg_organism, keyType = "kegg",
-      universe = universe_entrez,
-      pAdjustMethod = cfg$enrichment$p_adjust,
-      pvalueCutoff = cfg$enrichment$pvalue_cutoff,
-      qvalueCutoff = cfg$enrichment$qvalue_cutoff
-    )
-    if (!is.null(r) && nrow(as.data.frame(r)) > 0L) {
-      r <- clusterProfiler::setReadable(r, OrgDb = org.Hs.eg.db, keyType = "ENTREZID")
-    }
-    r
-  }, error = function(e) {
-    log_warn(sprintf("KEGG 富集失败（不终止流程）: %s", conditionMessage(e)))
-    status$kegg <<- list(status = "failed", reason = conditionMessage(e))
-    NULL
-  })
-
-  if (!is.null(kegg_res)) {
-    kegg_df <- as.data.frame(kegg_res)
-    utils::write.csv(kegg_df, file.path(res, "KEGG_table.csv"), row.names = FALSE)
-    if (nrow(kegg_df) > 0L) {
-      save_pdf(file.path(res, "KEGG_dotplot.pdf"),
-               print(make_dotplot(kegg_res, cfg, sprintf("KEGG pathway enrichment - %s",
-                                                         cfg$dataset_id))),
-               width = 9, height = 7)
-      log_info(sprintf("KEGG 富集: %d 条通路，已生成 KEGG_dotplot.pdf", nrow(kegg_df)))
-      status$kegg <- list(status = "ok", terms = nrow(kegg_df), top = head(kegg_df$Description, 5))
-    } else {
-      log_warn("KEGG 富集结果为空，写空表")
-      status$kegg <- list(status = "empty", reason = "no pathway passed the cutoff")
-    }
+  # seed 参数在不同 clusterProfiler 版本上支持不一致，失败就退回默认
+  gsea_call <- function(f, ...) {
+    seed <- cfg$analysis$gsea_seed
+    if (is.null(seed)) seed <- 123
+    tryCatch(f(seed = seed, ...), error = function(e) {
+      log_warn(sprintf("GSEA 传 seed 失败，退回默认置换: %s", conditionMessage(e)))
+      f(...)
+    })
   }
 
-  if (is.null(go_res) || nrow(as.data.frame(go_res)) == 0L) {
-    utils::write.csv(data.frame(), file.path(res, "GO_table.csv"), row.names = FALSE)
-  }
-  if (is.null(kegg_res) || nrow(as.data.frame(kegg_res)) == 0L) {
-    utils::write.csv(data.frame(), file.path(res, "KEGG_table.csv"), row.names = FALSE)
+  gsea_go_res <- NULL
+  if (!is.null(gsea_ranks)) {
+    gsea_go_res <- tryCatch(
+      gsea_call(clusterProfiler::gseGO, geneList = gsea_ranks, OrgDb = org.Hs.eg.db,
+                keyType = "ENTREZID", ont = cfg$enrichment$ont,
+                minGSSize = cfg$analysis$gsea_min_set,
+                maxGSSize = cfg$analysis$gsea_max_set,
+                pvalueCutoff = cfg$enrichment$pvalue_cutoff,
+                pAdjustMethod = cfg$enrichment$p_adjust, verbose = FALSE),
+      error = function(e) {
+        log_warn(sprintf("GSEA (GO) 失败: %s", conditionMessage(e)))
+        status$gsea_go <<- list(status = "failed", reason = conditionMessage(e))
+        NULL
+      })
+    if (!is.null(gsea_go_res)) {
+      df <- as.data.frame(gsea_go_res)
+      if (nrow(df) > 0L) {
+        df <- reduce_terms_by_overlap(df, jac, gene_col = "core_enrichment")
+        utils::write.csv(df, file.path(res, "GSEA_GO_table.csv"), row.names = FALSE)
+        n_rep <- length(unique(stats::na.omit(df$representative)))
+        log_info(sprintf("GSEA (GO %s): %d 条显著，去冗余后 %d 个代表条目",
+                         cfg$enrichment$ont, nrow(df), n_rep))
+        status$gsea_go <- list(
+          status = "ok", terms = nrow(df), representative_terms = n_rep,
+          top = head(df$Description[order(df$p.adjust)], 5),
+          top_up = head(df$Description[df$NES > 0][order(df$p.adjust[df$NES > 0])], 3),
+          top_down = head(df$Description[df$NES < 0][order(df$p.adjust[df$NES < 0])], 3))
+        save_pdf(file.path(res, "GSEA_GO_dotplot.pdf"),
+                 print(make_gsea_dotplot(df, cfg,
+                         sprintf("GSEA (preranked) GO %s - %s", cfg$enrichment$ont,
+                                 cfg$dataset_id))),
+                 width = 9, height = 7)
+      } else {
+        status$gsea_go <- list(status = "empty", reason = "no gene set passed the cutoff")
+        utils::write.csv(data.frame(), file.path(res, "GSEA_GO_table.csv"), row.names = FALSE)
+      }
+    }
+  } else {
+    status$gsea_go <- list(status = "skipped", reason = "排序表不足 100 个基因，GSEA 无意义")
   }
 
-  status$input_genes <- length(sig_genes)
-  status$universe <- cfg$enrichment$universe
+  gsea_kegg_res <- NULL
+  if (!is.null(gsea_ranks)) {
+    gsea_kegg_res <- tryCatch(
+      gsea_call(clusterProfiler::gseKEGG, geneList = gsea_ranks,
+                organism = cfg$enrichment$kegg_organism, keyType = "kegg",
+                minGSSize = cfg$analysis$gsea_min_set,
+                maxGSSize = cfg$analysis$gsea_max_set,
+                pvalueCutoff = cfg$enrichment$pvalue_cutoff,
+                pAdjustMethod = cfg$enrichment$p_adjust, verbose = FALSE),
+      error = function(e) {
+        log_warn(sprintf("GSEA (KEGG) 失败（不终止流程）: %s", conditionMessage(e)))
+        status$gsea_kegg <<- list(status = "failed", reason = conditionMessage(e))
+        NULL
+      })
+    if (!is.null(gsea_kegg_res)) {
+      df <- as.data.frame(gsea_kegg_res)
+      if (nrow(df) > 0L) {
+        df <- reduce_terms_by_overlap(df, jac, gene_col = "core_enrichment")
+        utils::write.csv(df, file.path(res, "GSEA_KEGG_table.csv"), row.names = FALSE)
+        n_rep <- length(unique(stats::na.omit(df$representative)))
+        log_info(sprintf("GSEA (KEGG): %d 条显著，去冗余后 %d 个代表条目", nrow(df), n_rep))
+        status$gsea_kegg <- list(
+          status = "ok", terms = nrow(df), representative_terms = n_rep,
+          top = head(df$Description[order(df$p.adjust)], 5))
+        save_pdf(file.path(res, "GSEA_KEGG_dotplot.pdf"),
+                 print(make_gsea_dotplot(df, cfg,
+                         sprintf("GSEA (preranked) KEGG - %s", cfg$dataset_id))),
+                 width = 9, height = 7)
+      } else {
+        status$gsea_kegg <- list(status = "empty", reason = "no pathway passed the cutoff")
+        utils::write.csv(data.frame(), file.path(res, "GSEA_KEGG_table.csv"), row.names = FALSE)
+      }
+    }
+  } else {
+    status$gsea_kegg <- list(status = "skipped", reason = "排序表不足 100 个基因，GSEA 无意义")
+  }
+
+  # ==========================================================================
+  # B. ORA —— 按上/下调**分开**跑
+  # ==========================================================================
+  #
+  # ORA 本身方向无关：混在一起跑，"富集到 X 通路"到底由上调还是下调基因驱动
+  # 就分不清了（K-Dense pathway-enrichment："ORA is direction-agnostic unless
+  # you split up/down lists"）。肿瘤 vs 正常组织尤其致命 ——
+  # 上调的是增殖、下调的是基质/脂肪，混起来会出现"方向相反的通路同时富集"。
+  if (length(sig_genes) < 5L) {
+    log_warn(sprintf("可用于 ORA 的基因仅 %d 个（< 5），跳过 GO/KEGG", length(sig_genes)))
+    write_empty_enrichment(cfg, status,
+                           sprintf("只有 %d 个基因可用于富集，不足 5 个", length(sig_genes)))
+    return(invisible(NULL))
+  }
+
+  # 名字刻意不叫 run_* —— 那个前缀是留给编排器调用的步骤函数的
+  # （tools/check_r_syntax.mjs 会检查 run_* 是否被 main_analysis.R 引用）
+  ora_for_direction <- function(genes, direction) {
+    if (length(genes) < 5L) {
+      log_info(sprintf("ORA (%s): 只有 %d 个基因，跳过", direction, length(genes)))
+      return(NULL)
+    }
+    r <- tryCatch({
+      go <- clusterProfiler::enrichGO(
+        gene = genes, OrgDb = org.Hs.eg.db, keyType = "SYMBOL",
+        ont = cfg$enrichment$ont, universe = universe_symbols,
+        pAdjustMethod = cfg$enrichment$p_adjust,
+        pvalueCutoff = cfg$enrichment$pvalue_cutoff,
+        qvalueCutoff = cfg$enrichment$qvalue_cutoff, readable = TRUE)
+      go_df <- as.data.frame(go)
+      if (nrow(go_df) == 0L) return(NULL)
+      go_df$direction <- direction
+      go_df$n_input <- length(genes)
+      go_df
+    }, error = function(e) {
+      log_warn(sprintf("ORA GO (%s) 失败: %s", direction, conditionMessage(e)))
+      NULL
+    })
+
+    k <- tryCatch({
+      ez <- clusterProfiler::bitr(genes, fromType = "SYMBOL", toType = "ENTREZID",
+                                  OrgDb = org.Hs.eg.db)$ENTREZID
+      if (length(ez) < 5L) return(NULL)
+      ue <- NULL
+      if (!is.null(universe_symbols)) {
+        ue <- clusterProfiler::bitr(universe_symbols, fromType = "SYMBOL",
+                                    toType = "ENTREZID", OrgDb = org.Hs.eg.db)$ENTREZID
+      }
+      kk <- clusterProfiler::enrichKEGG(
+        gene = ez, organism = cfg$enrichment$kegg_organism, keyType = "kegg",
+        universe = ue, pAdjustMethod = cfg$enrichment$p_adjust,
+        pvalueCutoff = cfg$enrichment$pvalue_cutoff,
+        qvalueCutoff = cfg$enrichment$qvalue_cutoff)
+      kk_df <- as.data.frame(kk)
+      if (nrow(kk_df) == 0L) return(NULL)
+      kk_df$direction <- direction
+      kk_df$n_input <- length(genes)
+      kk_df
+    }, error = function(e) {
+      log_warn(sprintf("ORA KEGG (%s) 失败（不终止流程）: %s", direction, conditionMessage(e)))
+      NULL
+    })
+    list(go = r, kegg = k)
+  }
+
+  ora_up   <- ora_for_direction(sel$up,   "up")
+  ora_down <- ora_for_direction(sel$down, "down")
+  log_info(sprintf("ORA 输入: 上调 %d 个 / 下调 %d 个基因（方向已分开）",
+                   length(sel$up), length(sel$down)))
+
+  combine_ora <- function(pick) {
+    parts <- Filter(Negate(is.null), list(pick(ora_up), pick(ora_down)))
+    if (length(parts) == 0L) return(NULL)
+    cols <- Reduce(intersect, lapply(parts, colnames))
+    do.call(rbind, lapply(parts, function(p) p[, cols, drop = FALSE]))
+  }
+
+  go_df   <- combine_ora(function(x) if (is.null(x)) NULL else x$go)
+  kegg_df <- combine_ora(function(x) if (is.null(x)) NULL else x$kegg)
+
+  # 去冗余 + 落盘
+  emit_ora <- function(df, label, file_base, key) {
+    if (is.null(df) || nrow(df) == 0L) {
+      utils::write.csv(data.frame(), file.path(res, paste0(file_base, "_table.csv")),
+                       row.names = FALSE)
+      status[[key]] <<- list(status = "empty", reason = "no term passed the cutoff")
+      return(invisible(NULL))
+    }
+    # 去冗余要**按方向分别做** —— 上调与下调的条目本来就不该互相折叠
+    out <- do.call(rbind, lapply(split(df, df$direction), function(d) {
+      reduce_terms_by_overlap(d, jac, gene_col = "geneID")
+    }))
+    rownames(out) <- NULL
+    utils::write.csv(out, file.path(res, paste0(file_base, "_table.csv")), row.names = FALSE)
+    n_rep <- length(unique(stats::na.omit(out$representative)))
+    log_info(sprintf("%s: %d 条（上/下调分开），去冗余后 %d 个代表条目", label, nrow(out), n_rep))
+    status[[key]] <<- list(
+      status = "ok", terms = nrow(out), representative_terms = n_rep,
+      direction_split = TRUE,
+      top_up = head(out$Description[out$direction == "up"][order(out$p.adjust[out$direction == "up"])], 3),
+      top_down = head(out$Description[out$direction == "down"][order(out$p.adjust[out$direction == "down"])], 3))
+    save_pdf(file.path(res, paste0(file_base, "_dotplot.pdf")),
+             print(make_ora_dotplot(out, cfg, sprintf("%s - %s", label, cfg$dataset_id))),
+             width = 9, height = 8)
+    invisible(NULL)
+  }
+
+  emit_ora(go_df, sprintf("GO %s ORA (up/down split)", cfg$enrichment$ont),
+           "GO", "go")
+  emit_ora(kegg_df, "KEGG ORA (up/down split)", "KEGG", "kegg")
+
+  # 排序指标与置换设置要记录 —— 可复现性清单要求
+  status$gsea_ranking_metric <- "limma moderated t statistic (sign = direction)"
+  status$gsea_engine <- "clusterProfiler::gseGO / gseKEGG (fgsea)"
+  status$gsea_seed <- cfg$analysis$gsea_seed
+  status$gsea_set_size <- c(cfg$analysis$gsea_min_set, cfg$analysis$gsea_max_set)
+  status$redundancy_jaccard <- jac
   write_json(file.path(res, "enrichment_status.json"), status)
   log_info("已生成 enrichment_status.json")
   invisible(NULL)
 }
 
+#' ORA 的 dotplot：x 轴是方向，一眼看出条目由上调还是下调基因驱动
+make_ora_dotplot <- function(df, cfg, title) {
+  n <- cfg$enrichment$top_terms
+  keep <- do.call(rbind, lapply(split(df, df$direction), function(d) {
+    utils::head(d[order(d$p.adjust), , drop = FALSE], n)
+  }))
+  keep$Description <- factor(keep$Description,
+                             levels = unique(keep$Description[order(keep$p.adjust, decreasing = TRUE)]))
+  keep$direction <- factor(keep$direction, levels = c("up", "down"))
+  ggplot2::ggplot(keep, ggplot2::aes(x = direction, y = Description)) +
+    ggplot2::geom_point(ggplot2::aes(size = Count, colour = -log10(p.adjust))) +
+    ggplot2::scale_colour_viridis_c(option = "plasma", name = "-log10\nadj.P") +
+    ggplot2::scale_size_continuous(name = "genes", range = c(2, 7)) +
+    ggplot2::labs(title = title,
+                  subtitle = sprintf("top %d per direction; up/down kept separate (ORA is direction-agnostic)",
+                                     n),
+                  x = sprintf("direction (%s)", cfg$contrast[1L]), y = NULL) +
+    ggplot2::theme_bw(base_size = 9) +
+    ggplot2::theme(axis.text.y = ggplot2::element_text(size = 7))
+}
+
+#' GSEA 的 dotplot：x 轴是 NES，方向直接由符号给出
+make_gsea_dotplot <- function(df, cfg, title) {
+  keep <- utils::head(df[order(df$p.adjust), , drop = FALSE], 2 * cfg$enrichment$top_terms)
+  keep$Description <- factor(keep$Description,
+                             levels = keep$Description[order(keep$NES)])
+  ggplot2::ggplot(keep, ggplot2::aes(x = NES, y = Description)) +
+    ggplot2::geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.3) +
+    ggplot2::geom_point(ggplot2::aes(size = setSize, colour = -log10(p.adjust))) +
+    ggplot2::scale_colour_viridis_c(option = "plasma", name = "-log10\nadj.P") +
+    ggplot2::scale_size_continuous(name = "set size", range = c(2, 7)) +
+    ggplot2::labs(title = title,
+                  subtitle = sprintf("preranked on the full gene list (no threshold); NES > 0 = up in %s",
+                                     cfg$contrast[1L]),
+                  x = "NES (normalized enrichment score)", y = NULL) +
+    ggplot2::theme_bw(base_size = 9) +
+    ggplot2::theme(axis.text.y = ggplot2::element_text(size = 7))
+}
+
 #' 无显著基因时统一写空结果
+#'
+#' 注意 `status$go` / `status$kegg` 只是**覆盖** ORA 两项，
+#' `deg_mode` / `deg_reason` / `universe` 等已经填好的字段要原样保留 ——
+#' 验收和结论都要引用它们。
 write_empty_enrichment <- function(cfg, status, reason) {
   res <- cfg$output$results_dir
-  utils::write.csv(data.frame(), file.path(res, "GO_table.csv"), row.names = FALSE)
-  utils::write.csv(data.frame(), file.path(res, "KEGG_table.csv"), row.names = FALSE)
+  for (f in c("GO_table.csv", "KEGG_table.csv", "GSEA_GO_table.csv", "GSEA_KEGG_table.csv")) {
+    utils::write.csv(data.frame(), file.path(res, f), row.names = FALSE)
+  }
   status$go <- list(status = "skipped", reason = reason)
   status$kegg <- list(status = "skipped", reason = reason)
+  if (is.null(status$gsea_go))  status$gsea_go  <- list(status = "skipped", reason = reason)
+  if (is.null(status$gsea_kegg)) status$gsea_kegg <- list(status = "skipped", reason = reason)
   write_json(file.path(res, "enrichment_status.json"), status)
 }
 
-#' dotplot，展示 top N 条目
+#' 通用 dotplot（enrichplot），保留给需要它的调用方
 make_dotplot <- function(x, cfg, title) {
   n <- min(cfg$enrichment$top_terms, nrow(as.data.frame(x)))
   p <- enrichplot::dotplot(x, showCategory = n) +

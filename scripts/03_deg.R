@@ -178,7 +178,57 @@ run_03_deg <- function(cfg) {
   save_pdf(file.path(res, "volcano_plot.pdf"), print(p_volcano), width = 8, height = 6.5)
   log_info("已生成 volcano_plot.pdf")
 
-  # ---- 5. 摘要 ------------------------------------------------------------
+  # ---- 5. p 值分布诊断（DE 之后的 QC 关卡）--------------------------------
+  #
+  # 来自 K-Dense `bulk-rnaseq` skill 的设计/QC 清单：
+  #   "A well-behaved test gives a roughly uniform histogram with a peak near 0
+  #    (the true positives). A peak near 1, or a U-shape, signals a problem:
+  #    misspecified design, unmodeled batch, or filtering issues.
+  #    Fix the design rather than trusting the gene list."
+  #
+  # 这张图对本设计尤其重要：n=6 时几乎不可能有基因通过 FDR，
+  # 光看"0 个显著基因"分不清是**功效不足**还是**设计有问题**。
+  # p 值直方图能把这两者区分开 —— 0 附近有峰说明信号真实、只是检不出；
+  # 峰在 1 或 U 形说明模型设定错了，那时候连排序表都不能用。
+  pv <- tt$P.Value[!is.na(tt$P.Value)]
+  p_hist <- ggplot2::ggplot(data.frame(p = pv), ggplot2::aes(x = p)) +
+    ggplot2::geom_histogram(bins = 40, boundary = 0, fill = "grey55",
+                            colour = "white", linewidth = 0.2) +
+    ggplot2::geom_hline(yintercept = length(pv) / 40, linetype = "dashed",
+                        colour = "firebrick", linewidth = 0.4) +
+    ggplot2::labs(
+      title = sprintf("P value distribution: %s vs %s (%s)", numerator, denominator,
+                      cfg$dataset_id),
+      subtitle = sprintf("%d genes tested; dashed line = uniform expectation. %s",
+                         length(pv),
+                         if (length(pv) && min(pv) < 1e-3)
+                           sprintf("%.0f genes at P < 0.001 (real signal below the null)",
+                                   sum(pv < 1e-3))
+                         else "no gene below P < 0.001"),
+      x = "raw P value", y = "gene count") +
+    ggplot2::theme_bw(base_size = 10)
+  save_pdf(file.path(res, "pvalue_histogram.pdf"), print(p_hist), width = 7, height = 5)
+
+  # 诊断结论：把"功效不足"和"设计有问题"分开
+  n_below_001 <- sum(pv < 0.001)
+  # 在正确的原假设下，P < 0.05 的基因数应约为 5%。明显超出 = 有真实信号。
+  excess <- sum(pv < 0.05) / max(1, length(pv)) / 0.05
+  pval_verdict <- if (excess >= 2) {
+    "signal_present_but_underpowered"   # 有信号，只是过不了多重检验
+  } else if (excess <= 0.5) {
+    "little_or_no_signal"
+  } else {
+    "inconclusive"
+  }
+  log_info(sprintf("P 值分布: P<0.05 的基因占 %.1f%%（原假设期望 5%%，超出 %.1f 倍）→ %s",
+                   100 * sum(pv < 0.05) / max(1, length(pv)), excess, pval_verdict))
+  if (pval_verdict == "signal_present_but_underpowered") {
+    log_warn(sprintf(paste0("有真实信号但功效不足：%d 个基因 P < 0.001，",
+                            "却没有任何基因通过 FDR。这是样本量的限制，不是设计错误。"),
+                     n_below_001))
+  }
+
+  # ---- 6. 摘要 ------------------------------------------------------------
   utils::write.csv(sig, file.path(res, "deg_significant.csv"), row.names = FALSE)
   write_json(file.path(res, "deg_summary.json"), list(
     dataset_id = cfg$dataset_id,
@@ -191,10 +241,13 @@ run_03_deg <- function(cfg) {
     paired_requested = isTRUE(cfg$paired),
     paired_fallback_reason = pair_reason,
     residual_df = ncol(expr) - qr(design)$rank,
+    n_p_below_0.001 = n_below_001,
+    frac_p_below_0.05 = round(sum(pv < 0.05) / max(1, length(pv)), 4),
+    pvalue_diagnosis = pval_verdict,
     top10_by_p = head(tt$gene, 10)
   ))
 
-  log_info("已生成 deg_table.csv / deg_significant.csv / deg_summary.json")
+  log_info("已生成 deg_table.csv / deg_significant.csv / deg_summary.json / pvalue_histogram.pdf")
   invisible(tt)
 }
 

@@ -49,14 +49,17 @@ jobs:
 
       # setup-r-dependencies 自己的缓存对本仓库不生效（无 DESCRIPTION/lockfile，
       # post 步骤 0s 直接跳过），所以显式缓存 R 库。
-      # key 用固定的 bioc-v1 而不是 workflow 文件哈希：否则每次改 workflow
+      # key 用固定的 bioc-vN 而不是 workflow 文件哈希：否则每次改 workflow
       # （哪怕只改超时或注释）都会让 12 分钟的源码编译重来一遍。
-      # **改动上面的 packages 列表时，把 bioc-v1 手动递增为 bioc-v2。**
+      # **改动下面的 packages 列表时，必须把 bioc-vN 手动递增。**
+      # 为什么必须递增：actions/cache 的 key 一旦存在就不会再写回，
+      # 沿用旧 key 的话新装的包每次运行都会被丢掉、重新装一遍。
+      # v1 -> v2：加入 fgsea（preranked GSEA 的引擎）。
       - name: Cache R library
         uses: actions/cache@v4
         with:
           path: ${{ env.R_LIBS_USER }}
-          key: rlib-${{ runner.os }}-bioc-v1
+          key: rlib-${{ runner.os }}-bioc-v2
           restore-keys: |
             rlib-${{ runner.os }}-
 
@@ -67,6 +70,7 @@ jobs:
             any::GEOquery
             any::limma
             any::clusterProfiler
+            any::fgsea
             any::org.Hs.eg.db
             any::enrichplot
             any::STRINGdb

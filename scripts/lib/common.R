@@ -257,6 +257,13 @@ row_zscore <- function(m) {
 #' 所以：FDR 显著基因够用时用 FDR；不够时退回「raw P 排序前 N 个（仍要求
 #' |log2FC| > 阈值）」。**降级必须被标注**，mode 会写进
 #' enrichment_status.json / ppi_status.json，结论里不得把它当成显著差异基因。
+#'
+#' **返回的 up / down 是分开的。** ORA 本身是方向无关的：把上调和下调基因
+#' 混在一个列表里跑，"富集到 X 通路"到底是被上调基因驱动还是被下调基因驱动
+#' 就分不清了（K-Dense `pathway-enrichment`：*"ORA is direction-agnostic unless
+#' you split up/down lists; GSEA NES sign gives direction"*）。
+#' 对肿瘤 vs 正常组织尤其致命 —— 上调的是增殖，下调的是基质/脂肪，
+#' 混起来会得到"两条方向相反的通路同时富集"这种无法解释的结果。
 select_degs <- function(deg, cfg, min_genes = 5L) {
   padj <- cfg$thresholds$adj_p
   lfc  <- cfg$thresholds$log2fc
@@ -267,11 +274,21 @@ select_degs <- function(deg, cfg, min_genes = 5L) {
   } else NA_integer_
   if (is.null(n_s) || length(n_s) == 0L) n_s <- NA_integer_
 
+  # 按 logFC 符号拆方向，供 ORA 分方向跑
+  by_direction <- function(tab) {
+    if (is.null(tab) || nrow(tab) == 0L) return(list(up = character(0), down = character(0)))
+    list(up   = unique(tab$gene[!is.na(tab$logFC) & tab$logFC > 0]),
+         down = unique(tab$gene[!is.na(tab$logFC) & tab$logFC < 0]))
+  }
+
   sig <- deg[!is.na(deg$adj.P.Val) & deg$adj.P.Val < padj & abs(deg$logFC) > lfc, , drop = FALSE]
   if (nrow(sig) >= min_genes) {
+    d <- by_direction(sig)
     return(list(
       genes = unique(sig$gene), mode = "fdr", n = nrow(sig), table = sig,
-      reason = sprintf("adj.P < %g 且 |log2FC| > %g，共 %d 个", padj, lfc, nrow(sig))
+      up = d$up, down = d$down,
+      reason = sprintf("adj.P < %g 且 |log2FC| > %g，共 %d 个（上调 %d / 下调 %d）",
+                       padj, lfc, nrow(sig), length(d$up), length(d$down))
     ))
   }
 
@@ -280,16 +297,76 @@ select_degs <- function(deg, cfg, min_genes = 5L) {
   cand <- deg[!is.na(deg$P.Value) & abs(deg$logFC) > lfc, , drop = FALSE]
   cand <- cand[order(cand$P.Value), , drop = FALSE]
   cand <- utils::head(cand, top_n)
+  d <- by_direction(cand)
   list(
     genes = unique(cand$gene), mode = "ranked_fallback", n = nrow(cand), table = cand,
+    up = d$up, down = d$down,
     reason = sprintf(paste0(
       "FDR 显著基因仅 %d 个（需 >= %d）。样本数 %s 下对 %d 个基因做 BH 校正过严，",
-      "最小的 adj.P 为 %.3f。退回按 raw P 排序、|log2FC| > %g 的前 %d 个基因。",
+      "最小的 adj.P 为 %.3f。退回按 raw P 排序、|log2FC| > %g 的前 %d 个基因",
+      "（上调 %d / 下调 %d）。",
       "**这是假设生成，不是显著差异基因清单。**"),
       nrow(sig), min_genes, if (is.na(n_s)) "很少" else as.character(n_s),
       nrow(deg), if (nrow(deg)) min(deg$adj.P.Val, na.rm = TRUE) else NA_real_,
-      lfc, nrow(cand))
+      lfc, nrow(cand), length(d$up), length(d$down))
   )
+}
+
+#' 按基因重叠把冗余的条目折叠成代表条目
+#'
+#' GO 会返回大量近义条目 —— "mitotic cell cycle phase transition"、
+#' "regulation of mitotic cell cycle phase transition"、
+#' "positive regulation of mitotic cell cycle phase transition"……
+#' 列 44 条这种东西不是 44 个发现，是 1 个发现重复了 44 次。
+#' K-Dense `pathway-enrichment`：*"GO especially returns many near-duplicate
+#' terms. Collapse with an enrichment map (term–term similarity), leading-edge
+#' overlap, or parent terms, and report representative terms."*
+#'
+#' 这里用**基因重叠 Jaccard 的单链接聚类**实现（不引入 GOSemSim 这类重依赖）：
+#' 两个条目共享的基因占并集的比例 >= 阈值就归为一类，每类保留 adj.P 最小的
+#' 那个作代表。返回的 representative 列标出每条属于哪一类、该类有几个成员。
+#'
+#' @param tab 含 `ID` / `Description` / `p.adjust` 与基因列的富集结果表
+#' @param threshold Jaccard 阈值；>= 1 时关闭去冗余
+#' @param gene_col 基因列的列名。ORA 是 `geneID`，GSEA 是 `core_enrichment`
+#'   （两者都是 `/` 分隔的基因串，但列名不同，所以必须显式传）
+reduce_terms_by_overlap <- function(tab, threshold = 0.5, gene_col = "geneID") {
+  if (is.null(tab) || nrow(tab) == 0L) return(tab)
+  tab$representative <- NA_character_
+  tab$cluster_size <- 1L
+  if (!all(c("ID", gene_col) %in% colnames(tab))) return(tab)
+  if (is.na(threshold) || threshold >= 1) return(tab)
+
+  sets <- strsplit(as.character(tab[[gene_col]]), "/", fixed = TRUE)
+  names(sets) <- as.character(tab$ID)
+  n <- nrow(tab)
+
+  # 单链接聚类：并查集
+  parent <- seq_len(n)
+  find <- function(i) { while (parent[i] != i) { parent[i] <<- parent[parent[i]]; i <- parent[i] }; i }
+  union <- function(i, j) { ri <- find(i); rj <- find(j); if (ri != rj) parent[ri] <<- rj }
+
+  for (i in seq_len(n - 1L)) {
+    for (j in seq(i + 1L, n)) {
+      inter <- length(intersect(sets[[i]], sets[[j]]))
+      if (inter == 0L) next
+      jac <- inter / (length(sets[[i]]) + length(sets[[j]]) - inter)
+      if (jac >= threshold) union(i, j)
+    }
+  }
+
+  roots <- vapply(seq_len(n), find, integer(1))
+  for (r in unique(roots)) {
+    idx <- which(roots == r)
+    # 代表 = 该类里 adj.P 最小的条目
+    best <- idx[which.min(tab$p.adjust[idx])]
+    tab$representative[idx] <- as.character(tab$ID[best])
+    tab$cluster_size[idx] <- length(idx)
+  }
+  # 按类大小与显著性排序，代表条目排在自己那一类的首位
+  tab <- tab[order(tab$representative, tab$p.adjust), , drop = FALSE]
+  rownames(tab) <- NULL
+  tab
 }
 
 #' 安全地调用一个可选包；缺失时返回 NULL 而不是报错

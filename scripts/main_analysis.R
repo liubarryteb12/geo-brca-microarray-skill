@@ -90,10 +90,19 @@ check_acceptance <- function(cfg) {
     list(name = "results/deg_table.csv",            ok = has("deg_table.csv"),            required = TRUE),
     list(name = "results/volcano_plot.pdf",         ok = has("volcano_plot.pdf"),         required = TRUE),
     list(name = "results/top50_heatmap.pdf",        ok = has("top50_heatmap.pdf"),        required = TRUE),
+    # DE 之后的 QC 关卡（bulk-rnaseq skill）：p 值分布要"均匀 + 0 附近有峰"。
+    # 它区分"功效不足"和"设计有问题"，对 n<10 的设计尤其关键，所以是必需项。
+    list(name = "results/pvalue_histogram.pdf",     ok = has("pvalue_histogram.pdf"),     required = TRUE),
     list(name = "GO 富集（结果或空原因）",
          ok = has("GO_dotplot.pdf") || documented(enrich, "go"),   required = TRUE),
     list(name = "KEGG 富集（结果或空原因）",
          ok = has("KEGG_dotplot.pdf") || documented(enrich, "kegg"), required = TRUE),
+    # GSEA 是弱功效数据集的主力方法，但基因集数据库/网络问题可能让它拿不到结果，
+    # 所以按可选步骤处理，只要有记录在案的状态即可。
+    list(name = "preranked GSEA / GO（结果或原因）",
+         ok = has("GSEA_GO_dotplot.pdf") || documented(enrich, "gsea_go"),   required = FALSE),
+    list(name = "preranked GSEA / KEGG（结果或原因）",
+         ok = has("GSEA_KEGG_dotplot.pdf") || documented(enrich, "gsea_kegg"), required = FALSE),
     list(name = "PPI 网络（结果或回退原因）",
          ok = has("PPI_network.png") || documented(ppi, "status"),  required = FALSE)
   )
