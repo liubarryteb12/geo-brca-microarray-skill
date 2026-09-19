@@ -60,15 +60,38 @@ artifact `geo-results`。
 | `deg_table.csv` | 全基因 limma 结果（gene/logFC/P.Value/adj.P.Val） |
 | `volcano_plot.pdf` / `.png` | 火山图（标注 top 基因） |
 | `top50_heatmap.pdf` / `.png` | top DEG 聚类热图（行 Z-score，euclidean + complete） |
-| `GO_dotplot.pdf` / `.png` + `GO_table.csv` | GO BP 富集 |
-| `KEGG_dotplot.pdf` / `.png` + `KEGG_table.csv` | KEGG 通路富集 |
+| `pvalue_histogram.pdf` / `.png` | DE 后 QC：p 值分布（区分"功效不足"与"模型设定错"） |
+| `GSEA_GO_dotplot.pdf` / `.png` + `GSEA_GO_table.csv` | **preranked GSEA / GO BP（主力方法）** |
+| `GSEA_KEGG_dotplot.pdf` / `.png` + `GSEA_KEGG_table.csv` | preranked GSEA / KEGG |
+| `GO_dotplot.pdf` / `.png` + `GO_table.csv` | ORA GO BP（含 `direction` 列，上/下调分开） |
+| `KEGG_dotplot.pdf` / `.png` + `KEGG_table.csv` | ORA KEGG（含 `direction` 列） |
 | `PPI_network.png` + `hub_genes.csv` + `ppi_edges.csv` | STRING PPI 网络与 hub 基因 |
-| `enrichment_status.json` | 富集模式（`fdr` / `ranked_fallback`）与原因 |
+| `enrichment_status.json` | 富集模式（`fdr` / `ranked_fallback`）、GSEA 参数、去冗余阈值与原因 |
 | `ppi_status.json` | PPI 方法、节点边数与回退原因 |
 | `state.json` | 每步执行状态 + 验收结果 |
 
 > 每张图都同时出 **PDF（矢量，放大不失真）** 和 **PNG（150 dpi，可直接预览）**。
 > artifact 是 zip，PDF 在里面看不了，PNG 是为了打开就能看到。
+
+### 富集为什么有两条路
+
+判据来自 K-Dense `pathway-enrichment` skill：*"a discrete hit list → ORA;
+a ranked table with per-gene scores → GSEA"*、*"Never threshold a list and then
+feed it to GSEA"*。
+
+| | GSEA（主力） | ORA（辅助） |
+| --- | --- | --- |
+| 输入 | **完整排序表**（13,948 个基因，不卡阈值） | FDR 显著基因，或降级到 raw P 前 500 |
+| 排序/阈值 | limma moderated `t` | `adj.P < 0.05` 且 `\|log2FC\| > 1` |
+| 方向 | NES 符号 | **上/下调分开跑**（`direction` 列） |
+| 背景 | 不需要 | `detected`（实测 16,487 个基因） |
+
+GSE64790 实测两者差距**两个数量级**：GSEA 拿到 **1,059 条**显著 GO BP 条目
+（最好 `adj.P` = 1.0e-8），ORA 在 top-500 上最好只有 3.1e-6。
+弱功效、效应弥散的数据正是 GSEA 被设计出来处理的场景。
+
+两条路的结果都做**基因重叠去冗余**（Jaccard ≥ 0.5 折叠为一类），
+GO 从 1059 折到 **439** 个代表条目。报告时引用 `representative` 列。
 
 ## 配置
 

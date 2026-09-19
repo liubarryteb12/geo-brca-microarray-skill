@@ -241,8 +241,8 @@ run_03_deg <- function(cfg) {
     paired_requested = isTRUE(cfg$paired),
     paired_fallback_reason = pair_reason,
     residual_df = ncol(expr) - qr(design)$rank,
-    n_p_below_0.001 = n_below_001,
-    frac_p_below_0.05 = round(sum(pv < 0.05) / max(1, length(pv)), 4),
+    n_p_lt_0p001 = n_below_001,
+    frac_p_lt_0p05 = round(sum(pv < 0.05) / max(1, length(pv)), 4),
     pvalue_diagnosis = pval_verdict,
     top10_by_p = head(tt$gene, 10)
   ))

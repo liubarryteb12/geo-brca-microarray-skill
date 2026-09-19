@@ -21,6 +21,15 @@
    见设计文档 §1.2。
 6. **新增分析步骤要同时改三处**：脚本、`main_analysis.R` 的 `STEPS`、
    `check_acceptance()` 的验收项。漏掉后两处会让步骤静默不执行。
+7. **富集分析的方法学判据来自 K-Dense `pathway-enrichment` skill，不要凭直觉改**：
+   - 有**完整排序表**就用 preranked GSEA，**不要卡阈值跑 ORA**（初版犯过这个错，
+     灵敏度差两个数量级）。排序指标用 limma 的 moderated `t`，不用 log2FC。
+   - ORA 必须**按上/下调分开跑**，合并会丢掉方向（实测 `PI3K-Akt` 其实全是下调的）。
+   - 背景集默认 `detected`（实测基因集），不用全基因组。
+   - GO 条目必须**基因重叠去冗余**后再报告，不要罗列同一簇的近义条目。
+8. **不要报 post-hoc observed power。** 要报就报固定 n 下的 MDE（敏感性分析）。
+   `n < 10` 时必须看 `pvalue_histogram`：峰在 1 或 U 形说明设计有问题，
+   那时候连排序表都不能用。判据来自 K-Dense `bulk-rnaseq` / `statistical-power`。
 
 ## 代码约定
 
@@ -52,6 +61,12 @@ Rscript scripts/main_analysis.R --config assets/config.yml
 
 CI 在 GitHub Actions 上跑 `geo_analysis.yml`，`timeout-minutes: 20` 是硬上限。
 实测：冷缓存 14m58s，暖缓存 3m33s（R 库由 `actions/cache` 缓存）。
+
+> **改 `packages` 列表必须同时把缓存键 `rlib-<os>-bioc-vN` 递增。**
+> `actions/cache` 的 key 一旦存在就不再写回，沿用旧 key 会让新装的包每次运行都被丢掉、
+> 重新装一遍。当前是 `bioc-v2`（加入 `fgsea`）。
+> 递增后第一次运行会因为 `restore-keys` 前缀命中旧缓存而只增量安装，约 6 分钟；
+> 之后恢复暖缓存速度。
 
 > **验收不等于验图。** `check_acceptance()` 只看文件在不在，看不出图是不是空白。
 > 出图代码的静默失败（设备开了又关、绘图没执行）会产出"存在、大小正常、纯白"的图。

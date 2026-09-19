@@ -121,6 +121,38 @@ top 命中（KRT14、SPARCL1、TAGLN、SDPR、PPARG、PGR）也全是教科书�
 > **这是"样本 < 10"这个要求本身的固有限制，不是分析错误。**
 > 任何 n < 10 的乳腺癌全基因组芯片数据集都会撞上同一堵墙。
 
+#### 2.2.1 在既定 n 下的最小可检测效应（MDE）
+
+上面是**多重检验**的论证。还缺**功效**的论证：这个设计**能够**检出多大的效应？
+用 K-Dense `statistical-power` skill 的 `mde()` / `power()` 计算
+（`t_paired`，3 对，df=2，α=0.05 双侧）：
+
+| 目标功效 | MDE（Cohen's d_z） |
+| --- | --- |
+| 80% | **3.26** |
+| 90% | 3.92 |
+
+即：只有配对差值的效应量达到 **3.26 个标准差**，本设计才有 80% 把握检出。
+n=3 时各真实效应量对应的实际功效：
+
+| 真实 d_z | 0.5 | 1.0 | 1.5 | 2.0 | 2.5 | 3.0 | 4.0 | 5.0 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 功效 | 0.08 | 0.18 | 0.32 | 0.47 | 0.62 | 0.75 | 0.91 | 0.98 |
+
+要达到 80% 功效：d_z=2.0 需 **5 对**，d_z=1.5 需 **6 对**，d_z=1.0 需 **10 对**，
+d_z=0.5 需 **34 对**。GSE64790 只有 3 对，连 d_z=1.0 这种"中等偏大"的效应也只有
+18% 把握检出。
+
+> **这不是 post-hoc observed power。** 用观测到的效应反算功效是循环论证 ——
+> 它是 p 值的确定性函数，不提供任何新信息，是审稿人常见的批评点。
+> 这里报的是**敏感性分析**：在固定 n 下，本设计**能够**检出多大的效应。
+
+> **关于配对的实际收益**：n=3 时配对检验的 MDE 是 3.26，而同样 3 vs 3 **不配对**
+> 是 3.07 —— **配对在这个样本量下没有换来功效优势**。原因是 df 从 4 降到 2，
+> t 临界值从 2.78 升到 4.30，这个代价超过了配对降低方差的收益。
+> 配对仍然是**正确的**（它控制患者个体基线，且配对差值本身方差更小，
+> 同样的生物学差异会映射成更大的 d_z），但**不要指望 3 对配对能提升检出能力**。
+
 因此下游（富集、PPI）走**明确标注的降级路径**，见 §2.10。
 
 **解释陷阱**：肿瘤组织与正常乳腺组织的差异，绝大部分来自
@@ -449,6 +481,26 @@ tumor-vs-normal 的差异基因表里，**分不清多少来自恶性转化、�
 - 显著标准：`adj.P.Val < 0.05` **且** `|log2FC| > 1`
 - 摘要写 `paired` / `residual_df` / `n_significant`，火山图标注 top 基因
 
+#### 3.4.1 p 值分布诊断（DE 之后的 QC 关卡）
+
+来自 K-Dense `bulk-rnaseq` skill 的 QC 清单：
+
+> "A well-behaved test gives a roughly **uniform** histogram with a **peak near 0**
+> (the true positives). A peak near 1, or a U-shape, signals a problem:
+> misspecified design, unmodeled batch, or filtering issues.
+> **Fix the design rather than trusting the gene list.**"
+
+输出 `pvalue_histogram.pdf/.png`（直方图 + 均匀分布的期望线），并在
+`deg_summary.json` 写入 `n_p_lt_0p001` / `frac_p_lt_0p05` / `pvalue_diagnosis`。
+
+**这张图对本设计尤其关键**：n=6 时几乎不可能有基因通过 FDR，
+光看"0 个显著基因"**分不清是功效不足还是模型设定错了**。
+判据：P<0.05 的基因占比超过原假设期望（5%）2 倍以上 → 有真实信号；
+低于 0.5 倍 → 基本没信号。
+
+GSE64790 实测 **11.6%**（超出 2.3 倍），36 个基因 P<0.001 →
+`signal_present_but_underpowered`，日志同时给出 WARN 说明这是样本量限制而非设计错误。
+
 ### 3.5 聚类热图（`04_heatmap_enrichment.R`）
 
 - 取 top 50 显著 DEG（按 `adj.P.Val` 升序）
@@ -456,19 +508,70 @@ tumor-vs-normal 的差异基因表里，**分不清多少来自恶性转化、�
 - 行聚类 euclidean + complete，表达量按行 Z-score
 - 输出 `top50_heatmap.pdf`
 
-### 3.6 GO / KEGG 富集（`04_heatmap_enrichment.R`）
+### 3.6 preranked GSEA + GO / KEGG 富集（`04_heatmap_enrichment.R`）
+
+富集走**两条路**，判据来自 K-Dense `pathway-enrichment` skill：
+
+> "a discrete hit list → ORA; a ranked table with per-gene scores → GSEA"
+> "Never threshold a list and then feed it to GSEA — that discards the ranking GSEA depends on."
+> "Better when effects are broad/subtle or when a hit list would be very short or very long."
+> "A very long one (> 2000) loses specificity — prefer GSEA in both extremes."
+
+#### A. preranked GSEA（主力）
+
+- **输入是完整的排序表，不卡任何阈值**。GSE64790 实测 13,948 个基因进入排序
+  （16,487 个基因中能映射到 ENTREZ 的部分）
+- **排序指标 = limma 的 moderated t 统计量**，不是 log2FC。理由同 skill：
+  *"Rank by the test statistic (sign = direction, magnitude = evidence). This is
+  more stable than ranking by log2FoldChange, which is noisy for low-count genes."*
+- GO BP：`clusterProfiler::gseGO`；KEGG：`clusterProfiler::gseKEGG`（引擎均为 `fgsea`）
+- 基因集大小限制 `minGSSize=15` / `maxGSSize=500`：过小的集合靠几个基因就能显著，
+  过大的泛化集合（"metabolic process"）没有信息量
+- `seed=123` 固定置换随机性，保证 p 值可复现
+- **NES 的符号即方向**：`NES > 0` 表示该基因集在 tumor 一侧富集
+
+#### B. ORA（辅助，**按上/下调分开跑**）
 
 - 输入基因由 `select_degs()` 决定：FDR 显著基因，或降级到 raw P 前 N 个（§2.10）
+- **上调、下调各自独立跑一遍 `enrichGO` / `enrichKEGG`**，结果表带 `direction` 列
 - SYMBOL → ENTREZ（`clusterProfiler::bitr` + `org.Hs.eg.db`）
-- GO BP：`clusterProfiler::enrichGO`，`pAdjustMethod="BH"`，`pvalueCutoff=0.05`
-- KEGG：`clusterProfiler::enrichKEGG`，`organism="hsa"`
-- dotplot 展示 top 15 条目
-- **失败不终止**：KEGG REST API 有速率限制与授权限制，若返回空或报错，写入空表 +
-  `results/enrichment_status.json` 记录原因，流程继续
+- `pAdjustMethod="BH"`，`pvalueCutoff=0.05`；KEGG 用 `organism="hsa"`
+- dotplot 的 **x 轴是方向**，一眼看出条目由哪一侧驱动
 
-> **背景集选择**：spec 要求"全基因组背景"，本实现遵循该默认。但芯片分析中更严谨的做法是
-> 用**实测基因集**作背景（`config.yml` 中 `enrichment.universe: detected` 可切换），
-> 因为未在芯片上检出的基因不应计入背景。两种结果会不同，报告中必须写明用了哪种。
+> **为什么必须拆方向**（K-Dense `pathway-enrichment`）：
+> *"ORA is direction-agnostic unless you split up/down lists; GSEA NES sign gives direction."*
+> 对肿瘤 vs 正常组织这是致命的：上调的是增殖，下调的是基质/脂肪/血管。
+> 混在一起跑会得到"两条方向相反的通路同时富集"这种无法解释的结果。
+>
+> **实测证明了这一点**：拆分前 `Integrin signaling`、`PI3K-Akt signaling pathway`
+> 被报为"富集"；拆分后看清它们**全部来自下调基因**（属血管/基质簇）。
+> "PI3K-Akt 下调"和"PI3K-Akt 上调"是完全不同的生物学陈述，合并分析无法区分。
+
+#### C. 条目去冗余（两条路都做）
+
+GO 会返回大量近义条目 —— 实测下调簇的前 4 名就是
+`vasculature development` / `blood vessel morphogenesis` / `blood vessel development` /
+`angiogenesis`，这是 **1 个发现重复了 4 次，不是 4 个发现**。
+
+按**基因重叠 Jaccard 单链接聚类**折叠（`reduce_terms_by_overlap()`，阈值 0.5），
+每类保留 `adj.P` 最小的那个作代表，并记录 `representative` / `cluster_size` 两列。
+不引入 `GOSemSim` 这类重依赖。
+
+实测效果：GSEA GO **1059 → 439** 个代表条目；ORA GO **234 → 72**。
+
+#### D. 失败处理
+
+**失败不终止**：KEGG REST API 有速率限制与授权限制，若返回空或报错，写入空表 +
+`results/enrichment_status.json` 记录原因，流程继续。
+
+> **背景集**：默认 `detected`（实测基因集，GSE64790 为 16,487 个）。
+> K-Dense `pathway-enrichment` 把过大的背景列为 ORA 结果误导人的头号来源：
+> *"Using too large a background makes ordinary housekeeping categories look
+> significant — the most common way ORA results mislead."*
+> 背景应当是"本实验**可能**检出的基因"，未在芯片上检出的基因不应计入。
+> spec 里写的是"全基因组背景"；需要按 spec 口径复现时把
+> `config.yml` 的 `enrichment.universe` 改回 `genome` 即可。
+> **两种结果不同，报告中必须写明用了哪种。**
 
 ### 3.7 差异基因互作（PPI，`05_ppi.R`）
 
@@ -517,11 +620,14 @@ results/
 ├── correlation_matrix.csv         Pearson + Spearman 矩阵 + 离群标记
 ├── deg_table.csv                  全基因差异分析表
 ├── volcano_plot.pdf/.png          火山图
+├── pvalue_histogram.pdf/.png      DE 后 QC：p 值分布（均匀性 + 0 附近是否有峰）
 ├── top50_heatmap.pdf/.png         top DEG 聚类热图（Z-score）
-├── GO_dotplot.pdf/.png + GO_table.csv       GO BP 富集
-├── KEGG_dotplot.pdf/.png + KEGG_table.csv   KEGG 富集
+├── GSEA_GO_dotplot.pdf/.png + GSEA_GO_table.csv     preranked GSEA / GO BP（主力）
+├── GSEA_KEGG_dotplot.pdf/.png + GSEA_KEGG_table.csv preranked GSEA / KEGG
+├── GO_dotplot.pdf/.png + GO_table.csv       ORA GO BP（含 direction 列）
+├── KEGG_dotplot.pdf/.png + KEGG_table.csv   ORA KEGG（含 direction 列）
 ├── PPI_network.png + hub_genes.csv + ppi_edges.csv   STRING PPI 与 hub 基因
-├── enrichment_status.json         富集模式（fdr / ranked_fallback）及原因
+├── enrichment_status.json         富集模式（fdr / ranked_fallback）、GSEA 参数、去冗余阈值及原因
 ├── ppi_status.json                PPI 方法、节点边数及回退原因
 └── state.json                     各步骤执行状态 + 验收结果
 ```
@@ -533,17 +639,27 @@ results/
 1. **样本量**：n=6（3 vs 3 配对，残差 df = 2）。**没有任何基因能通过 FDR**
    （最小 `adj.P` = 0.394），下游富集与 PPI 走的是 `ranked_fallback` 降级路径（§2.10）。
    所有结果只能作为**假设生成**，不能作为临床或机制结论。
+   **本设计的 MDE 为 d_z = 3.26（80% 功效）**，见 §2.2.1 —— 中等效应基本检不出。
 2. **组织成分混杂**：肿瘤 vs 全组织正常，差异主要反映细胞组成而非肿瘤特异性表达。
    本数据集尤为明显 —— top 基因是 KRT14、SPARCL1、TAGLN、SDPR、PPARG 等
-   基质/脂肪/上皮比例相关基因。
-3. **配对自由度极低**：3 对只剩 2 个残差自由度，配对换来的方差缩减被重尾
-   t 分布抵消了一部分。若能拿到更多配对样本，功效会显著改善。
+   基质/脂肪/上皮比例相关基因。GSEA 的下调簇（血管发育、肌肉系统、循环系统）
+   与上调簇（有丝分裂、染色体分离）正是这一组成的两个侧面。
+3. **配对自由度极低**：3 对只剩 2 个残差自由度。实测配对并没有换来功效优势
+   （MDE 3.26 vs 不配对的 3.07，§2.2.1）—— df 从 4 降到 2 的代价超过了方差缩减的收益。
+   若能拿到更多配对样本，功效会显著改善：d_z=1.5 需 6 对，d_z=1.0 需 10 对。
 4. **无独立验证队列**：本设计不含验证集，结果未经任何外部数据复现。
 5. **lncRNA 芯片的平台局限**：GPL19612 的 65,531 个探针里只有 33.3% 带 `GeneSymbol`，
    覆盖 16,487 个基因。非编码转录本的信息在 symbol 折叠时被丢弃了。
+   另有 2,539 个基因无法映射到 ENTREZ，未进入 GSEA 排序表（13,948 个）。
 6. **单平台单批次**：无法评估批次效应，也无法做跨平台一致性检验。
-7. **富集分析**：KEGG 依赖在线 API，可能因限流返回空结果；此时结论中不得声称"无 KEGG 通路富集"，
-   只能声称"本次未获得 KEGG 结果"。
+7. **富集分析**：
+   - KEGG 依赖在线 API，可能因限流返回空结果；此时结论中不得声称"无 KEGG 通路富集"，
+     只能声称"本次未获得 KEGG 结果"。
+   - **GSEA 与 ORA 的结论强度不同**：GSEA 不卡阈值、用完整排序表，对弥散效应敏感；
+     ORA 的输入是 `ranked_fallback` 的前 500 个基因，**只能表述为
+     "在最显著的 N 个基因里富集到……"**，不能表述为"显著差异基因富集到……"。
+   - 两条路都做了基因重叠去冗余（Jaccard ≥ 0.5 折叠为一类），
+     报告时应引用 `representative` 列，不要罗列同一簇的多个近义条目。
 
 ---
 

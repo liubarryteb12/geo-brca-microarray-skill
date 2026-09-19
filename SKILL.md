@@ -136,6 +136,40 @@ gh workflow run geo_analysis.yml
 - **`enrichKEGG` 依赖 KEGG 在线 REST API**，会因限流或授权返回空。按 spec 这不算失败，
   但**报告中不得写"无 KEGG 通路富集"**，只能写"本次未获得 KEGG 结果"，并引用
   `results/enrichment_status.json` 里的原因。
+- **有完整排序表时用 GSEA，不要卡阈值跑 ORA。** 这是本仓库最容易犯的方法学错误，
+  初版就犯了。K-Dense `pathway-enrichment`：*"a discrete hit list → ORA;
+  a ranked table with per-gene scores → GSEA"*、*"Never threshold a list and then
+  feed it to GSEA"*。GSE64790 实测差距是**两个数量级**：GSEA 在完整排序表上拿到
+  **1,059 条**显著 GO BP 条目（最好 adj.P = 1.0e-8），而 ORA 在 top-500 上最好只有
+  3.1e-6。**弱功效、效应弥散的数据正是 GSEA 被设计出来处理的场景。**
+  排序指标用 limma 的 moderated `t`，不要用 log2FC（低表达基因的 logFC 噪声极大）。
+- **ORA 必须按上/下调分开跑。** ORA 本身方向无关，混在一起跑就分不清某条通路是被
+  上调还是下调基因驱动的。本仓库实测：合并时 `Integrin signaling`、`PI3K-Akt
+  signaling pathway` 被报为"富集"；拆开后看清它们**全部来自下调基因**（血管/基质簇）。
+  "PI3K-Akt 上调"和"PI3K-Akt 下调"是完全不同的生物学陈述。
+- **背景集默认用实测基因集（`detected`），不要用全基因组。** K-Dense
+  `pathway-enrichment` 把过大的背景列为 ORA 误导人的头号来源：*"Using too large a
+  background makes ordinary housekeeping categories look significant."*
+  背景应当是"本实验**可能**检出的基因"。spec 写的是全基因组，改
+  `enrichment.universe: genome` 可切回。
+- **GO 条目必须去冗余后再报告。** 实测下调簇的前 4 名是
+  `vasculature development` / `blood vessel morphogenesis` / `blood vessel development` /
+  `angiogenesis` —— 这是 1 个发现重复 4 次。按基因重叠 Jaccard 单链接聚类折叠
+  （`reduce_terms_by_overlap()`），GO 从 1059 折到 439。报告时引用 `representative` 列。
+- **`n < 10` 时一定要看 p 值直方图。** K-Dense `bulk-rnaseq` 的 QC 关卡：
+  分布应接近均匀且在 0 附近有峰。**光看"0 个显著基因"分不清是功效不足还是模型设定错了**，
+  这张图能分开。GSE64790 实测 P<0.05 占 11.6%（期望 5%）、36 个 P<0.001 →
+  `signal_present_but_underpowered`。峰在 1 或 U 形说明设计有问题，那时候连排序表都不能用。
+- **不要报 post-hoc observed power。** 用观测到的效应反算功效是循环论证
+  （它是 p 值的确定性函数）。要报就报**敏感性分析**：固定 n 下的 MDE。
+  GSE64790 的 MDE 是 d_z = 3.26（80% 功效）—— 中等效应根本检不出。
+- **配对在 n=3 时不换来功效。** 实测配对 MDE 3.26 vs 不配对 3.07：df 从 4 降到 2、
+  t 临界值从 2.78 升到 4.30，代价超过了方差缩减的收益。配对仍然**正确**（控制个体基线），
+  但别指望 3 对配对能提升检出能力。d_z=1.5 需要 6 对，d_z=1.0 需要 10 对。
+- **JSON 键名不要带点号。** `frac_p_below_0.05` 这种键在 JS 里无法用属性访问
+  （`summary.frac_p_below_0.05` 会解析成 `summary.frac_p_below_0` 再加 `.05`，直接语法错误），
+  必须写成 `summary['frac_p_below_0.05']`。用 `frac_p_lt_0p05` 这类键名省事。
+  同理，`deg_table.csv` 的 `P.Value`、`p.adjust` 列在 JS 里也都要用方括号访问。
 - **STRINGdb 首次运行要下载约 100 MB 网络文件。** 失败时本流水线回退到基于表达谱的
   **共表达网络**（Spearman |r| ≥ 0.9），`ppi_status.json` 会标记 `coexpression_fallback`。
   共表达不是物理互作，**不得当作 PPI 证据引用**。
