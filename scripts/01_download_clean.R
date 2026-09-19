@@ -40,8 +40,16 @@ SYMBOL_COLUMNS <- c("GENE_SYMBOL", "Gene Symbol", "GeneSymbol", "GENE", "Symbol"
 ACCESSION_COLUMNS <- c("GB_ACC", "GB_ACCESSION", "ACCESSION", "GenBank", "GB_LIST", "REFSEQ")
 GENENAME_COLUMNS  <- c("DESCRIPTION", "Gene Title", "GENE_NAME", "gene_assignment_name")
 
-# 映射覆盖率低于此值就不做基因层面的分析，退回探针层面
+# 判定「symbol 模式是否可用」的两个条件，满足**任一**即可：
+#   1) 探针覆盖率 >= MIN_SYMBOL_COVERAGE
+#   2) 唯一 symbol 数 >= MIN_SYMBOL_GENES
+#
+# 为什么需要条件 2：覆盖率是「带注释的探针 / 全部探针」，对 lncRNA 芯片、
+# 外显子芯片这类平台天然偏低 —— 大部分探针本来就对应非编码转录本，没有 symbol
+# 是正常的。GSE64790（Agilent lncRNA V4.0）覆盖率只有 35%，但仍有 21,812 个
+# 带 symbol 的探针，做 GO/KEGG/STRING 绰绰有余。只看覆盖率会把它误判成探针模式。
 MIN_SYMBOL_COVERAGE <- 0.5
+MIN_SYMBOL_GENES    <- 5000L
 
 #' 从平台注释中挑出基因 symbol 列
 pick_symbol_column <- function(fdata) {
@@ -194,16 +202,26 @@ map_features_to_symbols <- function(ids, fdata) {
                 reason = "平台注释中没有 symbol 列，也没有可用的 accession / 基因全名列"))
   }
 
-  for (r in results) log_info(sprintf("  映射途径 %-52s 覆盖率 %5.1f%%", r$method, 100 * r$coverage))
+  for (r in results) {
+    syms <- r$symbols[!is.na(r$symbols) & nzchar(r$symbols)]
+    log_info(sprintf("  映射途径 %-52s 覆盖率 %5.1f%%  唯一 symbol %d",
+                     r$method, 100 * r$coverage, length(unique(syms))))
+  }
 
   best <- results[[which.max(vapply(results, function(r) r$coverage, numeric(1)))]]
-  if (best$coverage < MIN_SYMBOL_COVERAGE) {
+  best_syms <- best$symbols[!is.na(best$symbols) & nzchar(best$symbols)]
+  n_genes <- length(unique(best_syms))
+
+  if (best$coverage < MIN_SYMBOL_COVERAGE && n_genes < MIN_SYMBOL_GENES) {
     return(list(mode = "probe", symbols = NULL, method = best$method, coverage = best$coverage,
-                reason = sprintf("最佳映射途径 '%s' 覆盖率仅 %.1f%%（阈值 %.0f%%）",
-                                 best$method, 100 * best$coverage, 100 * MIN_SYMBOL_COVERAGE)))
+                mapped_genes = n_genes,
+                reason = sprintf(paste0("最佳映射途径 '%s' 覆盖率 %.1f%%（阈值 %.0f%%）",
+                                        "且唯一 symbol 仅 %d 个（阈值 %d），不足以做基因层面分析"),
+                                 best$method, 100 * best$coverage, 100 * MIN_SYMBOL_COVERAGE,
+                                 n_genes, MIN_SYMBOL_GENES)))
   }
   list(mode = "symbol", symbols = best$symbols, method = best$method,
-       coverage = best$coverage, reason = NA_character_)
+       coverage = best$coverage, mapped_genes = n_genes, reason = NA_character_)
 }
 
 #' 抓取平台注释表
@@ -419,6 +437,7 @@ run_01_download_clean <- function(cfg) {
     feature_id_type = if (identical(mapping$mode, "symbol")) "gene symbol" else "platform probe ID",
     mapping_method = mapping$method,
     mapping_coverage = round(mapping$coverage, 4),
+    mapping_unique_symbols = mapping$mapped_genes,
     mapping_reason = mapping$reason,
     genes_final = nrow(expr),
     samples = ncol(expr),

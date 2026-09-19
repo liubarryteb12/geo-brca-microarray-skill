@@ -6,34 +6,46 @@
 # ============================================================================
 
 # ---- 数据源 ----------------------------------------------------------------
-# GSE92252: 人源乳腺癌 NimbleGen 单色芯片，9 例（6 肿瘤 + 3 正常），GPL16025
-# 注意 GPL16025 的注释只有 ID / GB_ACC / DESCRIPTION 三列，没有基因 symbol 列，
-# 探针映射走三级降级，详见 EXPERIMENTAL_DESIGN.md §2.5
-dataset_id: GSE92252
-platform_id: GPL16025          # 可留空，由 GEOquery 自动识别
+# GSE64790: 人源三阴性乳腺癌（TNBC）Agilent lncRNA 芯片，6 例（3 肿瘤 + 3 配对正常），GPL19612
+#
+# 为什么选它：需要「人源 + 乳腺癌 + 芯片 + 样本 < 10 + 两组」的数据集，
+# 而更关键的是**分组不能被批次效应混杂**。候选逐个实测后：
+#   GSE92252  3 个组恰好是 3 个批次，簇间 r 低到 0.11 → DEG 不可解释，淘汰
+#   GSE112848 平台 GPL16956 是 Arraystar lncRNA V3，只有 5 列且**没有任何基因注释** → 无法富集，淘汰
+#   GSE73613  只有 2 例/组，达不到每组 >= 3 的硬门禁 → 淘汰
+# GSE64790 全部 6 个样本两两 r = 0.914–0.967，只有一个相关簇，无混杂。
+# 详见 EXPERIMENTAL_DESIGN.md §2.10
+dataset_id: GSE64790
+platform_id: GPL19612          # 可留空，由 GEOquery 自动识别
 
 # ---- 分组 ------------------------------------------------------------------
-# group_field 是 phenoData / SOFT 中的字段名；对 GSE92252 是 characteristics_ch1，
-# 其值为 "gender: Female" 和 "tissue: ... breast tumor" / "tissue: Normal breast tissue"
+# characteristics_ch1 的实际取值（实测）：
+#   肿瘤: "tissue: TNBC  tissue"  /  "gender: Female"  /  "age: 72y"
+#   正常: "tissue: matched normal breast tissues"  /  "gender: Female"  /  "age: 72y"
 group_field: characteristics_ch1
 
 # 每个样本按「小写子串」匹配；命中多个组会直接报错退出，避免静默错分
-#
-# GSE92252 的 tissue 字段实际取值（实测，不要凭直觉写 "breast tumor"）：
-#   3 个 HER2- 肿瘤: "AR-positive, ER-/PR-negative, HER2-negative breast tumor"
-#   3 个 HER2+ 肿瘤: "AR-positive, ER-/PR-negative, HER2-positive tumor"   <- 没有 "breast"
-#   3 个正常组织  : "Normal breast tissue"
-# 所以判别子串用 "tumor"（正常样本里不含该词），而不是 "breast tumor"。
 group_values:
-  tumor:  ["tumor"]
-  normal: ["normal breast tissue"]
+  tumor:  ["tnbc"]
+  normal: ["matched normal"]
 
 # 对比方向：[分子, 分母]。log2FC > 0 表示在 tumor 中上调
 contrast: ["tumor", "normal"]
 
-# GSE92252 不满足配对条件（正常组 N39/N40/N54 只有 T40/T54 有对应肿瘤样本），
-# 详见 EXPERIMENTAL_DESIGN.md §2.1
-paired: false
+# ---- 配对 ------------------------------------------------------------------
+# 该数据集是「同一患者的肿瘤 + 正常组织」配对设计：3 个患者的年龄一一对应
+# （72y/72y、41y/41y、52y/52y）。患者间差异往往比肿瘤/正常差异还大，
+# 不阻断就会把信号埋进残差，所以这里做配对分析。
+#
+# 配对关系**显式声明**，不从样本标题猜后缀 —— 猜错了不会报错，
+# 只会让配对分析静默变错。00 步会校验：每个 GSM 只出现一次、
+# 每对必须一例 tumor 一例 normal、不允许有样本落单。
+# 03 步若发现配对设计不可用（秩不足等）会自动退回非配对并记录原因。
+paired: true
+pairs:
+  - ["GSM1580581", "GSM1580584"]   # 72y
+  - ["GSM1580582", "GSM1580585"]   # 41y
+  - ["GSM1580583", "GSM1580586"]   # 52y
 
 # ---- 阈值 ------------------------------------------------------------------
 thresholds:

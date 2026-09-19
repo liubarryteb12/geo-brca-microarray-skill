@@ -48,7 +48,39 @@ run_03_deg <- function(cfg) {
   # 让分母成为参考水平，便于解读
   groups <- stats::relevel(groups, ref = denominator)
 
-  design <- stats::model.matrix(~ 0 + groups)
+  # ---- 0. 设计矩阵：配对 vs 非配对 ----------------------------------------
+  #
+  # 配对设计把患者作为阻断因子。GSE64790 这类"肿瘤 + 同一患者正常组织"的研究里，
+  # 患者间差异往往比肿瘤/正常差异还大，不阻断就会把信号埋进残差。
+  #
+  # 但配对会消耗自由度（3 对只剩 2 df），且对不完整配对很敏感，所以这里
+  # **失败就退回非配对**并记录原因，绝不让它把整条流水线拖垮。
+  paired_used <- FALSE
+  pair_reason <- NA_character_
+  design <- NULL
+
+  if (isTRUE(cfg$paired)) {
+    design <- tryCatch({
+      if (is.null(group$patient)) stop("group.csv 里没有 patient 列")
+      if (anyNA(group$patient) || !all(nzchar(group$patient))) stop("存在未配对的样本")
+      pat <- factor(group$patient)
+      if (nlevels(pat) < 2L) stop(sprintf("只有 %d 个配对水平，无法阻断", nlevels(pat)))
+      d <- stats::model.matrix(~ 0 + groups + pat)
+      if (qr(d)$rank < ncol(d)) stop("设计矩阵秩不足（配对不完整？）")
+      log_info(sprintf("配对设计: %d 对，阻断因子 patient (%d 水平)，残差 df = %d",
+                       nlevels(pat), nlevels(pat), nrow(d) - ncol(d)))
+      paired_used <<- TRUE
+      d
+    }, error = function(e) {
+      pair_reason <<- conditionMessage(e)
+      log_warn(sprintf("配对设计不可用，退回非配对: %s", pair_reason))
+      NULL
+    })
+  }
+
+  if (is.null(design)) {
+    design <- stats::model.matrix(~ 0 + groups)
+  }
   colnames(design) <- sub("^groups", "", colnames(design))
   log_info(sprintf("设计矩阵: %s", paste(colnames(design), collapse = ", ")))
   log_info(sprintf("分组样本数: %s", paste(sprintf("%s=%d", names(table(groups)),
@@ -142,6 +174,10 @@ run_03_deg <- function(cfg) {
     n_samples = ncol(expr), n_genes_tested = nrow(tt),
     adj_p_cutoff = padj_cut, log2fc_cutoff = lfc_cut,
     n_significant = nrow(sig), n_up = sig_up, n_down = sig_down,
+    paired = paired_used,
+    paired_requested = isTRUE(cfg$paired),
+    paired_fallback_reason = pair_reason,
+    residual_df = ncol(expr) - qr(design)$rank,
     top10_by_p = head(tt$gene, 10)
   ))
 

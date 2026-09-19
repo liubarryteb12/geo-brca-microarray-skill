@@ -160,11 +160,50 @@ run_00_validate_inputs <- function(cfg) {
     stop("contrast 引用了未定义的组")
   }
 
-  # ---- 8. 落盘 ------------------------------------------------------------
+  # ---- 8. 配对关系（可选）-------------------------------------------------
+  #
+  # 配对关系在 config 里**显式声明**，不从样本标题里猜后缀 ——
+  # "TNBC tissue 1" / "matched normal breast tissues 1" 这种后缀看着能对上，
+  # 但换个数据集就失效，而且猜错了不会报错，只会让配对分析静默变错。
+  patient <- rep(NA_character_, n)
+  if (isTRUE(cfg$paired)) {
+    pairs <- cfg$pairs
+    if (is.null(pairs) || length(pairs) == 0L) {
+      stop("config 里 paired: true 但没给 pairs；配对关系必须显式声明")
+    }
+    seen <- character(0)
+    for (k in seq_along(pairs)) {
+      pr <- unlist(pairs[[k]])
+      if (length(pr) != 2L) stop(sprintf("pairs[[%d]] 必须恰好两个 GSM", k))
+      if (!all(pr %in% meta$gsm)) {
+        stop(sprintf("pairs[[%d]] 含不属于本数据集的样本: %s", k,
+                     paste(setdiff(pr, meta$gsm), collapse = ", ")))
+      }
+      if (any(pr %in% seen)) stop(sprintf("样本在 pairs 里重复出现: %s",
+                                          paste(intersect(pr, seen), collapse = ", ")))
+      seen <- c(seen, pr)
+      grp <- meta$group[match(pr, meta$gsm)]
+      if (!setequal(grp, cfg$contrast)) {
+        stop(sprintf("pairs[[%d]] (%s) 必须一例来自 %s、一例来自 %s，实际为 %s",
+                     k, paste(pr, collapse = "+"), cfg$contrast[1L], cfg$contrast[2L],
+                     paste(grp, collapse = "+")))
+      }
+      patient[match(pr, meta$gsm)] <- sprintf("pair%02d", k)
+    }
+    if (anyNA(patient)) {
+      stop(sprintf("paired: true 但以下样本没有配对: %s",
+                   paste(meta$gsm[is.na(patient)], collapse = ", ")))
+    }
+    log_info(sprintf("配对校验通过: %d 对（每对一例 %s、一例 %s）",
+                     length(pairs), cfg$contrast[1L], cfg$contrast[2L]))
+  }
+
+  # ---- 9. 落盘 ------------------------------------------------------------
   meta_out <- meta[, c("gsm", "title", "source_name", "organism", "taxid", "group", "group_field")]
+  group_out <- data.frame(gsm = meta_out$gsm, group = meta_out$group, stringsAsFactors = FALSE)
+  if (isTRUE(cfg$paired)) group_out$patient <- patient
   utils::write.csv(meta_out, file.path(cfg$output$data_dir, "meta.csv"), row.names = FALSE)
-  utils::write.csv(meta_out[, c("gsm", "group")], file.path(cfg$output$data_dir, "group.csv"),
-                   row.names = FALSE)
+  utils::write.csv(group_out, file.path(cfg$output$data_dir, "group.csv"), row.names = FALSE)
   writeLines(c(sprintf("platform_id\t%s", platform_id),
                sprintf("platform_title\t%s", soft_value(series_lines, "Series_platform_title", "NA")),
                sprintf("series_type\t%s", series_type),
