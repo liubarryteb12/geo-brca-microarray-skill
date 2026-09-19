@@ -67,6 +67,39 @@ async function seriesInfo(gse) {
   return json.result?.[uid] ?? null
 }
 
+// ============================================================================
+// 数据类型判定
+// ============================================================================
+//
+// **原来用的是 `!/sequencing/ && /array/`，这个判据太松。**
+// GEO 的 `gdstype` 里带 "by array" 的**不止表达数据**：
+//   Methylation profiling by array      <- 甲基化 beta 值，不是表达量
+//   Genome variation profiling by array <- aCGH 拷贝数
+//   Protein profiling by protein array  <- 蛋白
+//   SNP genotyping by array
+// 这些全部能通过 `/array/`，而下游 limma + logFC 的解释对它们完全不成立
+// —— 甲基化 beta 值的"差异倍数"没有意义。泛化到任意疾病后这个口子会被踩到。
+//
+// 另外 **GEO 把 NanoString 归类为 "Expression profiling by array"**（实测
+// GSE67248 / GPL19941），所以 gdstype 拦不住它。NanoString 是杂交计数，
+// 没有 RMA 那套探针模型，且探针数只有几十到几百。只能查**平台标题**。
+const EXPR_ARRAY_RE = /expression profiling by array/i
+// 平台标题里出现这些词就不是表达芯片
+const NOT_MICROARRAY_RE = /nanostring|ncounter|qpcr|taqman|fluidigm|proteomic|protein array|sequencing|methylation|genotyping|mirna array/i
+
+/** 取平台（GPL）标题。失败返回 null —— 拿不到标题时不做这个判定，而不是猜 */
+async function platformTitle(gpl) {
+  if (!gpl) return null
+  try {
+    const uid = `1000${String(gpl).padStart(5, '0')}`
+    const json = await fetchJson(`${EUTILS}/esummary.fcgi?db=gds&retmode=json&id=${uid}`)
+    const rec = json.result?.[uid]
+    return rec?.title ?? null
+  } catch {
+    return null
+  }
+}
+
 /** 把 SOFT 按 ^SAMPLE 切块并提取字段 */
 function parseSamples(softText) {
   const blocks = softText.split('^SAMPLE = ').slice(1)
@@ -126,8 +159,17 @@ async function checkDataset(gse, opts = {}) {
   const type = info.gdstype ?? ''
   if (/sequencing/i.test(type)) {
     failures.push(`类型不合规: ${type} —— 这是测序，不是基因芯片`)
-  } else if (!/array/i.test(type)) {
-    failures.push(`类型不合规: ${type}`)
+  } else if (!EXPR_ARRAY_RE.test(type)) {
+    // 这里必须要求**表达**芯片，不能只要求 "array"。
+    // 甲基化 / aCGH / SNP / 蛋白芯片都带 "by array"，但它们不是表达量，
+    // 下游 limma + logFC 的解释对它们不成立。
+    failures.push(`类型不合规: ${type} —— 要求 "Expression profiling by array"（甲基化/aCGH/SNP/蛋白芯片也带 "by array"，但不是表达数据）`)
+  }
+
+  // 平台标题检查：gdstype 拦不住 NanoString（GEO 把它归为表达芯片）
+  const gplTitle = await platformTitle(info.gpl)
+  if (gplTitle && NOT_MICROARRAY_RE.test(gplTitle)) {
+    failures.push(`平台不合规: ${gplTitle.slice(0, 90)} —— 命中非表达芯片特征（NanoString/nCounter/qPCR/蛋白等）`)
   }
   const n = Number(info.n_samples ?? 0)
   if (designMode === 'small_sample') {
@@ -244,8 +286,10 @@ async function search(opts) {
 
   const candidates = rows
     .filter(r => r?.taxon === 'Homo sapiens')
-    .filter(r => !/sequencing/i.test(r.gdstype ?? ''))
-    .filter(r => /array/i.test(r.gdstype ?? ''))
+    // **必须要求"表达"芯片**，不能只要求 "array" ——
+    // 甲基化 / aCGH / SNP / 蛋白芯片也都带 "by array"。
+    // （NanoString 在 gdstype 里就是表达芯片，只能靠 `check` 查平台标题拦。）
+    .filter(r => EXPR_ARRAY_RE.test(r.gdstype ?? ''))
     .map(r => ({ gse: r.accession, n: Number(r.n_samples ?? 0), gpl: r.gpl, title: r.title }))
     .filter(r => r.n >= minSamples && r.n < maxSamples)
     .sort((a, b) => a.n - b.n)
