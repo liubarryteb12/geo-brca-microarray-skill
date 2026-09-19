@@ -63,18 +63,24 @@
     | 来源 | 机制 | 处理 |
     |---|---|---|
     | 线程调度 | 多线程归约的求和顺序随调度变化 | `OMP_NUM_THREADS` / `OPENBLAS_NUM_THREADS` / `MKL_NUM_THREADS` = 1 |
-    | 内核分发 | OpenBLAS 在**运行期**按检测到的 CPU 型号选 SIMD 内核，向量宽度不同则归约顺序不同 | `OPENBLAS_CORETYPE` 钉死内核类型 |
+    | 内核分发 | OpenBLAS 在**运行期**按检测到的 CPU 型号选 SIMD 内核，向量宽度不同则归约顺序不同 | `OPENBLAS_CORETYPE: Haswell` |
 
     **只钉线程数是不够的 —— 这一点是实测出来的，不是推理。** 同一个 commit
     `c370bd0` 连跑 6 轮：5 轮给出一组末位，1 轮给出另一组。那一轮和其中两轮
-    **同在 westus3**，所以差异既不是 commit 引起的，也不是区域引起的 ——
-    GitHub 托管 runner 的 CPU 型号在**同一 Azure 区域内也不单一**。
+    **同在 westus3**，所以差异既不是 commit 引起的（我曾据此误判过一次，
+    还白改了一轮代码），也不是区域引起的 —— GitHub 托管 runner 的 CPU 型号在
+    **同一 Azure 区域内也不单一**。
+
     实测差异幅度：`deg_table.csv` 最大绝对差 9.9e-14（logFC 量级 ~1）、
     `pca_ellipse.csv` 最大 1.0e-12（坐标量级 ~100），都是**约 1 个 ULP**；
     而同一批运行的 `data/` 输入文件（`group.csv` / `clean_stats.json` /
-    `feature_mode.json`）逐字节一致。
+    `feature_mode.json`）逐字节一致。实测 `deg_table.csv` 还出现过
+    `6.00193941779545e-05` vs `...546e-05`。
 
-    实测 `deg_table.csv` 还出现过 `6.00193941779545e-05` vs `...546e-05`。
+    **加上 `OPENBLAS_CORETYPE` 之后**，同一 commit 连跑 4 轮、跨 4 个 Azure 区域
+    （centralus / westus / eastus2 / eastus），结果文件指纹**全部相同**。
+    同一区域的 centralus 在加之前给另一组末位、加之后给这一组 ——
+    说明这个变量确实生效，不是空转。
 
     **所以：报"逐字节一致"之前先确认是什么机制在保证它。**
     可以放心声称的是**结构与量级可复现**（16487 个基因、PC1=46.1%、
