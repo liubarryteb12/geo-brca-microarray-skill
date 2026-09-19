@@ -115,7 +115,8 @@ run_04a_heatmap <- function(cfg) {
       main = sprintf("Top DEG heatmap (row Z-score) - %s", cfg$dataset_id),
       silent = FALSE
     )
-  }, width = 8, height = max(6, length(genes) * 0.13))
+    # pheatmap 的色条固定在图右侧、无位置参数；细长条，占宽有限，保留。
+  }, width = 7, height = max(5.5, length(genes) * 0.115))
   log_info("已生成 top50_heatmap.pdf")
   invisible(list(genes = genes, mode = pick$mode))
 }
@@ -261,7 +262,7 @@ run_04b_enrichment <- function(cfg) {
                  print(make_gsea_dotplot(df, cfg,
                          sprintf("GSEA (preranked) GO %s - %s", cfg$enrichment$ont,
                                  cfg$dataset_id))),
-                 width = 9, height = 7)
+                 width = 8, height = 6.5)
       } else {
         status$gsea_go <- list(status = "empty", reason = "no gene set passed the cutoff")
         utils::write.csv(data.frame(), file.path(res, "GSEA_GO_table.csv"), row.names = FALSE)
@@ -299,7 +300,7 @@ run_04b_enrichment <- function(cfg) {
         save_pdf(file.path(res, "GSEA_KEGG_dotplot.pdf"),
                  print(make_gsea_dotplot(df, cfg,
                          sprintf("GSEA (preranked) KEGG - %s", cfg$dataset_id))),
-                 width = 9, height = 7)
+                 width = 8, height = 6.5)
       } else {
         status$gsea_kegg <- list(status = "empty", reason = "no pathway passed the cutoff")
         utils::write.csv(data.frame(), file.path(res, "GSEA_KEGG_table.csv"), row.names = FALSE)
@@ -413,7 +414,7 @@ run_04b_enrichment <- function(cfg) {
       top_down = head(out$Description[out$direction == "down"][order(out$p.adjust[out$direction == "down"])], 3))
     save_pdf(file.path(res, paste0(file_base, "_dotplot.pdf")),
              print(make_ora_dotplot(out, cfg, sprintf("%s - %s", label, cfg$dataset_id))),
-             width = 9, height = 8)
+             width = 8, height = 7)
     invisible(NULL)
   }
 
@@ -453,8 +454,9 @@ make_ora_dotplot <- function(df, cfg, title) {
         sprintf("%s\n(up in %s)", arms[2L], arms[2L])),
       c("up", "down"))) +
     ggplot2::labs(title = title,
-                  subtitle = sprintf("top %d per direction; up/down kept separate (ORA is direction-agnostic)",
-                                     n),
+                  subtitle = wrap_subtitle(sprintf(
+                    "top %d per direction; up/down kept separate (ORA is direction-agnostic)", n),
+                    fig_width = 8),
                   x = NULL, y = NULL) +
     theme_paper(9) +
     ggplot2::theme(axis.text.y = ggplot2::element_text(size = 7))
@@ -476,8 +478,9 @@ make_gsea_dotplot <- function(df, cfg, title) {
     scale_colour_seq("-log10\nadj.P") +
     ggplot2::scale_size_continuous(name = "set size", range = c(2, 7)) +
     ggplot2::labs(title = title,
-                  subtitle = sprintf("preranked on the full gene list (no threshold); right = up in %s, left = up in %s",
-                                     arms[1L], arms[2L]),
+                  subtitle = wrap_subtitle(sprintf(
+                    "preranked on the full gene list (no threshold); right = up in %s, left = up in %s",
+                    arms[1L], arms[2L]), fig_width = 8),
                   x = "NES (normalized enrichment score)", y = NULL) +
     theme_paper(9) +
     ggplot2::theme(axis.text.y = ggplot2::element_text(size = 7))
@@ -504,10 +507,11 @@ write_empty_enrichment <- function(cfg, status, reason) {
 make_dotplot <- function(x, cfg, title) {
   n <- min(cfg$enrichment$top_terms, nrow(as.data.frame(x)))
   p <- enrichplot::dotplot(x, showCategory = n) +
-    labs(title = title, subtitle = sprintf("top %d terms, p.adjust < %g", n,
-                                           cfg$enrichment$pvalue_cutoff)) +
+    labs(title = title, subtitle = wrap_subtitle(sprintf(
+      "top %d terms, p.adjust < %g", n, cfg$enrichment$pvalue_cutoff), fig_width = 8)) +
     theme_bw(base_size = 9) +
-    theme(axis.text.y = element_text(size = 7))
+    theme(axis.text.y = element_text(size = 7),
+          legend.position = "bottom", legend.direction = "horizontal")
   p
 }
 

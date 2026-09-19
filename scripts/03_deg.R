@@ -225,13 +225,15 @@ run_03_deg <- function(cfg) {
     geom_hline(yintercept = -log10(0.05), linetype = "dashed",
                linewidth = 0.3, colour = PAL$ink) +
     labs(title = sprintf("Volcano: %s vs %s (%s)", numerator, denominator, cfg$dataset_id),
-         subtitle = sprintf(paste0("|log2FC| > %g (vertical); horizontal line = nominal P 0.05. ",
-                                   "Red = higher in %s, blue = higher in %s. ",
-                                   "No gene passes FDR (adj.P < %g, min adj.P = %.3f), so the ",
-                                   "semi-transparent points are exploratory: nominal P only. ",
-                                   "BH is per-gene, so the FDR cutoff is not a horizontal line."),
-                            lfc_cut, numerator, denominator, padj_cut,
-                            if (nrow(tt)) min(tt$adj.P.Val, na.rm = TRUE) else NA_real_),
+         subtitle = wrap_subtitle(sprintf(
+           paste0("|log2FC| > %g (vertical); horizontal line = nominal P 0.05. ",
+                  "Red = higher in %s, blue = higher in %s. ",
+                  "No gene passes FDR (adj.P < %g, min adj.P = %.3f), so the ",
+                  "semi-transparent points are exploratory: nominal P only. ",
+                  "BH is per-gene, so the FDR cutoff is not a horizontal line."),
+           lfc_cut, numerator, denominator, padj_cut,
+           if (nrow(tt)) min(tt$adj.P.Val, na.rm = TRUE) else NA_real_),
+           fig_width = 8),
          x = sprintf("log2 fold change (%s / %s)", numerator, denominator),
          y = "-log10 raw P value",
          colour = NULL, alpha = NULL) +
@@ -242,7 +244,7 @@ run_03_deg <- function(cfg) {
   if (nrow(label_df) > 0L) {
     p_volcano <- p_volcano + ggrepel_labels(label_df, seed = cfg$analysis$seed)
   }
-  save_pdf(file.path(res, "volcano_plot.pdf"), print(p_volcano), width = 8.5, height = 6.5)
+  save_pdf(file.path(res, "volcano_plot.pdf"), print(p_volcano), width = 8, height = 6.5)
   log_info("已生成 volcano_plot.pdf")
 
   # ---- 5. p 值分布诊断（DE 之后的 QC 关卡）--------------------------------
@@ -268,15 +270,16 @@ run_03_deg <- function(cfg) {
     ggplot2::labs(
       title = sprintf("P value distribution: %s vs %s (%s)", numerator, denominator,
                       cfg$dataset_id),
-      subtitle = sprintf("%d genes tested; dashed line = uniform expectation. %s",
-                         length(pv),
-                         if (length(pv) && min(pv) < 1e-3)
-                           sprintf("%.0f genes at P < 0.001 (real signal below the null)",
-                                   sum(pv < 1e-3))
-                         else "no gene below P < 0.001"),
+      subtitle = wrap_subtitle(sprintf(
+        "%d genes tested; dashed line = uniform expectation. %s",
+        length(pv),
+        if (length(pv) && min(pv) < 1e-3)
+          sprintf("%.0f genes at P < 0.001 (real signal below the null)", sum(pv < 1e-3))
+        else "no gene below P < 0.001"),
+        fig_width = 6.5),
       x = "raw P value", y = "gene count") +
     theme_paper(10)
-  save_pdf(file.path(res, "pvalue_histogram.pdf"), print(p_hist), width = 7, height = 5)
+  save_pdf(file.path(res, "pvalue_histogram.pdf"), print(p_hist), width = 6.5, height = 5)
 
   # 诊断结论：把"功效不足"和"设计有问题"分开
   n_below_001 <- sum(pv < 0.001)

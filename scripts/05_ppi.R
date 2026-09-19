@@ -475,13 +475,26 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
               sprintf("other (%d)", sum(memb == "other"))),
           c(shown_lv, if ("other" %in% levels(vdf$community)) "other")),
         guide = "legend") +
-      ggplot2::scale_size_continuous(name = "degree", range = c(1.5, 6.5),
-                                     breaks = pretty(range(vdf$degree), 4)) +
+      # **size 图例必须 override.aes 补上 fill。**
+      # 节点是 shape=21 + colour="white"，而 fill 映射在另一个 scale 上；
+      # size 图例的键继承不到 fill，于是画成"白描边 + 无填充"——
+      # 在白底上就是**完全隐形**。实测这个图例只剩标题 "degree"，示例图标是空的。
+      # 图例键用中性灰填充，表示它只讲大小、不讲模块。
+      ggplot2::scale_size_continuous(
+        name = "degree", range = c(1.5, 6.5),
+        # pretty() 会给出 0 和超出数据范围的值，图例里出现不存在的 degree。
+        # 不用 scales::breaks_pretty —— 那是 ggplot2 的间接依赖，不是本仓库声明的包。
+        breaks = local({
+          b <- pretty(range(vdf$degree), 4)
+          b[b >= min(vdf$degree) & b <= max(vdf$degree)]
+        }),
+        guide = ggplot2::guide_legend(
+          override.aes = list(fill = PAL$muted, colour = "white", stroke = 0.5))) +
       ggrepel::geom_text_repel(
         data = lab, ggplot2::aes(x = x, y = y, label = name),
-        size = 2.4, colour = PAL$ink, fontface = "bold",
+        size = 2.2, colour = PAL$ink, fontface = "bold",
         segment.size = 0.2, segment.colour = PAL$muted,
-        min.segment.length = 0, max.overlaps = Inf, box.padding = 0.35,
+        min.segment.length = 0, box.padding = 0.3, max.overlaps = 30,
         # 显式播种：不传时 ggrepel 用环境 RNG，位置会随上游随机数消耗量漂移。
         # seed 默认值是 NA（不是 NULL），所以这里要转换。
         seed = if (is.null(seed)) NA else seed) +
@@ -489,27 +502,37 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
         title = sprintf("%s network - %s",
                         if (identical(method, "string_ppi")) "STRING PPI" else "Co-expression (FALLBACK)",
                         cfg$dataset_id),
-        subtitle = sprintf(paste0("%d nodes / %d edges shown, on %d concentric rings (inner = highest degree, ",
-                                  "%d hubs labelled). Ring order is by degree within the shown subnetwork; ",
-                                  "the %d strongest edges concentrate on a proliferation cluster, so that ",
-                                  "cluster is the core ring. hub_genes.csv instead ranks all %d nodes of the ",
-                                  "full %d-edge network. Node colour = Louvain module (%d found, top %d ",
-                                  "coloured, rest grey), size = degree, edge opacity = confidence. ",
-                                  "Full network in ppi_edges.csv."),
-                           igraph::vcount(g), igraph::ecount(g), n_rings, nrow(lab),
-                           igraph::ecount(g), igraph::vcount(g_full), igraph::ecount(g_full),
-                           n_comm_all, length(shown)),
+        # 原来这里 455 字符，一行放不下被静默裁掉。压到 ~250 字符并折行。
+        # **规则 13 要求副标题必须写明环序来自哪个网络** —— 这句不能省，
+        # 省掉读者会把核心环当成 hub_genes.csv 的答案，而那个文件给的是另一批基因。
+        subtitle = wrap_subtitle(sprintf(
+          paste0("%d nodes / %d edges shown on %d concentric rings. Inner ring = highest degree ",
+                 "within the SHOWN subnetwork (%d hubs labelled); hub_genes.csv instead ranks the ",
+                 "full %d-node network. Node size = degree, colour = Louvain module (%d found, ",
+                 "top %d coloured, rest grey)."),
+          igraph::vcount(g), igraph::ecount(g), n_rings, nrow(lab),
+          igraph::vcount(g_full), n_comm_all, length(shown)),
+          fig_width = 7.5),
         x = NULL, y = NULL) +
       ggplot2::coord_fixed() +
       ggplot2::theme_void(base_size = 10) +
       ggplot2::theme(
         plot.title    = ggplot2::element_text(face = "bold", size = 11),
         plot.subtitle = ggplot2::element_text(colour = PAL$muted, size = 8),
-        legend.position = "right",
-        plot.margin = ggplot2::margin(8, 8, 8, 8))
+        # 图例放底部横排：右侧图例直接吃掉图宽，而这张图本来就是方的
+        legend.position   = "bottom",
+        legend.direction  = "horizontal",
+        legend.box        = "horizontal",
+        legend.title      = ggplot2::element_text(size = 9),
+        legend.text       = ggplot2::element_text(size = 8.5),
+        legend.key.size   = ggplot2::unit(1.1, "lines"),
+        legend.box.spacing = ggplot2::unit(3, "pt"),
+        plot.margin = ggplot2::margin(6, 6, 4, 6))
 
     plot_err <- tryCatch({
-      save_pdf(file.path(res, "PPI_network.pdf"), print(p), width = 10, height = 8.5)
+      # 从 10x8.5 缩到 7.5x7.8：coord_fixed 下面板本来就是方的，
+      # 多出来的宽度全被图例和留白吃掉。
+      save_pdf(file.path(res, "PPI_network.pdf"), print(p), width = 7.5, height = 7.8)
       NULL
     }, error = function(e) conditionMessage(e))
 
@@ -528,6 +551,15 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
                "布局为 %d 个同心圆环（内圈 = degree 最高），环内按社区排序。",
                "完整网络见 ppi_edges.csv（%d 节点 %d 边）。"),
         max_nodes, max_edges, n_rings, igraph::vcount(g_full), igraph::ecount(g_full))
+      # **环序来自子网络，hub_genes.csv 来自全网络，两者前列基因不同。**
+      # 这段原本在图的副标题里，但副标题 455 字符会被静默裁掉，所以移到状态文件。
+      status$plot_hub_caveat <- sprintf(
+        paste0("环序按**过滤后**子网络的 degree 排，核心环是 %s；",
+               "hub_genes.csv 排的是**全网络** %d 个节点，前列是 %s。",
+               "两个排名都对，回答的是不同问题 —— 引用时不要混用。"),
+        paste(utils::head(vdf$name[order(-vdf$degree)], 5), collapse = " / "),
+        igraph::vcount(g_full),
+        paste(utils::head(status$hub_genes, 5), collapse = " / "))
       log_info(sprintf("已生成 PPI_network.png（%d 节点 / %d 边 / %d 个模块 / %d 个同心环 %s）",
                        igraph::vcount(g), igraph::ecount(g), n_comm, n_rings,
                        paste(sizes_r, collapse = "-")))

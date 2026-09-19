@@ -146,6 +146,45 @@ if (existsSync(configPath)) {
   }
 }
 
+/**
+ * 长副标题必须走 wrap_subtitle()。
+ *
+ * ggplot 的副标题**不换行**：超出画布宽度的部分被静默裁掉，不是显示成省略号。
+ * 所以"字没显示全"从图上完全看不出来，只能靠静态检查挡。
+ * 实测踩过：PPI 副标题 455 字符、火山图 275 字符，都被切掉了尾巴。
+ *
+ * 判据是**字面量总长度**（不含 sprintf 的格式化参数）超过阈值就必须包 wrap_subtitle。
+ * 阈值按最窄的画布算：6.5 英寸、副标题 8.5pt，一行约容纳 96 字符；
+ * 留一行余量，超过 100 字符就要求折行。
+ */
+const SUBTITLE_CHAR_LIMIT = 100
+
+for (const file of files) {
+  const rel = relative(root, file).split('\\').join('/')
+  const source = readFileSync(file, 'utf8')
+  const lines = source.split('\n')
+  lines.forEach((text, idx) => {
+    // 只认 labs() 的 subtitle 参数。`plot.subtitle = element_text(...)` 是主题设置，
+    // 后面的 "bottom" / "horizontal" 之类字面量不是副标题文本，会算成假阳性。
+    const m = /(^|[^.\w])subtitle\s*=/.exec(text)
+    if (!m) return
+    const at = m.index + m[0].length
+    // 取这一段到下一个 labs 参数或语句结束为止，统计其中的字符串字面量
+    const rest = lines.slice(idx, idx + 30).join('\n')
+    const endMatch = rest.slice(at).search(/\n\s{0,20}(x|y|colour|fill|alpha|size|title|tag|shape)\s*=/)
+    let seg = endMatch === -1 ? rest.slice(at) : rest.slice(at, at + endMatch)
+    if (seg.includes('element_text')) return
+    const literals = [...seg.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map(m2 => m2[1])
+    const total = literals.reduce((a, s) => a + s.length, 0)
+    if (total > SUBTITLE_CHAR_LIMIT && !seg.includes('wrap_subtitle')) {
+      problems.push(
+        `${rel}:${idx + 1} 副标题字面量 ${total} 字符（> ${SUBTITLE_CHAR_LIMIT}）` +
+        `但没有走 wrap_subtitle() —— 超出画布的部分会被静默裁掉`
+      )
+    }
+  })
+}
+
 console.log(`检查了 ${files.length} 个 R 文件`)
 console.log(`定义的函数: ${definedFunctions.size}，步骤函数调用: ${calledFunctions.size}`)
 

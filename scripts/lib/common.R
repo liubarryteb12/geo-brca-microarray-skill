@@ -248,7 +248,29 @@ scale_fill_div <- function(name, ...) {
   ggplot2::scale_fill_gradientn(colours = pal_diverging(), name = name, ...)
 }
 
+#' 把长副标题按画布宽度折行
+#'
+#' **ggplot 的副标题不会自动换行。** 超过画布宽度的部分被**静默裁掉** ——
+#' 不是显示成省略号，是根本没有，所以从图上完全看不出"有字没显示"。
+#' 实测 PPI 的副标题 455 字符、火山图 275 字符，都远超一行能容纳的长度。
+#'
+#' 每行字符数按画布宽度和字号估：副标题字号是 `base_size - 1.5`，
+#' 无衬线体的平均字宽约 `0.52 em`，再留 15% 安全余量。
+#'
+#' @param x         副标题文本
+#' @param fig_width 图的宽度（英寸），要和 `save_pdf()` 传的值一致
+#' @param base_size 主题基准字号
+wrap_subtitle <- function(x, fig_width = 8, base_size = 10) {
+  size <- base_size - 1.5
+  chars <- max(30L, floor(fig_width * 72 / (size * 0.52) * 0.85))
+  paste(strwrap(x, width = chars), collapse = "\n")
+}
+
 #' 所有图共用的主题，保证字号、网格、留白一致
+#'
+#' **图例默认放底部、横向排列。** 右侧图例直接吃掉图的宽度 ——
+#' 实测 PCA / 火山图 / dotplot / 热图都是右侧图例，横向占掉一大块，
+#' 而底部横排在同样信息量下几乎不增加图幅。需要右侧的图单独覆盖。
 theme_paper <- function(base_size = 10) {
   ggplot2::theme_bw(base_size = base_size) +
     ggplot2::theme(
@@ -257,7 +279,17 @@ theme_paper <- function(base_size = 10) {
       panel.border     = ggplot2::element_rect(colour = PAL$grid, linewidth = 0.4),
       plot.title       = ggplot2::element_text(face = "bold", size = base_size + 1),
       plot.subtitle    = ggplot2::element_text(colour = PAL$muted, size = base_size - 1.5),
-      legend.key.size  = ggplot2::unit(0.9, "lines")
+      plot.margin      = ggplot2::margin(5, 6, 4, 5),
+      # 底部横排图例：省宽度
+      legend.position   = "bottom",
+      legend.direction  = "horizontal",
+      legend.box        = "horizontal",
+      legend.title      = ggplot2::element_text(size = base_size - 1),
+      legend.text       = ggplot2::element_text(size = base_size - 1.5),
+      legend.key.size   = ggplot2::unit(0.9, "lines"),
+      legend.margin     = ggplot2::margin(1, 1, 1, 1),
+      legend.box.spacing = ggplot2::unit(3, "pt"),
+      legend.box.margin  = ggplot2::margin(0, 0, 0, 0)
     )
 }
 

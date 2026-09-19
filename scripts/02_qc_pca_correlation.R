@@ -71,12 +71,14 @@ run_02_qc_pca_correlation <- function(cfg) {
     facet_wrap(~stage, ncol = 2, scales = "free_y") +
     scale_fill_manual(values = c(before = PAL$ns, after = PAL$down)) +
     labs(title = "Expression distribution before / after quantile normalization",
-         subtitle = sprintf("%s - %d genes x %d samples", cfg$dataset_id, nrow(expr), ncol(expr)),
+         subtitle = wrap_subtitle(sprintf("%s - %d genes x %d samples",
+                                          cfg$dataset_id, nrow(expr), ncol(expr)),
+                                  fig_width = 8),
          x = NULL, y = "log2 expression") +
     theme_paper(9) +
     theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 6),
           legend.position = "none")
-  save_pdf(file.path(res, "boxplot_before_after.pdf"), print(p_box), width = 10, height = 6)
+  save_pdf(file.path(res, "boxplot_before_after.pdf"), print(p_box), width = 8, height = 5.5)
   log_info("已生成 boxplot_before_after.pdf")
 
   # ---- 2. 密度曲线 --------------------------------------------------------
@@ -92,10 +94,11 @@ run_02_qc_pca_correlation <- function(cfg) {
     scale_linetype_manual(values = c("solid", "dashed", "dotted", "dotdash")[seq_along(levels(groups))],
                           name = NULL) +
     labs(title = "Expression density before / after normalization",
-         subtitle = sprintf("coloured and styled by group; one curve per sample (%s)", cfg$dataset_id),
+         subtitle = wrap_subtitle(sprintf("coloured and styled by group; one curve per sample (%s)",
+                                          cfg$dataset_id), fig_width = 7),
          x = "log2 expression", y = "density") +
     theme_paper(9)
-  save_pdf(file.path(res, "density_plot.pdf"), print(p_density), width = 8, height = 7)
+  save_pdf(file.path(res, "density_plot.pdf"), print(p_density), width = 7, height = 6)
   log_info("已生成 density_plot.pdf")
 
   # ---- 3. PCA -------------------------------------------------------------
@@ -117,20 +120,46 @@ run_02_qc_pca_correlation <- function(cfg) {
   )
   # 颜色**不是唯一的语义载体**：形状也编码分组。
   # 色盲读者、以及黑白打印时，仍然能分出两组。
+  #
+  # ---- 组内置信椭圆 -------------------------------------------------------
+  #
+  # 用 `type = "norm"`，不是 ggplot 的默认 `"t"`。差别在半径系数：
+  #   norm: sqrt(qchisq(0.95, 2))                = 2.45 倍标准差
+  #   t   : sqrt(2 * qf(0.95, 2, n-2))           = n=3 时 6.16 倍
+  # 每组只有 3 个样本，`"t"` 的椭圆会有数据范围的 6 倍大，把点压成中心一个小点。
+  # `"norm"` 把协方差当作已知，因此**低估**了 n=3 下协方差本身的不确定性 ——
+  # 这一点必须在副标题里写明，不能让它冒充一个严格的 95% 区间。
+  ell_ok <- all(table(groups) >= 3L)
+  ell_radius <- sqrt(stats::qchisq(0.95, 2))
+  # 椭圆要 fill 映射，否则 polygon 默认填充灰色、和分组颜色对不上。
+  # fill 图例用 show.legend = FALSE 压掉 —— 颜色和形状已经各有一个图例了。
+  ell_layer <- if (ell_ok) {
+    stat_ellipse(geom = "polygon", type = "norm", level = 0.95,
+                 ggplot2::aes(fill = group),
+                 alpha = 0.10, linewidth = 0.4, show.legend = FALSE)
+  }
   p_pca <- ggplot(pca_df, aes(x = PC1, y = PC2, colour = group, shape = group,
                               label = sample)) +
+    ell_layer +
     geom_point(size = 3.6, stroke = 0.9) +
     geom_text(vjust = -1, size = 2.4, show.legend = FALSE, colour = PAL$ink) +
     scale_colour_condition(levels(groups), name = NULL) +
+    scale_fill_condition(levels(groups), name = NULL) +
     scale_shape_manual(values = c(16, 17, 15, 18, 8)[seq_along(levels(groups))],
                        name = NULL) +
     labs(title = sprintf("PCA of %s", cfg$dataset_id),
-         subtitle = sprintf("top %d variable genes; group encoded by colour AND shape",
-                            nrow(pca_input)),
+         subtitle = wrap_subtitle(sprintf(
+           paste0("top %d variable genes; group encoded by colour AND shape. ",
+                  "Shaded ellipse = within-group 95%% normal ellipse (radius %.2f SD). ",
+                  "With %d samples per group the covariance rests on %d df, so the ellipse ",
+                  "understates the true spread and is a visual aid, not a test."),
+           nrow(pca_input), ell_radius, min(table(groups)),
+           min(table(groups)) - 1L),
+           fig_width = 6.5),
          x = sprintf("PC1 (%.1f%% variance)", var_explained[1L]),
          y = sprintf("PC2 (%.1f%% variance)", var_explained[2L])) +
     theme_paper(10)
-  save_pdf(file.path(res, "pca_plot.pdf"), print(p_pca), width = 7, height = 6)
+  save_pdf(file.path(res, "pca_plot.pdf"), print(p_pca), width = 6.5, height = 6)
   log_info(sprintf("已生成 pca_plot.pdf（PC1=%.1f%%, PC2=%.1f%%）",
                    var_explained[1L], var_explained[2L]))
 
@@ -205,7 +234,9 @@ run_02_qc_pca_correlation <- function(cfg) {
       main = sprintf("Sample-sample Pearson correlation (%s)", cfg$dataset_id),
       silent = FALSE
     )
-  }, width = 8, height = 7)
+    # pheatmap 的色条固定在图右侧，没有位置参数可调。
+    # 它是**细长条**，占的宽度远小于 ggplot 的右侧图例，所以这张图保留右侧。
+  }, width = 7, height = 6.5)
   log_info("已生成 correlation_heatmap.pdf")
 
   # ---- 6. 相关性矩阵落盘 --------------------------------------------------
