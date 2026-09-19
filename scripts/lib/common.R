@@ -363,17 +363,76 @@ fits_labels <- function(n, height_in, fontsize, panel_frac = 0.75, min_gap = 2.5
 #' 返回逻辑值，供 `show_rownames = ` 直接用。**日志里必须留下算式** ——
 #' 否则"这张图为什么没有行名"又要靠猜。
 #'
+#' 传了 `figure` 就同时记进 `label_decisions.csv`（见
+#' `write_label_decisions()`）。**日志会随 CI 日志一起滚掉，文件不会** ——
+#' 想回答"这轮为什么把行名藏了"，翻文件比翻几万行日志快。
+#'
 #' @param what 标签指代的东西，用于日志（如 "热图基因"）
+#' @param figure 图的名字（如 "top50_heatmap"）；`NULL` 表示只记日志不落盘
 #' @return 逻辑值
 decide_rownames <- function(n, height_in, fontsize, what = "行名",
-                            panel_frac = 0.75, min_gap = 2.5) {
+                            panel_frac = 0.75, min_gap = 2.5, figure = NULL) {
   budget <- label_budget(height_in, fontsize, panel_frac, min_gap)
   ok <- fits_labels(n, height_in, fontsize, panel_frac, min_gap)
   log_info(sprintf(
     "%s标签: %d 行 / 画布可容纳 %d 行（高 %.2fin，字号 %gpt，行距余量 %gpt）-> %s",
     what, n, budget, height_in, fontsize, min_gap,
     if (ok) "显示行名" else "**不显示行名**（会糊成一片）"))
+  if (!is.null(figure)) {
+    record_label_decision(figure, what, n, height_in, fontsize,
+                          panel_frac, min_gap, ok)
+  }
   ok
+}
+
+# 本轮所有标签决策。放环境里而不是全局变量：`source()` 进来的脚本共享
+# 同一个 globalenv，用 `<<-` 赋值会污染调用方；环境是显式的容器。
+.label_decisions <- new.env(parent = emptyenv())
+.label_decisions$rows <- list()
+
+#' 记一条标签决策
+#'
+#' 落盘的理由和 `ppi_plot_layout.csv` 一样（规则 16）：**从图上反推
+#' "这张为什么没行名"是猜**。记下 `n_labels` / `capacity` 和四个参数，
+#' 决策就是可核对的数据而不是事后叙述。
+#'
+#' @inheritParams label_budget
+#' @param figure 图名
+#' @param what   标签种类
+#' @param n      标签行数
+#' @param shown  最终是否显示
+record_label_decision <- function(figure, what, n, height_in, fontsize,
+                                  panel_frac, min_gap, shown) {
+  .label_decisions$rows[[length(.label_decisions$rows) + 1L]] <- data.frame(
+    figure    = as.character(figure),
+    label     = as.character(what),
+    n_labels  = as.integer(n),
+    capacity  = label_budget(height_in, fontsize, panel_frac, min_gap),
+    height_in = as.numeric(height_in),
+    fontsize  = as.numeric(fontsize),
+    panel_frac = as.numeric(panel_frac),
+    min_gap   = as.numeric(min_gap),
+    shown     = isTRUE(shown),
+    stringsAsFactors = FALSE)
+  invisible(NULL)
+}
+
+#' 把本轮所有标签决策写成 CSV
+#'
+#' 即使一条都没有也写出带表头的空文件：**"文件不存在"和"没有需要标签的图"
+#' 是两件事**，前者会让下游以为这步没跑。
+write_label_decisions <- function(path) {
+  rows <- .label_decisions$rows
+  empty <- data.frame(figure = character(0), label = character(0),
+                      n_labels = integer(0), capacity = integer(0),
+                      height_in = numeric(0), fontsize = numeric(0),
+                      panel_frac = numeric(0), min_gap = numeric(0),
+                      shown = logical(0), stringsAsFactors = FALSE)
+  df <- if (length(rows) == 0L) empty else do.call(rbind, rows)
+  utils::write.csv(df, path, row.names = FALSE)
+  log_info(sprintf("标签决策已落盘: %s（%d 条，其中 %d 条隐藏了行名）",
+                   basename(path), nrow(df), sum(!df$shown)))
+  invisible(df)
 }
 
 #' 组内协方差椭圆的坐标

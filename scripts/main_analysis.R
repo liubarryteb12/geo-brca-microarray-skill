@@ -109,6 +109,19 @@ check_acceptance <- function(cfg) {
     list(name = file.path(res, f), ok = ok, required = required)
   }
 
+  # 从 label_decisions.csv 读某张图有没有藏行名。
+  # 返回 TRUE / FALSE，读不到就返回 NA（**不知道，不等于没藏**）。
+  label_hidden <- function(fig) {
+    p <- file.path(res, "label_decisions.csv")
+    if (!file.exists(p)) return(NA)
+    d <- tryCatch(utils::read.csv(p, stringsAsFactors = FALSE),
+                  error = function(e) NULL)
+    if (is.null(d) || !all(c("figure", "shown") %in% colnames(d))) return(NA)
+    r <- d[d$figure == fig, , drop = FALSE]
+    if (nrow(r) == 0L) return(NA)
+    !any(r$shown)
+  }
+
   checks <- list(
     chk("boxplot_before_after.pdf"),
     chk("density_plot.pdf"),
@@ -137,10 +150,18 @@ check_acceptance <- function(cfg) {
     list(name = "PPI 网络（结果或回退原因）",
          ok = has("PPI_network.png") || documented(ppi, "status"),  required = FALSE),
     # 热图行名放不下时会被隐藏 —— 那就必须有一张表能还原"第 N 行是哪个基因"。
-    # 这条是**条件性**的：只有在行名被隐藏时才强制要求这张表。
+    #
+    # **原来这条是空转的**：`ok = has(csv) || has(pdf)`，而 pdf 一定会产出，
+    # 所以它永远 PASS，等于没写。判据改成读 label_decisions.csv 的真实决策：
+    # 只有**确实藏了行名**才要求对照表；读不到决策文件则退回"有 csv 就算过"
+    # （不因为决策文件缺失而误报失败，那条另有验收项管）。
     list(name = "top50_heatmap_genes.csv（行名隐藏时的对照表）",
-         ok = has("top50_heatmap_genes.csv") || has("top50_heatmap.pdf"),
+         # 没藏行名 -> 不需要这张表；藏了 -> 必须有；读不到决策 -> 不误报失败
+         ok = !isTRUE(label_hidden("top50_heatmap")) || has("top50_heatmap_genes.csv"),
          required = TRUE),
+    # 决策本身要落盘。日志里有同样的算式，但 CI 日志会滚掉，文件不会。
+    list(name = "label_decisions.csv（标签决策，可核对为什么藏了行名）",
+         ok = has("label_decisions.csv"), required = FALSE),
     list(name = "PPI 图注文件（图上写了什么，可检索）",
          ok = has("PPI_network_caption.txt") || !has("PPI_network.png"),
          required = FALSE),

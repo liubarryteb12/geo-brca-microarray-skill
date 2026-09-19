@@ -107,7 +107,8 @@ run_04a_heatmap <- function(cfg) {
   # 和画布高度毫无关系 —— 50 个基因时每行只剩约 3.6px 间隙，糊成一片。
   # pheatmap 没有副标题、图例是右侧细色条，面板占比比 ggplot 高，用 0.82。
   show_rn <- decide_rownames(length(genes), fig_h, row_fs, "热图基因",
-                             panel_frac = 0.82, min_gap = 2.5)
+                             panel_frac = 0.82, min_gap = 2.5,
+                             figure = "top50_heatmap")
 
   # **行聚类自己算，再把同一棵树传给 pheatmap。**
   # 一是为了拿到显示顺序（见下面的 CSV），二是保证表和图的顺序必然一致 ——
@@ -289,7 +290,8 @@ run_04b_enrichment <- function(cfg) {
           top_up = head(df$Description[df$NES > 0][order(df$p.adjust[df$NES > 0])], 3),
           top_down = head(df$Description[df$NES < 0][order(df$p.adjust[df$NES < 0])], 3))
         decide_rownames(min(2 * cfg$enrichment$top_terms, nrow(df)), 6.5, 7,
-                        "GSEA GO 点图", panel_frac = 0.75, min_gap = 2.5)
+                        "GSEA GO 点图", panel_frac = 0.75, min_gap = 2.5,
+                        figure = "GSEA_GO_dotplot")
         save_pdf(file.path(res, "GSEA_GO_dotplot.pdf"),
                  print(make_gsea_dotplot(df, cfg,
                          sprintf("GSEA (preranked) GO %s - %s", cfg$enrichment$ont,
@@ -330,7 +332,8 @@ run_04b_enrichment <- function(cfg) {
           status = "ok", terms = nrow(df), representative_terms = n_rep,
           top = head(df$Description[order(df$p.adjust)], 5))
         decide_rownames(min(2 * cfg$enrichment$top_terms, nrow(df)), 6.5, 7,
-                        "GSEA KEGG 点图", panel_frac = 0.75, min_gap = 2.5)
+                        "GSEA KEGG 点图", panel_frac = 0.75, min_gap = 2.5,
+                        figure = "GSEA_KEGG_dotplot")
         save_pdf(file.path(res, "GSEA_KEGG_dotplot.pdf"),
                  print(make_gsea_dotplot(df, cfg,
                          sprintf("GSEA (preranked) KEGG - %s", cfg$dataset_id))),
@@ -450,7 +453,8 @@ run_04b_enrichment <- function(cfg) {
     # 标签仍按量化判据核一遍：放不下就整张不显示，不缩字号硬塞。
     ora_w <- 10; ora_h <- 6.5
     decide_rownames(min(cfg$enrichment$top_terms, nrow(out)), ora_h, 7,
-                    sprintf("%s 点图", label), panel_frac = 0.68, min_gap = 2.5)
+                    sprintf("%s 点图", label), panel_frac = 0.68, min_gap = 2.5,
+                    figure = paste0(file_base, "_dotplot"))
     save_pdf(file.path(res, paste0(file_base, "_dotplot.pdf")),
              print(make_ora_dotplot(out, cfg, sprintf("%s - %s", label, cfg$dataset_id))),
              width = ora_w, height = ora_h)
@@ -469,6 +473,11 @@ run_04b_enrichment <- function(cfg) {
   status$redundancy_jaccard <- jac
   write_json(file.path(res, "enrichment_status.json"), status)
   log_info("已生成 enrichment_status.json")
+
+  # 标签决策落盘。**放这里而不是随每张图写** —— 一次性写出本轮所有决策，
+  # 便于横向比较"哪张图被藏了行名、为什么"。日志里虽然有同样的算式，
+  # 但 CI 日志会滚掉，文件不会。
+  write_label_decisions(file.path(res, "label_decisions.csv"))
   invisible(NULL)
 }
 
