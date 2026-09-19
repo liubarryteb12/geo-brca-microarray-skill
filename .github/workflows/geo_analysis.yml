@@ -130,6 +130,35 @@ jobs:
       - name: Verify figures are not blank
         run: node tools/check_figures.mjs results
 
+      # **给图加带版本号的副本。**
+      #
+      # 规范文件名（`PPI_network.png`）必须保留 —— `check_acceptance()`、README
+      # 的输出清单、以及任何下游脚本都按它找文件。
+      #
+      # 但同名文件在不同 commit 上内容不同，**光看名字分不出手上这份是哪个版本**。
+      # 实测就是这么把两轮 CI 的图当成同一张的：本地的图和刚产出的图都叫
+      # `PPI_network.png`，谁也说不清看的是哪一份。
+      #
+      # 所以额外写一份 `<名字>__<短SHA>.png`。SHA 取自 `github.sha`，
+      # **同一个 commit 上稳定**，所以不影响"连跑两轮逐字节一致"这个保证 ——
+      # 两轮的副本名字和内容都相同。
+      #
+      # 用命名区分，不改图片内容：图要保持发表级干净。
+      - name: Write versioned copies of the figures
+        if: always()
+        run: |
+          short="${GITHUB_SHA:0:7}"
+          shopt -s nullglob
+          n=0
+          for f in results/*.png results/*.pdf; do
+            base="${f%.*}"
+            ext="${f##*.}"
+            cp "$f" "${base}__${short}.${ext}"
+            n=$((n + 1))
+          done
+          echo "已写出 $n 份带版本号的副本（后缀 $short）"
+          ls -1 results/*__*.png 2>/dev/null | head -20 || true
+
       # always() 保证即使分析失败也能拿到中间产物用于排查
       - name: Upload results artifact
         if: always()

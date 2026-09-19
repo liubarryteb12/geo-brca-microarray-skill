@@ -91,6 +91,13 @@ node tools/check_palette.mjs   # 从 common.R 解析实际色值重算，CI 里�
 > 每张图都同时出 **PDF（矢量，放大不失真）** 和 **PNG（150 dpi，可直接预览）**。
 > artifact 是 zip，PDF 在里面看不了，PNG 是为了打开就能看到。
 
+> **每张图还会多一份带版本号的副本**，形如 `PPI_network__2180651.png`，
+> 后缀是产出它的 commit 短 SHA。规范文件名（`PPI_network.png`）保留给验收和下游脚本；
+> 副本是为了解决"同名文件在不同 commit 上内容不同、光看名字分不出是哪一版"的问题 ——
+> 实测就是这么把两轮 CI 的图当成同一张的。
+> `results/state.json` 的 `build` 字段也记了 commit / run id / 分支，
+> 从 artifact 里解出来的结果可以自证出处。**用命名区分，不改图片内容。**
+
 ### 富集为什么有两条路
 
 判据来自 K-Dense `pathway-enrichment` skill：*"a discrete hit list → ORA;

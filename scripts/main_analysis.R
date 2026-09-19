@@ -185,6 +185,18 @@ main <- function() {
   state$acceptance_failed_optional <- vapply(failed_optional, function(c) c$name, character(1))
   state$total_seconds <- round(elapsed, 1)
   state$dataset_id <- cfg$dataset_id
+  # **让产物自带出处。** 同一个文件名会在不同 commit 上产出不同内容，
+  # 光看名字分不出手上这份是哪个版本 —— 实测就是这么把两轮 CI 的图当成同一张的。
+  # 工作区的图按 <名字>__<短SHA>.png 命名；这里把出处写进 JSON，
+  # 这样从 artifact zip 里解出来的结果也能自证版本，不需要比对哈希。
+  state$build <- list(
+    commit = Sys.getenv("GITHUB_SHA", unset = NA_character_),
+    commit_short = substr(Sys.getenv("GITHUB_SHA", unset = ""), 1, 7),
+    run_id = Sys.getenv("GITHUB_RUN_ID", unset = NA_character_),
+    run_attempt = Sys.getenv("GITHUB_RUN_ATTEMPT", unset = NA_character_),
+    ref = Sys.getenv("GITHUB_REF_NAME", unset = NA_character_),
+    generated_at = format(Sys.time(), "%Y-%m-%dT%H:%M:%S")
+  )
   state$finished_at <- format(Sys.time(), "%Y-%m-%dT%H:%M:%S")
   write_json(state_path, state)
 
