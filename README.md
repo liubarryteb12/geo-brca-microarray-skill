@@ -58,26 +58,31 @@ artifact `geo-results`。
 | `correlation_heatmap.pdf` / `.png` | 样本间 Pearson 相关热图 |
 | `correlation_matrix.csv` | Pearson + Spearman 矩阵 + 离群标记 |
 | `deg_table.csv` | 全基因 limma 结果（gene/logFC/P.Value/adj.P.Val） |
-| `volcano_plot.pdf` / `.png` | 火山图。四档：FDR 上/下调 + **名义显著**（raw P<0.05 但未过 FDR，橙色标注）+ 不显著。纵轴统一 raw P |
+| `volcano_plot.pdf` / `.png` | 火山图。**颜色 = 方向**（up 红 `#B2182B` / down 蓝 `#2166AC`），**alpha + 大小 = 置信度**（FDR 显著实心大点，名义显著半透明小点）。纵轴统一 raw P |
 | `top50_heatmap.pdf` / `.png` | top DEG 聚类热图（行 Z-score，euclidean + complete） |
 | `pvalue_histogram.pdf` / `.png` | DE 后 QC：p 值分布（区分"功效不足"与"模型设定错"） |
 | `GSEA_GO_dotplot.pdf` / `.png` + `GSEA_GO_table.csv` | **preranked GSEA / GO BP（主力方法）** |
 | `GSEA_KEGG_dotplot.pdf` / `.png` + `GSEA_KEGG_table.csv` | preranked GSEA / KEGG |
 | `GO_dotplot.pdf` / `.png` + `GO_table.csv` | ORA GO BP（含 `direction` 列，上/下调分开） |
 | `KEGG_dotplot.pdf` / `.png` + `KEGG_table.csv` | ORA KEGG（含 `direction` 列） |
-| `PPI_network.pdf` / `.png` + `hub_genes.csv` + `ppi_edges.csv` | STRING PPI 网络与 hub 基因。**图做过可读性过滤**（最大连通分量 → degree 前 200 → 最强 700 条边 → 最大 4 个 Louvain 模块上色），完整网络见 `ppi_edges.csv` |
+| `PPI_network.pdf` / `.png` + `hub_genes.csv` + `ppi_edges.csv` + `ppi_plot_layout.csv` | STRING PPI 网络与 hub 基因。**图做过可读性过滤，并按同心圆环排布**（最大连通分量 → degree 前 200 → 最强 450 条边 → 3 环，内圈 = hub 核心；最大 4 个 Louvain 模块上色）。完整网络见 `ppi_edges.csv`，每个节点的环号/半径/角度见 `ppi_plot_layout.csv` |
 | `enrichment_status.json` | 富集模式（`fdr` / `ranked_fallback`）、GSEA 参数、去冗余阈值与原因 |
-| `ppi_status.json` | PPI 方法、节点边数、绘图过滤参数与回退原因 |
+| `ppi_status.json` | PPI 方法、节点边数、绘图过滤与环参数、回退原因 |
 | `state.json` | 每步执行状态 + 验收结果（唯一逐字节不可复现的产物：含耗时与时间戳） |
 
 ### 配色
 
-所有图共用 `scripts/lib/common.R` 里的一套语义化色板，**红 = 上调 / tumor、
-蓝 = 下调 / normal**，显著性用紫色单色相序列色（刻意避开红蓝，否则深色会被误读成上调）。
+所有图共用 `scripts/lib/common.R` 里的一套语义化色板，来源是 SCI 发表常用色板：
 
-色值是**算出来的**，判据是"色相相差 15° 以内视为同一个颜色"。按这条算，
-之前有三处凭眼睛看不出来的问题：p 值直方图的 `firebrick` 与 up 红只差 0.4°、
-分类色板的棕在 protanopia 下与 up 红距离 0.002、magma 序列色中段与 up 红只差 2.9°。
+| 角色 | 来源 |
+| --- | --- |
+| 上调 / tumor、下调 / normal | **ColorBrewer RdBu** 两端 `#B2182B` / `#2166AC` —— 发散热图与方向色同源，热图上的红就是火山图上"上调"的那个红 |
+| 显著性（连续） | **viridis**，**截去暗端**（完整 viridis 的 `#365C8D` 距 down 蓝仅 3.1°，深色点会被读成"下调"） |
+| 模块 / 多组 | **Okabe-Ito** 变体穷举出的 4 色（绿 / 玫红 / 天蓝 / 橙） |
+
+判据是量化的：**色相相差 15° 以内视为同一个颜色**。按这条算，之前有四处
+凭眼睛看不出来的问题（`firebrick` 与 up 红差 0.4°、分类色板在 protanopia 下差 0.002、
+magma 中段与 up 红差 2.9°、viridis 暗端与 down 蓝差 3.1°）。
 
 ```bash
 node tools/check_palette.mjs   # 从 common.R 解析实际色值重算，CI 里是门禁
