@@ -254,8 +254,14 @@
 R 侧两个仓库一次都没调过。
 
 现在 R 侧的调用点是 `main_analysis.R` 的 `record_geo_decisions()`，
-放在**所有步骤跑完之后、验收之前**，记六条：`design_mode` / `deg_mode` /
-`tf_sources` / `survival_horizons` / `part2_handoff` / `optional_steps`。
+放在**所有步骤跑完之后、验收之前**，记**七条**：`design_mode` / `deg_mode` /
+`tf_sources` / `survival_horizons` / `part2_handoff` / `optional_steps` /
+`named_tools`。
+
+> **这段文字写错过一次**：加 `named_tools` 那条时只改了代码，
+> 这里还写着"六条"并只列了六个。**数数与清单是两处，改一处就会分叉** ——
+> 所以验收项不检查"有几条"，检查的是**该有的节点名在不在**
+> （见 `references/module0.md` §5）。
 
 **每条 answer 都是从已落盘的状态文件里「取」的，不是重新推理一遍。**
 这一点是硬要求：自己再判一遍就会和真正的执行结果分叉，
