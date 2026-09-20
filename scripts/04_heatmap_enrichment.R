@@ -599,7 +599,12 @@ make_ora_dotplot <- function(df, cfg, title) {
     # 因为分面标题已经把方向写在脸上了，再放一个图例是重复。
     ggplot2::scale_colour_manual(values = c(up = PAL$up, down = PAL$down),
                                  guide = "none") +
-    ggplot2::scale_size_continuous(name = "genes", range = c(2, 7)) +
+    # **气泡要收一点**（评审 3.4：行距 ≈25px 而气泡 Ø22–26px，相邻相交）。
+    # range 上限从 7 降到 5.5，行距不变时相邻气泡不再相切。
+    ggplot2::scale_size_continuous(name = "genes", range = c(1.8, 5.5)) +
+    # **右侧留余量**（评审 3.3：GSE42568 KEGG 右侧墨迹距边框仅 2px，
+    # 最大的点被边框切平）。默认 expansion 把最大点顶到面板边上。
+    ggplot2::scale_x_continuous(expansion = ggplot2::expansion(mult = c(0.02, 0.10))) +
     ggplot2::facet_wrap(~ panel, scales = "free_y", nrow = 1) +
     ggplot2::labs(title = title,
                   subtitle = wrap_subtitle(sprintf(
@@ -630,8 +635,17 @@ make_gsea_dotplot <- function(df, cfg, title) {
     ggplot2::geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.3,
                         colour = PAL$ink) +
     ggplot2::geom_point(ggplot2::aes(size = setSize, colour = -log10(p.adjust))) +
-    scale_colour_seq("-log10\nadj.P") +
-    ggplot2::scale_size_continuous(name = "set size", range = c(2, 7)) +
+    # **色标范围必须可见、且不能被数据夹死成一条缝**（评审 3.5）：
+    # GSE42568 的 GSEA GO 全部条目挤在 -log10 adj.P 7.65–7.75（0.10 宽），
+    # gradientn 默认铺满整个渐变 → 几乎全黄、单个青点像离群。
+    # 修法：limits 固定 0 到本图最大值的 1.15 倍（而不是 min–max），
+    # 点群落在色带的中后段，"这批条目的显著性其实都在同一量级"这件事
+    # 从色标上一眼可见；GSE64790（ranked_fallback，量级低）也不受影响。
+    scale_colour_seq("-log10\nadj.P",
+                     limits = c(0, 1.15 * max(-log10(keep$p.adjust))),
+                     breaks = function(x) pretty(x, n = 4)) +
+    ggplot2::scale_size_continuous(name = "set size", range = c(1.8, 5.5)) +
+    ggplot2::scale_x_continuous(expansion = ggplot2::expansion(mult = c(0.04, 0.06))) +
     ggplot2::labs(title = title,
                   # 原来写的是 "right = up in tumor, left = up in normal" ——
                   # 两个方向又都写成 "up"，和 ORA 那张图是同一个毛病。

@@ -610,7 +610,10 @@ run_08_tf_regulation <- function(cfg) {
       figs_written <- c(figs_written, "01-08-01-unit1-tf-regulon-enrichment.pdf")
       if (!is.null(act_test) && nrow(act_test) >= 2L) {
         tt <- utils::head(act_test[order(-abs(act_test$cohens_d)), ], 20L)
-        tt$tf <- factor(tt$tf, levels = rev(tt$tf))
+        # **按 |d| 单调排序**（评审 3.8：原 factor 按 tt 行序，红蓝交替横跳，
+        # |d| 排序完全不可见）。coord_flip 后 levels 顺序 = 图上自下而上，
+        # 所以 levels 给 cohens_d 升序、图上自然自上而下 |d| 递减。
+        tt$tf <- factor(tt$tf, levels = tt$tf[order(tt$cohens_d)])
         tt$direction <- ifelse(tt$delta_mean > 0,
                                sprintf("higher in %s", tt$group2[1]),
                                sprintf("higher in %s", tt$group1[1]))
@@ -622,14 +625,23 @@ run_08_tf_regulation <- function(cfg) {
                                                y = .data$cohens_d,
                                                fill = .data$direction)) +
           ggplot2::geom_col(width = 0.7) +
+          # **条上标数值**（评审同一条：效应量要能读出值，不只靠长度）
+          ggplot2::geom_text(ggplot2::aes(label = sprintf("%.2f", .data$cohens_d)),
+                             hjust = ifelse(tt$cohens_d >= 0, -0.15, 1.15),
+                             size = 2.3, colour = PAL$ink) +
           ggplot2::coord_flip() +
+          # 数值标注伸到条外，横轴要留余量
+          ggplot2::scale_y_continuous(
+            expansion = ggplot2::expansion(mult = c(0.10, 0.16))) +
           ggplot2::scale_fill_manual(values = stats::setNames(
             c(PAL$up, PAL$down), c(lv2, lv1))) +
           ggplot2::labs(
             title = sprintf("TF regulon activity, group difference - %s",
                             cfg$dataset_id),
             subtitle = wrap_subtitle(sprintf(
-              "Cohen's d (%s vs %s), min n=%d per group. n is small - read effect size, not p",
+              paste0("Cohen's d (%s vs %s), min n=%d per group. Activity = ",
+                     "mor-weighted mean of target-gene z-scores per sample ",
+                     "(dorothea regulons). n is small - read effect size, not p"),
               act_test$group2[1], act_test$group1[1], min(table(g)))),
             x = NULL, y = "Cohen's d", fill = NULL) +
           theme_paper()

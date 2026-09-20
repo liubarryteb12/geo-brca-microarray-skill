@@ -144,7 +144,7 @@ read_survival <- function(cfg) {
 #'
 #' 风险分组用**训练集的中位数**切，验证集也用它 —— 若在验证集里重新取中位数，
 #' 两个队列的"高风险"就不是同一个定义，KM 图看起来能对上而实际上不可比。
-make_km_plot <- function(df, cutoff, title, cfg) {
+make_km_plot <- function(df, cutoff, title, cfg, time_unit = "days") {
   df$stratum <- factor(ifelse(df$risk > cutoff, "high risk", "low risk"),
                        levels = c("low risk", "high risk"))
   fit <- survival::survfit(survival::Surv(time, event) ~ stratum, data = df)
@@ -196,7 +196,10 @@ make_km_plot <- function(df, cutoff, title, cfg) {
                "log-rank p = %.3g. Censored observations are tick marks; ",
                "shaded bands would imply a confidence interval the n does not support."),
         cutoff, p_lr), fig_width = W_DOUBLE),
-      x = "time", y = "survival probability") +
+      # **x 轴必须带时间单位**（评审 3.6："time" 无单位 —— 训练队列是天、
+      # 验证队列 GSE20685 是年，同一个数字差 365 倍）。
+      x = sprintf("Time since diagnosis (%s)", time_unit),
+      y = "survival probability") +
     theme_paper(10) +
     ggplot2::theme(legend.position = "bottom")
   if (nrow(cens) > 0L) {
@@ -680,13 +683,15 @@ run_07_lasso <- function(cfg) {
   # 拆成单图之后两边一致（这也是仓库出图约定里"尽量出单图"的一条）。
   save_pdf(file.path(res, "01-07-01-unit1-lasso-km-training.pdf"), {
     print(make_km_plot(risk_df[risk_df$set == "training", , drop = FALSE], cutoff,
-                       sprintf("LASSO-Cox risk groups (training) - %s", cfg$dataset_id), cfg))
+                       sprintf("LASSO-Cox risk groups (training) - %s", cfg$dataset_id), cfg,
+                       time_unit = "days"))
   }, width = W_DOUBLE, height = mm(70))
   if (any(risk_df$set != "training")) {
     vset <- unique(risk_df$set[risk_df$set != "training"])[1L]
     save_pdf(file.path(res, "01-07-01-unit2-lasso-km-validation.pdf"), {
       print(make_km_plot(risk_df[risk_df$set == vset, , drop = FALSE], cutoff,
-                         sprintf("LASSO-Cox risk groups (external validation: %s)", vset), cfg))
+                         sprintf("LASSO-Cox risk groups (external validation: %s)", vset), cfg,
+                         time_unit = "years"))
     }, width = W_DOUBLE, height = mm(70))
   }
 

@@ -80,11 +80,15 @@ run_02_qc_pca_correlation <- function(cfg) {
 
   p_box <- ggplot(long, aes(x = sample, y = expression, fill = stage)) +
     geom_boxplot(outlier.size = 0.3, linewidth = 0.25) +
-    facet_wrap(~stage, ncol = 2, scales = "free_y") +
+    # **前后两面板必须共 y 轴**（评审 3.1：scales="free_y" 下 before 有
+    # 16/12/8/4、after 只有 12/8/4，标准化前后的离散度根本没法比）。
+    # 标准化只平移不改变 log2 量级，共轴完全放得下。
+    facet_wrap(~stage, ncol = 2, scales = "fixed") +
     scale_fill_manual(values = c(before = PAL$ns, after = PAL$down)) +
     labs(title = "Expression distribution before / after quantile normalization",
          subtitle = wrap_subtitle(sprintf(
-           "%s - %d genes x %d samples. %s", cfg$dataset_id, nrow(expr), ncol(expr),
+           "%s - %d genes x %d samples. Panels share the y axis so the before/after spread is comparable. %s",
+           cfg$dataset_id, nrow(expr), ncol(expr),
            if (isTRUE(show_x)) "x 轴标出样本编号。"
            else paste0("样本编号未标出（", ncol(expr),
                        " 个放不下）；逐个样本的身份见 data/", cfg$dataset_id,
@@ -108,15 +112,18 @@ run_02_qc_pca_correlation <- function(cfg) {
   # 一眼能看出某一组的分布是否整体偏移
   long$group <- groups[match(long$sample, group$gsm)]
   # 线型同样编码分组（颜色不是唯一载体）
+  # **两面板共 y 轴**（评审 3.8：free_y 下 before 刻度 0.4/0.2/0.0、
+  # after 是 0.5/0.4/.../0.0，峰高不可比）。density 的 y 量纲本就一致，
+  # 共轴后唯一损失是 after 面板下方留白 —— 可比性优先。
   p_density <- ggplot(long, aes(x = expression, colour = group, linetype = group,
                                 group = sample)) +
     geom_density(linewidth = 0.4, alpha = 0.85) +
-    facet_wrap(~stage, ncol = 1, scales = "free_y") +
+    facet_wrap(~stage, ncol = 1, scales = "fixed") +
     scale_colour_condition(levels(groups), name = NULL) +
     scale_linetype_manual(values = c("solid", "dashed", "dotted", "dotdash")[seq_along(levels(groups))],
                           name = NULL) +
     labs(title = "Expression density before / after normalization",
-         subtitle = wrap_subtitle(sprintf("coloured and styled by group; one curve per sample (%s)",
+         subtitle = wrap_subtitle(sprintf("coloured and styled by group; one curve per sample; panels share the y axis (%s)",
                                           cfg$dataset_id), fig_width = W_DOUBLE),
          x = "log2 expression", y = "density") +
     theme_paper(9)
@@ -326,6 +333,12 @@ run_02_qc_pca_correlation <- function(cfg) {
                    if (isTRUE(show_cn2)) "显示" else "隐藏（放不下）", cor_fs))
 
   save_pdf(file.path(res, "01-02-04-unit1-correlation-heatmap.pdf"), {
+    # **色标必须固定，不能跟着数据 min-max 走。** pheatmap 默认把色带压进
+    # 本轮数据的实际范围（GSE64790 全是 0.87+ 的样本内相关时色带只剩 0.13
+    # 宽），把 n=6 的小差异放大成"板块分明"（评审 3.5）。相关系数的天然
+    # 量程是 0–1，这里固定 0.5–1.0（低于 0.5 的样本相关本身就该整批打回），
+    # 两份数据集的深浅从此可比。
+    brks <- seq(0.5, 1.0, length.out = 101)
     pheatmap::pheatmap(
       pearson,
       annotation_col = annotation_col,
@@ -336,10 +349,12 @@ run_02_qc_pca_correlation <- function(cfg) {
       show_rownames = isTRUE(show_cn2), show_colnames = isTRUE(show_cn2),
       fontsize = cor_fs,
       color = pal_sequential(100),
+      breaks = brks,
       border_color = "white", treeheight_row = 18, treeheight_col = 18,
       # **少画了哪一层，标题上要写出来。** pheatmap 没有副标题，
       # 不说的话读者会以为这张热图本来就不带数值。
-      main = sprintf("Sample-sample Pearson correlation (%s)%s", cfg$dataset_id,
+      main = sprintf(paste0("Sample-sample Pearson correlation (%s)%s ",
+                            "- colour scale fixed 0.5-1.0"), cfg$dataset_id,
                      if (isTRUE(show_num)) ""
                      else " - cell values omitted (they do not fit); see correlation_matrix.csv"),
       silent = FALSE
