@@ -65,7 +65,7 @@ DEG 结果无法解释 —— 详见 §2.9。
 
 配对依据是**年龄一一对应**（72/72、41/41、52/52），且提交者在 `Series_overall_design`
 里明确写了 "matched histological normal breast tissues"。
-配对关系在 `assets/config.yml` 里**显式声明**，不靠解析标题后缀。
+配对关系在 `assets/config.<GSE>.yml` 里**显式声明**，不靠解析标题后缀。
 
 分组依据 `characteristics_ch1` 的 `tissue:` 字段：肿瘤含 `TNBC  tissue`，
 正常含 `matched normal breast tissues`。
@@ -101,7 +101,7 @@ DEG 结果无法解释 —— 详见 §2.9。
 **为什么必须配对**：患者间差异往往比肿瘤/正常差异还大。不阻断的话，这部分方差
 全部落进残差，真正的信号会被埋掉。配对后残差 df = 6 − 4 = **2**。
 
-配对关系显式写在 `assets/config.yml` 的 `pairs` 里，`00_validate_inputs.R` 会校验：
+配对关系显式写在 `assets/config.<GSE>.yml` 的 `pairs` 里，`00_validate_inputs.R` 会校验：
 每个 GSM 只出现一次、每对必须一例 tumor 一例 normal、不允许有样本落单。
 `03_deg.R` 若发现配对设计不可用（秩不足等）会**自动退回非配对**并把原因写进
 `deg_summary.json` 的 `paired_fallback_reason`，绝不让它拖垮整条流水线。
@@ -402,7 +402,7 @@ tumor-vs-normal 的差异基因表里，**分不清多少来自恶性转化、�
 | FDR 显著基因 ≥ 5 个 | `adj.P < 0.05` 且 `\|log2FC\| > 1` 的基因 | `fdr` |
 | FDR 显著基因 < 5 个 | 按 `raw P` 排序、`\|log2FC\| > 1` 的前 500 个基因 | `ranked_fallback` |
 
-`ranked_fallback_genes` 在 `assets/config.yml` 里可调；设为 `0` 即关闭降级
+`ranked_fallback_genes` 在 `assets/config.<GSE>.yml` 里可调；设为 `0` 即关闭降级
 （富集/PPI 直接跳过并记录原因）。
 
 **降级必须被标注，这是硬规则。** `enrichment_status.json` 和 `ppi_status.json`
@@ -441,7 +441,7 @@ tumor-vs-normal 的差异基因表里，**分不清多少来自恶性转化、�
 
 ### 3.1 数据获取与校验（`00_validate_inputs.R`）
 
-- 读取 `assets/config.yml`，校验 `dataset_id` / `group_field` / `group_values` / `contrast` 齐全
+- 读取 `assets/config.<GSE>.yml`，校验 `dataset_id` / `group_field` / `group_values` / `contrast` 齐全
 - 从 GEO SOFT 接口（base R `url()`，不依赖 Bioconductor）拉取 series 与 sample 元数据
 - **硬门禁**：物种必须为 `Homo sapiens`；类型必须为 array；样本数必须 < 10；两组样本数均 ≥ 3
 - 按 `group_field` 匹配 `group_values` 生成分组；一个样本命中多个组 → 报错退出
@@ -505,7 +505,7 @@ tumor-vs-normal 的差异基因表里，**分不清多少来自恶性转化、�
 当前状态：**13 个结果表 + 12 张 PNG 全部逐字节一致**；
 只有 `state.json` 不同，那是各步骤耗时与时间戳，属预期。
 
-`config.yml` 的 `analysis.seed`（默认 `20260919`）**不可删除**；
+`assets/config.<GSE>.yml` 的 `analysis.seed`（默认 `20260919`）**不可删除**；
 所有种子都紧挨着各自的随机调用设置，与上游消耗了多少随机数无关。
 
 ### 3.3 质控（`02_qc_pca_correlation.R`）
@@ -676,7 +676,7 @@ GO 会返回大量近义条目 —— 实测下调簇的前 4 名就是
 > significant — the most common way ORA results mislead."*
 > 背景应当是"本实验**可能**检出的基因"，未在芯片上检出的基因不应计入。
 > spec 里写的是"全基因组背景"；需要按 spec 口径复现时把
-> `config.yml` 的 `enrichment.universe` 改回 `genome` 即可。
+> `assets/config.<GSE>.yml` 的 `enrichment.universe` 改回 `genome` 即可。
 > **两种结果不同，报告中必须写明用了哪种。**
 
 ### 3.7 差异基因互作（PPI，`05_ppi.R`）

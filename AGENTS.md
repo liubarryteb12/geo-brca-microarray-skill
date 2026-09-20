@@ -569,6 +569,9 @@ node tools/check_figures.mjs results/GSE42568
 # 配色仍然"一个颜色一个含义"（解析 common.R 的实际色值重算）
 node tools/check_palette.mjs
 
+# 文档里引用的仓库文件真的存在（死链接；走独立的 docs_check.yml）
+node tools/check_doc_refs.mjs
+
 # —— 云端（真正的端到端）——
 gh workflow run geo_analysis.yml -f dataset=GSE42568
 gh run watch --repo liubarryteb12/geo-normal-pipeline-skill
@@ -577,6 +580,23 @@ gh run watch --repo liubarryteb12/geo-normal-pipeline-skill
 **本地静态检查不等于能跑通。** `check_r_syntax.mjs` 自己的输出就写着这句话。
 它挡得住语法错和漏折行的副标题，挡不住"参数传错类型"和"返回的是 list 不是
 向量"—— 这两类都实测发生过，只有在云端才暴露。
+
+### 文档改动走独立的 `docs_check.yml`
+
+`geo_analysis.yml` 有 `paths:` 过滤（只跑 `scripts/` `tools/` `assets/`），
+**`*.md` 的改动不触发它** —— 所以文档里的死链接以前**没有任何门禁能挡住**。
+
+实测就踩到了：规则 29 让读者去跑 `_smoke_survival_diag.py`，而那个文件早删了；
+`assets/config.yml` 这个名字在 README 与 `EXPERIMENTAL_DESIGN.md` 里被引用了
+**7 次**，而真实文件是 `assets/config.<GSE>.yml`。
+
+现在 `tools/check_doc_refs.mjs` + `.github/workflows/docs_check.yml` 兜住这一类，
+**约 20 秒**、不装 R、不跑分析。两个逃生舱（指向已删文件 / 指向第三方源码）
+写在工具文件头。
+
+> **为什么文档不并进主 workflow：** 那样改一个错别字要跑 14 分钟的两个数据集，
+> 而且会被主流水线的偶发失败牵连（规则 12 的浮点末位分叉有实测记录）——
+> 文档改动因无关原因判红，反而让"每次推送 CI 必须绿"这条失效。
 
 **每轮只解决日志明确指出的那件事。** 不要凭"看起来可能有问题"改代码：
 曾把浮点末位漂移误判成 commit 引起的，白改一轮（见规则 12）。

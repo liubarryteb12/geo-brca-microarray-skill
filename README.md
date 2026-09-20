@@ -245,7 +245,8 @@ node scripts/find_dataset.mjs check GSEXXXXX
 node tools/check_sample_structure.mjs GSEXXXXX
 ```
 
-然后把 `dataset_id` 和分组字段写进 `assets/config.yml`。
+然后把 `dataset_id` 和分组字段写进 `assets/config.<GSE>.yml`
+（一个数据集一个配置文件，见 [`AGENTS.md`](AGENTS.md) 规则 2）。
 
 > **换数据集时最容易漏的两件事**：① 分组与批次混杂（第一版 GSE92252 就栽在这里，
 > 三个分组恰好是三个表达批次）；② 平台注释里根本没有基因 symbol
