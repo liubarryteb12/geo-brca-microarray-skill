@@ -704,7 +704,7 @@ wrap_caption <- function(lines, fig_width = 8, base_size = 10) {
 #' @param panel_frac 绘图面板占图高的比例。0.75 是带标题、副标题、
 #'   底部横排图例时的实测经验值；`pheatmap` 没有副标题、图例是右侧细色条，
 #'   用 0.82 更准。
-#' @param min_gap    相邻标签之间至少要留的空白（pt）。2.5pt 约合 5px（150dpi），
+#' @param min_gap    相邻标签之间至少要留的空白（pt）。2.5pt 约合 10px（300dpi），
 #'   是"一眼能分开两行"的下限；1.5pt 已经会糊成一片。
 #' @return 整数上限
 label_budget <- function(height_in, fontsize, panel_frac = 0.75, min_gap = 2.5) {
@@ -850,7 +850,15 @@ theme_paper <- function(base_size = 10) {
       # 底部横排图例：省宽度
       legend.position   = "bottom",
       legend.direction  = "horizontal",
-      legend.box        = "horizontal",
+      # **多个图例要竖着摞，不能并排。**
+      # `legend.direction` 管的是一个图例内部（键横排），`legend.box` 管的是
+      # **多个图例之间**。原来是 "horizontal" —— 多个图例的宽度**相加**。
+      # 实测 volcano_plot（colour + alpha 两个图例）：并排后总宽超出 183 mm，
+      # 两端被静默裁掉 —— 左端只剩 "…nificant"，右端
+      # "nominal P < 0.05, NOT FDR-significant (1873)" 的计数整段消失。
+      # ggplot 裁图例**不报警**，图上只表现为"这个图例好像短了一截"。
+      # 竖排之后图例块的宽度 = 最宽的那一个图例，不再随图例个数增长。
+      legend.box        = "vertical",
       legend.title      = ggplot2::element_text(size = base_size - 1),
       legend.text       = ggplot2::element_text(size = base_size - 1.5),
       legend.key.size   = ggplot2::unit(0.9, "lines"),
@@ -902,8 +910,13 @@ mm <- function(...) c(...) / 25.4
 #' @param expr  绘图表达式，会在调用者的环境里求值两次
 #' @param width,height 画布尺寸（英寸）。**用 `mm()` / `W_SINGLE` / `W_ONE_HALF` /
 #'   `W_DOUBLE` 给值**，不要写裸英寸数字 —— 栏宽是按毫米规定的。
-#' @param dpi   PNG 分辨率
-save_pdf <- function(path, expr, width = W_DOUBLE, height = mm(64), dpi = 150) {
+#' @param dpi   PNG 分辨率。**300 是投稿常规下限** —— 期刊对位图普遍要求
+#'   300 dpi，线条图常要 600–1200。原来默认 150：实测 183 mm 宽的图只渲染成
+#'   1080 px，放大一倍就糊，而"分辨率不够"在缩略图上完全看不出来。
+#'   PDF 那一路是**矢量**的、与 dpi 无关，所以这个值只影响位图产物（PNG）。
+#'   **在这里改而不是逐图传参**：分辨率是每一张图都有的属性，逐图传一定会漏
+#'   （实测全仓库 12 个出图脚本、19+14 张图，没有一个调用点传过 dpi）。
+save_pdf <- function(path, expr, width = W_DOUBLE, height = mm(64), dpi = 300) {
   code <- substitute(expr)
   env  <- parent.frame()
 

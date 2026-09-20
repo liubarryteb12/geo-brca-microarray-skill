@@ -501,6 +501,21 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
     )
     writeLines(cap, file.path(res, "PPI_network_caption.txt"), useBytes = TRUE)
 
+    # **图内只留"看错就会得出错误结论"的两条，其余进上面那个文件。**
+    # 原来把七段方法学散文整段画进图里，实测把画布撑到 239 mm —— 比 A4
+    # 正文版心还高，装不进任何一页；而其中大部分是**读图当下不需要**的
+    # 方法学细节（阈值、节点/边筛选规则、编码说明、文件清单）——
+    # 那些内容已经逐字写进 `PPI_network_caption.txt` 了，画第二遍不增加信息。
+    # 留下来的两条属于"不知道就会读错图"：
+    #   1. 边是**数据库证据**，不是本数据集测出来的（否则会被当成实验发现）
+    #   2. 标注的 hub 是**子网络**的 hub，与 `hub_genes.csv` 的全网络排名
+    #      不是一回事（规则 15：两者都对，但回答不同的问题）
+    sub <- paste0(
+      "Edges are database evidence, NOT measured in this dataset. ",
+      "Labelled hubs are hubs of the SHOWN subnetwork - hub_genes.csv ranks the ",
+      "FULL network instead (both correct, different questions; do not mix). ",
+      "Full caption: PPI_network_caption.txt")
+
     p <- ggplot2::ggplot() +
       ggplot2::geom_path(
         data = ring_path,
@@ -553,7 +568,7 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
         # 折行按**实际字号**算：wrap_subtitle 内部用 base_size - 1.5 估字宽，
         # 所以这里传 8 是为了让它按 6.5pt 排版（下面 plot.subtitle 就是 6.5）。
         # 传 10 会按 8.5pt 估，每行偏短、行数虚高，图会被撑得过高。
-        subtitle = wrap_caption(cap, fig_width = W_DOUBLE, base_size = 8),
+        subtitle = wrap_caption(sub, fig_width = W_DOUBLE, base_size = 8),
         x = NULL, y = NULL) +
       ggplot2::coord_fixed() +
       ggplot2::theme_void(base_size = 10) +
@@ -574,10 +589,11 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
         plot.margin = ggplot2::margin(6, 6, 4, 6))
 
     plot_err <- tryCatch({
-      # 高度从 7.8 加到 9.4：coord_fixed 下面板是方的，宽 7.5in 就要求
-      # 面板高约 7.2in，再加标题、**七段图注**和底部图例。图注多出来的
-      # 约 1.3in 必须由画布高度支付，否则面板会被压小、节点更挤。
-      save_pdf(file.path(res, "PPI_network.pdf"), print(p), width = W_DOUBLE, height = mm(239))
+      # 高度从 239 mm 收到 198 mm：`coord_fixed()` 下面板是方的，宽 183 mm
+      # 就要求面板高约 183 mm，再加标题、**两行**图注和底部图例 ≈ 198 mm。
+      # 原来图注是七段散文、多占约 33 mm，才把画布顶到 239 mm（超出 A4 正文版心）。
+      # 全文没有丢 —— 它在同目录的 `PPI_network_caption.txt` 里。
+      save_pdf(file.path(res, "PPI_network.pdf"), print(p), width = W_DOUBLE, height = mm(198))
       NULL
     }, error = function(e) conditionMessage(e))
 
