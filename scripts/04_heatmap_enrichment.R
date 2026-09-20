@@ -109,15 +109,35 @@ run_04a_heatmap <- function(cfg) {
     direction = c(up = PAL$up, down = PAL$down)
   )
 
-  # 画布高度随基因数缩放：每行 0.115in ≈ 8.3pt。
-  fig_h  <- max(mm(140), length(genes) * 0.115)
-  row_fs <- 5
+  # **画布高度要长到装得下行名，而不是让行名被挤掉。**
+  #
+  # 原来每行固定 0.115in，而 `decide_rownames()` 的预算是
+  #   budget = floor(height_in * 72 * panel_frac / (fontsize + min_gap))
+  # 反解出每行至少需要 `(fontsize + min_gap) / (72 * panel_frac)` ≈ 0.127in。
+  # 0.115 < 0.127，所以 50 个基因时预算只有 45 行 → 判定放不下 →
+  # **整张不显示行名**。而热图一旦没有基因名，读者就无法知道画的是哪些基因
+  # （规则 21 的另一半正是为此要求落盘 `top50_heatmap_genes.csv`）。
+  #
+  # 宽度受规则 25 约束（183mm），**高度没有上限** —— 所以正确做法是让画布长高，
+  # 而不是牺牲标签。50 个基因 ≈ 169mm 高，仍在常规排版范围内（<200mm）。
+  #
+  # 每行间距**从 decide_rownames 的同一个算式反解**，不写字面量：
+  # 两处各写一个数就会漂移，而漂移的后果是"行名又悄悄不显示了"。
+  row_fs     <- 5
+  min_gap    <- 2.5
+  panel_frac <- 0.82   # pheatmap 无副标题、图例是右侧细色条，面板占比高于 ggplot
+  # 1.05 的余量：per_row 按等式反解，等式上刚好等于预算，浮点误差会让
+  # floor() 少算 1 行 —— 于是 50 个基因又变成"放不下"。余量把这个刀锋推开。
+  per_row <- ((row_fs + min_gap) / (72 * panel_frac)) * 1.05
+  fig_h   <- max(mm(140), length(genes) * per_row)
   # **行名放不下就整张不显示。** 原来写的是硬编码的 `length(genes) <= 60`，
   # 和画布高度毫无关系 —— 50 个基因时每行只剩约 3.6px 间隙，糊成一片。
-  # pheatmap 没有副标题、图例是右侧细色条，面板占比比 ggplot 高，用 0.82。
   show_rn <- decide_rownames(length(genes), fig_h, row_fs, "热图基因",
-                             panel_frac = 0.82, min_gap = 2.5,
+                             panel_frac = panel_frac, min_gap = min_gap,
                              figure = "top50_heatmap")
+  log_info(sprintf("热图画布 %.1f mm（%d 个基因，行名 %s）",
+                   fig_h * 25.4, length(genes),
+                   if (isTRUE(show_rn)) "显示" else "隐藏"))
 
   # **行聚类自己算，再把同一棵树传给 pheatmap。**
   # 一是为了拿到显示顺序（见下面的 CSV），二是保证表和图的顺序必然一致 ——
