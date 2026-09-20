@@ -551,6 +551,10 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
           b[b >= min(vdf$degree) & b <= max(vdf$degree)]
         }),
         guide = ggplot2::guide_legend(
+          # **强制单行**（评审 3.10：degree 图例拆成两行、标题夹在中间）。
+          # 6 个断点横排一张 183mm 的图放得下；不指定 nrow 时 ggplot 按
+          # 可用宽度自行折行，就出现"5/15/25 一行、10/20/30 一行"。
+          nrow = 1,
           override.aes = list(fill = PAL$muted, colour = "white", stroke = 0.5))) +
       ggrepel::geom_text_repel(
         data = lab, ggplot2::aes(x = x, y = y, label = name),
