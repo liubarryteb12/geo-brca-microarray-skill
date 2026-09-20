@@ -56,6 +56,7 @@
 | `survival_horizons` | §1.6 报了哪几个时间点？没报的为什么？ | 事件数门槛 + `roc_notes` 里被丢弃的时间点 |
 | `part2_handoff` | 交给 Part 2 的靶基因表里有什么、丢了什么？ | 基因数、带 logFC 的个数 |
 | `optional_steps` | 可选步骤是"真跑了""有理由地没跑"还是"崩了"？ | 四个状态文件的实际 `status` 取值 |
+| `named_tools` | §1 点名的工具哪些真产出了结果？没用的为什么？ | 清单 `named_tools` 里逐条的 `used` 与 `reason` |
 
 **`deg_mode` 有两套取值**（`fdr`/`significant`，回退那一个同名同义），
 所以判据只认 `ranked_fallback` 这个字符串，并且四个来源依次尝试 ——
@@ -84,7 +85,7 @@
 | `record_human_review(cfg, node, required, status, note)` | 人工复核节点 | |
 | `record_cross_language(cfg, src, dst, format, before, after, lost, ...)` | 跨语言转换 | |
 | `manifest_summary(cfg)` | 供验收用的摘要 | 见 §3.3 |
-| `NAMED_TOOLS` / `probe_named_tools()` / `named_tools_note()` | 点名工具的缺口登记 | **仅 Python 侧**，见 §5 |
+| `NAMED_TOOLS` / `probe_named_tools()` / `named_tools_note()` / `record_named_tools()` | 点名工具的缺口登记（**装不上 ≠ 不归本仓库管**） | 见 §5 |
 
 ---
 
@@ -139,24 +140,31 @@ inputs_missing_required  只有 required=TRUE 的缺失（供验收判 FAIL）
 
 ---
 
-## 5. `NAMED_TOOLS`：点名工具"为什么没用上"的登记（Python 侧）
+## 5. `NAMED_TOOLS`：点名工具"为什么没用上"的登记（三个仓库都有）
 
-Part 2 / Part 3 各有 `NAMED_TOOLS` + `probe_named_tools()`。
-**Part 1 没有这个结构** —— R 侧点名的工具都在 `KEY_PACKAGES` 里，
-而 `timeROC` / `rms` 已经真的接进来了（`10_survival_diagnostics.R`）。
+`NAMED_TOOLS` + `probe_named_tools()` + `named_tools_note()` 三个仓库同名同义，
+所以三部分的清单可以并排读。R 侧多一个 `record_named_tools(cfg, used=)`
+把结果写进清单的 `named_tools` 字段。
+
+**`KEY_PACKAGES` 回答"装没装"，这张表回答"为什么"。** 两者不能互相替代：
+`"scTenifoldKnk": null` 说明"查过了，没装"，但**没说是"装不上"还是
+"不归本仓库管"** —— 而这两件事的后续动作完全不同（前者等上游，
+后者去另一个仓库找）。
 
 **判据是"理由写了没有"，不是"工具跑了没有"。**
 将来某个工具能装了，验收应该依然 PASS（理由变成"已装"），
-而不是因为 `available=False` 就变红 —— 那会把"如实记录"惩罚成失败。
+而不是因为 `available=FALSE` 就变红 —— 那会把"如实记录"惩罚成失败。
 
-四类 `kind`（Python 侧）：
+### 5.1 `kind` 取值（三个仓库同义）
 
-| kind | 含义 |
-|---|---|
-| `r_package` | R/Bioconductor 包，CI 无 rpy2 |
-| `not_on_pypi` | 真包不在 PyPI |
-| `deps` / `needs_*` | PyPI 有真包，依赖链或资源跑不动 |
-| `name_taken` | **PyPI 上那个名字是另一个不相干的包** |
+| kind | 含义 | 例子 |
+|---|---|---|
+| `r_package` | R/Bioconductor 包 | `BayesSpace` `RCTD` `SPARK-X` `CellChat` |
+| `not_on_pypi` / `not_on_cran` | 真包不在包索引里 | `STAGATE` `SpatialDE2` `TRRUST` |
+| `web_service` | 是 web 服务，没有本地包 | `ChEA3` |
+| `python_part` | **规范把这一节划给了另一个仓库** | `scTenifoldKnk` `PerturbNet` `RegVelo` |
+| `deps` / `needs_*` | 包在，依赖链或资源跑不动 | `cell2location`（`needs_reference`） |
+| `name_taken` | **那个名字是另一个不相干的包** | 见下 |
 
 **`name_taken` 是最危险的一类**，因为 `pip install` 会**成功**。
 实测：`edgeR` 是"浏览器重定向"、`slingshot` 是"ElasticSearch 索引迁移"、
@@ -167,6 +175,20 @@ Part 2 / Part 3 各有 `NAMED_TOOLS` + `probe_named_tools()`。
 反例：`SingleR` 在 PyPI 上是 **BiocPy/singler**（作者 Aaron Lun），
 是 R 那个算法的官方绑定，不是顶名的。**判断依据是
 summary / author / project_urls，不是"名字存不存在"。**
+
+### 5.2 `used` 必须由调用方传进来，不在 `probe_named_tools()` 里自己判
+
+`probe_named_tools()` 只给 `available` / `kind` / `section` / `reason`。
+**`used` 由调用方按已落盘的状态文件填。**
+
+`TRRUST` 就是反例：它不是 R 包（`available=FALSE`），但**真的产出了结果**
+（官方 TSV 作 dorothea 的独立交叉验证）。如果让 `probe_named_tools()`
+自己按 `available` 推 `used`，它会被记成"没用上"。
+
+R 侧的调用点：`main_analysis.R` 的 `record_geo_decisions()` 第 7 条，
+`used` 取自 `tf_status.json` 的 `trrust.status == "ok"` ——
+**从产物里"取"，不重新推理一遍**。自己再判一遍就会和真正的执行结果分叉，
+而**分叉出来的那份看起来同样合理**，读者没有任何办法发现。
 
 ---
 
