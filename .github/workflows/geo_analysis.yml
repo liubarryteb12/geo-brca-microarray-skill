@@ -112,11 +112,15 @@ jobs:
       # v2 -> v3：加入 WGCNA（共表达网络）、glmnet + survival（LASSO-Cox 与
       #          KM 曲线）、matrixStats（WGCNA 的依赖，显式列出以免被间接装成旧版）。
       # v3 -> v4：加入 dorothea（TF 调控子，08_tf_regulation.R 的主来源）。
+      # v4 -> v5：加入 timeROC / rms（§1.6 时间依赖 AUC 与校准，
+      #          10_survival_diagnostics.R）。**改 packages 必须递增这个键** ——
+      #          actions/cache 的 key 一旦存在就不再写回，沿用旧 key 会让
+      #          新装的包每次运行都被丢掉、重新装一遍。
       - name: Cache R library
         uses: actions/cache@v4
         with:
           path: ${{ env.R_LIBS_USER }}
-          key: rlib-${{ runner.os }}-bioc-v4
+          key: rlib-${{ runner.os }}-bioc-v5
           restore-keys: |
             rlib-${{ runner.os }}-
 
@@ -144,6 +148,8 @@ jobs:
             any::survival
             any::matrixStats
             any::dorothea
+            any::timeROC
+            any::rms
           cache-version: 1
 
       # 纯诊断步骤，不允许它拖垮整条流水线

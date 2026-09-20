@@ -39,7 +39,7 @@ options(geo.orchestrated = TRUE)
 for (f in c("00_validate_inputs.R", "01_download_clean.R", "02_qc_pca_correlation.R",
             "03_deg.R", "04_heatmap_enrichment.R", "05_ppi.R",
             "06_wgcna.R", "07_lasso.R", "08_tf_regulation.R",
-            "09_export_targets.R")) {
+            "09_export_targets.R", "10_survival_diagnostics.R")) {
   p <- file.path(.geo_scripts_dir, f)
   if (!file.exists(p)) stop(sprintf("缺少步骤脚本: %s", p))
   source(p)
@@ -63,6 +63,9 @@ STEPS <- list(
   list(id = "wgcna",              fn = run_06_wgcna,               required = FALSE),
   list(id = "lasso_cox",          fn = run_07_lasso,               required = FALSE),
   list(id = "tf_regulation",      fn = run_08_tf_regulation,       required = FALSE),
+  # §1.6 的时间依赖 AUC（timeROC）与校准（rms）。**只读 lasso_risk_scores.csv**，
+  # 不动 07 的任何一行 —— 所以 07 已经验证过的 C-index 不可能因为这一步而变。
+  list(id = "survival_diagnostics", fn = run_10_survival_diagnostics, required = FALSE),
   # §1.7/§1.8 的 Part 1 侧：把候选靶基因整理成 CSV 交给 Part 2。
   # 放在最后 —— 它要汇总前面所有步骤的产物。
   list(id = "export_targets",     fn = run_09_export_targets,      required = FALSE)
@@ -303,6 +306,63 @@ check_acceptance <- function(cfg) {
            e <- cl[[length(cl)]]
            !is.null(e$src) && !is.null(e$dst) && !is.null(e$format) &&
              length(e$lost_fields %||% list()) > 0L
+         }),
+         required = FALSE),
+    # ---- §1.6 时间依赖 AUC 与校准（10_survival_diagnostics.R）----------------
+    # **C-index 是一个数，它不告诉你模型在哪个时间段有用。** 一个签名完全
+    # 可能整体 C-index 0.70、而 5 年 AUC 只有 0.55。这一步就是去报那个数。
+    #
+    # 判据是"**要么报了，要么留下了不报的原因**" —— 事件不够时不报是
+    # 正确的（时间依赖 AUC 在事件少时方差极大），但那必须写下来。
+    list(name = "§1.6 时间依赖 AUC 已报或已说明不报（timeROC）",
+         ok = local({
+           s <- read_status("survival_diagnostics_status.json")
+           if (is.null(s)) return(FALSE)
+           st <- s$status
+           if (identical(st, "ok")) {
+             return(!is.null(s$n_time_points) && s$n_time_points > 0L &&
+                      file.exists(file.path(res, "time_roc.csv")))
+           }
+           # too_few_events / not_configured / schema_error 都算已定论，
+           # 但必须给出 reason —— 否则读者分不清"没事件"和"脚本没跑到"
+           !is.null(st) && !identical(st, "not_run") &&
+             !is.null(s$reason) && nzchar(as.character(s$reason))
+         }),
+         required = FALSE),
+    # **区分度和校准是两件事。** 模型可以把人排序排得很准（AUC 高），
+    # 同时把每个人的绝对风险高估一倍（校准差）—— 后者直接决定
+    # "要不要化疗"这类阈值判断。只报 AUC 等于只报了一半。
+    list(name = "§1.6 校准已做或已说明不做（rms / Cox 基线 + KM）",
+         ok = local({
+           s <- read_status("survival_diagnostics_status.json")
+           if (is.null(s)) return(FALSE)
+           if (!identical(s$status, "ok")) return(TRUE)   # 上一条已判过
+           n_cal <- s$n_calibration_rows %||% 0
+           n_rms <- s$n_rms_rows %||% 0
+           (n_cal > 0 || !is.null(s$calibration_notes)) &&
+             (n_rms > 0 || !is.null(s$rms_notes))
+         }),
+         required = FALSE),
+    # **报 AUC 必须报它的区间。** 点估计单独看会被当成结论：
+    # 实测 AUC 0.68 在 35 个事件下的 95% CI 能跨到 0.5 附近。
+    list(name = "§1.6 时间依赖 AUC 带置信区间",
+         ok = local({
+           s <- read_status("survival_diagnostics_status.json")
+           if (is.null(s) || !identical(s$status, "ok")) return(TRUE)
+           p <- file.path(res, "time_roc.csv")
+           if (!file.exists(p)) return(FALSE)
+           d <- utils::read.csv(p, stringsAsFactors = FALSE, check.names = FALSE)
+           if (nrow(d) == 0L) return(FALSE)
+           # 允许个别点因 SE 缺失而没有区间，但不能整列全空
+           sum(is.finite(d$ci_low) & is.finite(d$ci_high)) > 0L
+         }),
+         required = FALSE),
+    # 这一步的方法学限定必须写明（同 §1.6 的"内部诊断不是外部验证"）
+    list(name = "§1.6 诊断的方法学限定已写明（>=5 条）",
+         ok = local({
+           s <- read_status("survival_diagnostics_status.json")
+           if (is.null(s)) return(FALSE)
+           length(s$limitations %||% list()) >= 5L
          }),
          required = FALSE)
   )
