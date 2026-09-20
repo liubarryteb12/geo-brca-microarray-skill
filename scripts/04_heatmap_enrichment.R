@@ -141,8 +141,26 @@ run_04a_heatmap <- function(cfg) {
 
   # **行聚类自己算，再把同一棵树传给 pheatmap。**
   # 一是为了拿到显示顺序（见下面的 CSV），二是保证表和图的顺序必然一致 ——
-  # 若让 pheatmap 内部再算一次，两边就只是"应该一样"。
-  hc_rows <- stats::hclust(stats::dist(mat), method = "complete")
+  # 若让 pheatmap 内部再算一次，两边就只是"应该一样"。列同理。
+  hc_rows <- stats::hclust(stats::dist(mat, method = "euclidean"), method = "complete")
+  hc_cols <- stats::hclust(stats::dist(t(mat), method = "euclidean"), method = "complete")
+
+  # **列名放不放得下，同样算出来，不能靠默认。**
+  # pheatmap 的列名默认旋转 90°，所以每个列名在**横向**占用的正是它的行高
+  # `fontsize + min_gap` —— 与行名是同一个一维模型，只是把"可排布的那一维"
+  # 从高度换成宽度，所以直接复用 decide_rownames()（它的 `height_in` 就是
+  # "可排布那一维的长度"，这里传宽度）。
+  # 原来这里**根本没传 show_colnames**，pheatmap 默认全画 —— 121 个 GSM 号
+  # 在 183 mm 里每个只剩约 1.5 mm，糊成一条黑带，而"糊了"从图上完全看不出来。
+  col_fs <- 5
+  # 0.62 = 热图面板占整幅宽的比例：左侧树状图约 15 mm + direction 注释条约 4 mm，
+  # 右侧色条与图例约 45 mm，183 - 64 = 119 mm，119/183 ≈ 0.65，取 0.62 留余量。
+  col_panel_frac <- 0.62
+  show_cn <- decide_rownames(ncol(mat), W_DOUBLE, col_fs, "热图样本名（列）",
+                             panel_frac = col_panel_frac, min_gap = min_gap,
+                             figure = "top50_heatmap")
+  log_info(sprintf("热图列名 %s（%d 个样本，画布宽 %.1f mm）",
+                   if (isTRUE(show_cn)) "显示" else "隐藏", ncol(mat), W_DOUBLE * 25.4))
 
   save_pdf(file.path(res, "top50_heatmap.pdf"), {
     pheatmap::pheatmap(
@@ -150,9 +168,9 @@ run_04a_heatmap <- function(cfg) {
       annotation_col = annotation_col,
       annotation_row = annotation_row,
       annotation_colors = annotation_colors,
-      cluster_rows = hc_rows, cluster_cols = TRUE,
-      clustering_distance_cols = "euclidean",
+      cluster_rows = hc_rows, cluster_cols = hc_cols,
       show_rownames = show_rn, fontsize_row = row_fs,
+      show_colnames = show_cn, fontsize_col = col_fs,
       color = pal_diverging(100), border_color = "white",
       breaks = seq(-3, 3, length.out = 101),
       main = sprintf("%s (row Z-score) - %s", pick$label, cfg$dataset_id),
@@ -178,7 +196,23 @@ run_04a_heatmap <- function(cfg) {
   utils::write.csv(disp, file.path(res, "top50_heatmap_genes.csv"), row.names = FALSE)
   log_info(sprintf("已生成 top50_heatmap_genes.csv（%d 行，按图上的显示顺序；行名%s）",
                    nrow(disp), if (show_rn) "已显示" else "未显示，靠这张表对照"))
-  invisible(list(genes = genes, mode = pick$mode, show_rownames = show_rn))
+
+  # **列名同理。** 藏了列名之后，"图上第 N 列是哪个样本"就只剩这张表能回答，
+  # 而且必须是**显示顺序**（列也按聚类重排）。顺序取自上面自己算的那棵树，
+  # 与图上必然一致 —— 让 pheatmap 内部再算一次的话，两边只是"应该一样"。
+  col_order <- hc_cols$order
+  samp <- data.frame(
+    display_col = seq_along(col_order),
+    sample      = colnames(mat)[col_order],
+    group       = as.character(groups[col_order]),
+    stringsAsFactors = FALSE
+  )
+  utils::write.csv(samp, file.path(res, "top50_heatmap_samples.csv"), row.names = FALSE)
+  log_info(sprintf("已生成 top50_heatmap_samples.csv（%d 列，按图上的显示顺序；列名%s）",
+                   nrow(samp), if (show_cn) "已显示" else "未显示，靠这张表对照"))
+
+  invisible(list(genes = genes, mode = pick$mode,
+                 show_rownames = show_rn, show_colnames = show_cn))
 }
 
 run_04b_enrichment <- function(cfg) {

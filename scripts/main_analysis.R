@@ -364,15 +364,24 @@ check_acceptance <- function(cfg) {
     list(name = file.path(res, f), ok = ok, required = required)
   }
 
-  # 从 label_decisions.csv 读某张图有没有藏行名。
+  # 从 label_decisions.csv 读某张图的**某一类**标签有没有藏。
   # 返回 TRUE / FALSE，读不到就返回 NA（**不知道，不等于没藏**）。
-  label_hidden <- function(fig) {
+  #
+  # **必须按 `label` 过滤，不能只看 `figure`。** 一张图可以有多类标签
+  # （`top50_heatmap` 现在同时记"热图基因"行名与"热图样本名（列）"列名）。
+  # 原来取该图的**所有**记录再 `any(shown)`，于是"行名藏了、列名显示了"
+  # 会被 `any` 判成"没藏" —— 行名对照表那条验收项就不再要求 CSV，
+  # 而它正是这条检查存在的理由。**判据要匹配它真正在问的那件事。**
+  label_hidden <- function(fig, what = NULL) {
     p <- file.path(res, "label_decisions.csv")
     if (!file.exists(p)) return(NA)
     d <- tryCatch(utils::read.csv(p, stringsAsFactors = FALSE),
                   error = function(e) NULL)
     if (is.null(d) || !all(c("figure", "shown") %in% colnames(d))) return(NA)
     r <- d[d$figure == fig, , drop = FALSE]
+    if (!is.null(what) && "label" %in% colnames(d)) {
+      r <- r[r$label == what, , drop = FALSE]
+    }
     if (nrow(r) == 0L) return(NA)
     !any(r$shown)
   }
@@ -412,7 +421,16 @@ check_acceptance <- function(cfg) {
     # （不因为决策文件缺失而误报失败，那条另有验收项管）。
     list(name = "top50_heatmap_genes.csv（行名隐藏时的对照表）",
          # 没藏行名 -> 不需要这张表；藏了 -> 必须有；读不到决策 -> 不误报失败
-         ok = !isTRUE(label_hidden("top50_heatmap")) || has("top50_heatmap_genes.csv"),
+         # **按 label 过滤**：同一张图还记着列名的决策，不过滤的话
+         # "行名藏了、列名显示了"会被 any() 判成"没藏"（见 label_hidden 注释）。
+         ok = !isTRUE(label_hidden("top50_heatmap", "热图基因")) ||
+              has("top50_heatmap_genes.csv"),
+         required = TRUE),
+    # 列名同理：121 个样本在 183 mm 里放不下（可容纳约 42 个），列名会被藏。
+    # **藏了就必须能查回"图上第 N 列是哪个样本"** —— 规则 21 在列方向上是同一件事。
+    list(name = "top50_heatmap_samples.csv（列名隐藏时的对照表）",
+         ok = !isTRUE(label_hidden("top50_heatmap", "热图样本名（列）")) ||
+              has("top50_heatmap_samples.csv"),
          required = TRUE),
     # 决策本身要落盘。日志里有同样的算式，但 CI 日志会滚掉，文件不会。
     list(name = "label_decisions.csv（标签决策，可核对为什么藏了行名）",
@@ -699,6 +717,16 @@ main <- function() {
   # 三条判据都来自**已落盘的状态文件**，不是重新推理一遍：
   # 这里只做汇总，不做二次判断 —— 二次判断会和真正的执行结果分叉。
   record_geo_decisions(cfg)
+
+  # ---- 标签决策在这里兜底落盘 ---------------------------------------------
+  # **`write_label_decisions()` 原来只在 `04b` 的最后一行调用**，而标签决策
+  # 是在**很多步**里产生的（02 的箱线图/PCA/相关性热图、04a 的 top50 行列名、
+  # 04b 的富集点图）。04b 是可选步骤 —— 它一旦失败，前面几步的决策就全丢了，
+  # 而验收那边靠 `label_decisions.csv` 判断"行名/列名藏了没有、要不要对照表"，
+  # 文件没了就会静默退回"读不到决策 -> 不误报失败"，检查等于失效。
+  # 在这里再写一次：`.label_decisions` 是跨步骤累积的，所以这一份必然包含全部。
+  # （04b 里那次保留 —— 单独跑 04 的脚本时仍然需要它。）
+  write_label_decisions(file.path(cfg$output$results_dir, "label_decisions.csv"))
 
   # ---- 验收 --------------------------------------------------------------
   log_info("=== 验收检查 ===")

@@ -66,17 +66,35 @@ run_02_qc_pca_correlation <- function(cfg) {
   )
   long$stage <- factor(long$stage, levels = c("before", "after"))
 
+  # **x 轴样本名放不放得下，算出来，不靠默认。**
+  # 标签旋转 90°，所以每个标签在**横向**占用的正是它的行高
+  # `fontsize + min_gap` —— 与行名同一个一维模型，直接复用 decide_rownames()。
+  # 关键区别：分面是 `ncol = 2`，**每个面板只有半幅宽**，可用长度必须按
+  # 单个面板算，按整幅算会把容量高估一倍。
+  # 实测 121 个样本、6pt、半幅 91mm、面板占宽 0.85：可容纳约 25 个 -> 放不下。
+  # 原来无条件画 121 个 GSM 号，每个只剩约 0.75mm，糊成一条黑带。
+  box_fs <- 6
+  show_x <- decide_rownames(ncol(expr), W_DOUBLE / 2, box_fs, "箱线图样本名",
+                            panel_frac = 0.85, min_gap = 2.5,
+                            figure = "boxplot_before_after")
+
   p_box <- ggplot(long, aes(x = sample, y = expression, fill = stage)) +
     geom_boxplot(outlier.size = 0.3, linewidth = 0.25) +
     facet_wrap(~stage, ncol = 2, scales = "free_y") +
     scale_fill_manual(values = c(before = PAL$ns, after = PAL$down)) +
     labs(title = "Expression distribution before / after quantile normalization",
-         subtitle = wrap_subtitle(sprintf("%s - %d genes x %d samples",
-                                          cfg$dataset_id, nrow(expr), ncol(expr)),
-                                  fig_width = W_DOUBLE),
+         subtitle = wrap_subtitle(sprintf(
+           "%s - %d genes x %d samples. %s", cfg$dataset_id, nrow(expr), ncol(expr),
+           if (isTRUE(show_x)) "x 轴标出样本编号。"
+           else paste0("样本编号未标出（", ncol(expr),
+                       " 个放不下）；逐个样本的身份见 data/", cfg$dataset_id,
+                       "/group.csv。")),
+           fig_width = W_DOUBLE),
          x = NULL, y = "log2 expression") +
     theme_paper(9) +
-    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 6),
+    theme(axis.text.x = if (isTRUE(show_x))
+            element_text(angle = 90, hjust = 1, vjust = 0.5, size = box_fs)
+          else element_blank(),
           legend.position = "none")
   save_pdf(file.path(res, "boxplot_before_after.pdf"), print(p_box), width = W_DOUBLE, height = mm(140))
   log_info("已生成 boxplot_before_after.pdf")
@@ -156,6 +174,26 @@ run_02_qc_pca_correlation <- function(cfg) {
     log_warn("PCA 椭圆跳过：每组样本不足 3 个，或协方差奇异")
   }
 
+  # **散点标签放不放得下，也算出来，不能无条件画。**
+  # 标签贴在点上方（`vjust = -1`）沿 x 排，所以两个标签碰撞的判据是
+  # "x 方向间距 < 标签宽度" —— 还是一维模型，可用长度是**面板宽度**。
+  # 与行名/列名的唯一区别：每个标签占的是**它自己的字宽**而不是行高：
+  #     max(nchar) × 0.5 × fontsize + min_gap
+  # （0.5 × 字号 是 wrap_subtitle() 一直在用的估字宽，这里沿用同一个估值。）
+  # 所以把 `pt_per_label` 传给 decide_rownames() 的 `fontsize` 形参 ——
+  # 它在这个模型里就是"每个标签占的长度"。下面另打一行日志把真实字号说清楚，
+  # 免得日志里那个数被当成字号读。
+  # 实测同一段代码两种结果：GSE42568 有 121 个 GSM 号 -> 可容纳约 27 个，
+  # **不标**；GSE64790 只有 6 个样本 -> 照常标注。
+  pt_fs <- 2.4
+  pt_per_label <- max(nchar(as.character(pca_df$sample))) * 0.5 * pt_fs
+  show_pt <- decide_rownames(nrow(pca_df), mm(165), pt_per_label, "PCA 样本名",
+                             panel_frac = 0.85, min_gap = 2.5,
+                             figure = "pca_plot")
+  log_info(sprintf("PCA 散点标签：%d 个样本、字号 %gpt、最长标签 %d 字符 -> %s",
+                   nrow(pca_df), pt_fs, max(nchar(as.character(pca_df$sample))),
+                   if (isTRUE(show_pt)) "标注" else "不标注（放不下，会糊成一片）"))
+
   p_pca <- ggplot(pca_df, aes(x = PC1, y = PC2, colour = group, shape = group,
                               label = sample))
   if (!is.null(ell_df)) {
@@ -165,8 +203,12 @@ run_02_qc_pca_correlation <- function(cfg) {
       colour = NA, alpha = 0.12, show.legend = FALSE, inherit.aes = FALSE)
   }
   p_pca <- p_pca +
-    geom_point(size = 3.6, stroke = 0.9) +
-    geom_text(vjust = -1, size = 2.4, show.legend = FALSE, colour = PAL$ink) +
+    geom_point(size = 3.6, stroke = 0.9)
+  if (isTRUE(show_pt)) {
+    p_pca <- p_pca +
+      geom_text(vjust = -1, size = pt_fs, show.legend = FALSE, colour = PAL$ink)
+  }
+  p_pca <- p_pca +
     scale_colour_condition(levels(groups), name = NULL) +
     scale_fill_condition(levels(groups), name = NULL) +
     scale_shape_manual(values = c(16, 17, 15, 18, 8)[seq_along(levels(groups))],
@@ -177,11 +219,17 @@ run_02_qc_pca_correlation <- function(cfg) {
                   "Shaded ellipse = within-group 95%% normal ellipse (radius %.2f SD). ",
                   "The SMALLEST group has %d samples (%s), so its covariance rests on ",
                   "%d df and the ellipse understates the true spread - it is a visual ",
-                  "aid, not a test."),
+                  "aid, not a test. %s"),
            nrow(pca_input), ell_radius, min(table(groups)),
            paste(sprintf("%s n=%d", names(table(groups)), as.integer(table(groups))),
                  collapse = ", "),
-           min(table(groups)) - 1L),
+           min(table(groups)) - 1L,
+           # **标不出来就要说出来。** 图上少一层而图注不提，读者会以为
+           # "这张图没有样本名"是设计如此，而不是"放不下"。
+           if (isTRUE(show_pt)) "Sample accessions are labelled."
+           else sprintf(paste0("Sample accessions are NOT labelled: %d labels ",
+                               "cannot be placed legibly in this panel width."),
+                        nrow(pca_df))),
            fig_width = mm(165)),
          x = sprintf("PC1 (%.1f%% variance)", var_explained[1L]),
          y = sprintf("PC2 (%.1f%% variance)", var_explained[2L])) +
@@ -249,16 +297,47 @@ run_02_qc_pca_correlation <- function(cfg) {
   # 用发散色会让人以为 0.5 是"中性"中点，而这里根本没有负相关。
   annotation_col <- data.frame(group = groups, row.names = colnames(expr))
   annotation_colors <- list(group = gp)
+
+  # **格子里那个数字放不放得下，同样要算。**
+  # `display_numbers = TRUE` 会给**每一个**格子画一个数：121×121 就是 14641 个
+  # 6pt 的 "0.987"。183 mm 宽 ÷ 121 列 = 每格 1.5 mm，而 "0.987" 要 6 mm ——
+  # 这**不是"对比度差"，是一个数都读不出来**：所有数字叠在一起，
+  # 图上表现为一片灰糊，而"糊了"从图注上完全看不出来。
+  # 判据沿用同一个一维模型，可用长度取热图面板宽（约 0.62 × 整幅）：
+  #   每个数占 = nchar(number_format) × 0.5 × fontsize + min_gap
+  num_fs  <- 6
+  num_len <- nchar(sprintf("%.3f", 0)) * 0.5 * num_fs
+  show_num <- decide_rownames(ncol(pearson), W_DOUBLE, num_len, "相关性热图格内数值",
+                              panel_frac = 0.62, min_gap = 2.5,
+                              figure = "correlation_heatmap")
+  # 行列名同理：旋转 90°，横向占用的正是它的行高 `fontsize + min_gap`。
+  cor_fs   <- 5
+  show_cn2 <- decide_rownames(ncol(pearson), W_DOUBLE, cor_fs, "相关性热图样本名",
+                              panel_frac = 0.62, min_gap = 2.5,
+                              figure = "correlation_heatmap")
+  log_info(sprintf(paste0("相关性热图：%d 个样本 -> 格内数值 %s（字号 %gpt，",
+                          "每个数占 %.1fpt）、行列名 %s（字号 %gpt）"),
+                   ncol(pearson),
+                   if (isTRUE(show_num)) "显示" else "隐藏（放不下）", num_fs, num_len,
+                   if (isTRUE(show_cn2)) "显示" else "隐藏（放不下）", cor_fs))
+
   save_pdf(file.path(res, "correlation_heatmap.pdf"), {
     pheatmap::pheatmap(
       pearson,
       annotation_col = annotation_col,
       annotation_row = annotation_col,
       annotation_colors = annotation_colors,
-      display_numbers = TRUE, number_format = "%.3f", fontsize_number = 6,
+      display_numbers = isTRUE(show_num), number_format = "%.3f",
+      fontsize_number = num_fs,
+      show_rownames = isTRUE(show_cn2), show_colnames = isTRUE(show_cn2),
+      fontsize = cor_fs,
       color = pal_sequential(100),
       border_color = "white", treeheight_row = 18, treeheight_col = 18,
-      main = sprintf("Sample-sample Pearson correlation (%s)", cfg$dataset_id),
+      # **少画了哪一层，标题上要写出来。** pheatmap 没有副标题，
+      # 不说的话读者会以为这张热图本来就不带数值。
+      main = sprintf("Sample-sample Pearson correlation (%s)%s", cfg$dataset_id,
+                     if (isTRUE(show_num)) ""
+                     else " - cell values omitted (they do not fit); see correlation_matrix.csv"),
       silent = FALSE
     )
     # pheatmap 的色条固定在图右侧，没有位置参数可调。
