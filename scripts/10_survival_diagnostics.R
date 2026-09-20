@@ -603,11 +603,16 @@ run_10_survival_diagnostics <- function(cfg) {
             "reported horizon, not the crude event proportion - censored patients ",
             "are not 'event-free'."), W_ONE_HALF)) +
         theme_paper() +
-        # **图例单列**（评审 3.8：n per group 的 2×3 网格让 30/50/70 一行、
-        # 40/60/80 一行，标签落在两行之间，读序有歧义）。
-        ggplot2::guides(colour = ggplot2::guide_legend(ncol = 1, order = 1),
-                        size = ggplot2::guide_legend(ncol = 1, order = 2)) +
-        ggplot2::theme(legend.position = "bottom")
+        # **图例分区处理**（评审 3.8 的歧义只在**队列颜色**那一块：
+        # 2×3 网格是 size 图例的，n=30..80 是连续刻度、横排读没有歧义；
+        # 队列只有 2 项，歧义出在它和 size 图例混在一张网格里）。
+        # 对策：colour 图例单列放**右侧**（队列名长，竖排不挤画布）；
+        # size 图例保持底部横排 3 列。第一版把两个都改成底部单列，
+        # 8 行图例把 80mm 高的画布压得只剩一条缝 —— 已回退。
+        ggplot2::guides(colour = ggplot2::guide_legend(order = 1),
+                        size = ggplot2::guide_legend(nrow = 1, order = 2)) +
+        ggplot2::theme(legend.box = "vertical",
+                       legend.position = "right")
       save_pdf(file.path(fig, "01-10-02-unit1-calibration.pdf"), print(p),
                width = W_ONE_HALF, height = mm(80))
       TRUE
