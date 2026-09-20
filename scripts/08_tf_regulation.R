@@ -632,7 +632,7 @@ run_08_tf_regulation <- function(cfg) {
           ggplot2::coord_flip() +
           # 数值标注伸到条外，横轴要留余量
           ggplot2::scale_y_continuous(
-            expansion = ggplot2::expansion(mult = c(0.10, 0.16))) +
+            expand = ggplot2::expansion(mult = c(0.10, 0.16))) +
           ggplot2::scale_fill_manual(values = stats::setNames(
             c(PAL$up, PAL$down), c(lv2, lv1))) +
           ggplot2::labs(

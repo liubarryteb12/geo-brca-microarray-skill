@@ -603,8 +603,9 @@ make_ora_dotplot <- function(df, cfg, title) {
     # range 上限从 7 降到 5.5，行距不变时相邻气泡不再相切。
     ggplot2::scale_size_continuous(name = "genes", range = c(1.8, 5.5)) +
     # **右侧留余量**（评审 3.3：GSE42568 KEGG 右侧墨迹距边框仅 2px，
-    # 最大的点被边框切平）。默认 expansion 把最大点顶到面板边上。
-    ggplot2::scale_x_continuous(expansion = ggplot2::expansion(mult = c(0.02, 0.10))) +
+    # 最大的点被边框切平）。默认 expand 把最大点顶到面板边上。
+    # 注意参数名是 expand（不是 expansion —— expansion() 只是造取值的函数）。
+    ggplot2::scale_x_continuous(expand = ggplot2::expansion(mult = c(0.02, 0.10))) +
     ggplot2::facet_wrap(~ panel, scales = "free_y", nrow = 1) +
     ggplot2::labs(title = title,
                   subtitle = wrap_subtitle(sprintf(
@@ -645,7 +646,7 @@ make_gsea_dotplot <- function(df, cfg, title) {
                      limits = c(0, 1.15 * max(-log10(keep$p.adjust))),
                      breaks = function(x) pretty(x, n = 4)) +
     ggplot2::scale_size_continuous(name = "set size", range = c(1.8, 5.5)) +
-    ggplot2::scale_x_continuous(expansion = ggplot2::expansion(mult = c(0.04, 0.06))) +
+    ggplot2::scale_x_continuous(expand = ggplot2::expansion(mult = c(0.04, 0.06))) +
     ggplot2::labs(title = title,
                   # 原来写的是 "right = up in tumor, left = up in normal" ——
                   # 两个方向又都写成 "up"，和 ORA 那张图是同一个毛病。
