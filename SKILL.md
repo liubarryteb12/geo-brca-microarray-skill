@@ -10,6 +10,11 @@ metadata:
 
 # /geo-normal-pipeline-skill
 
+GEO 常规表达谱（bulk 芯片）分析流水线。**疾病无关** —— 已验证的两个数据集
+恰好是乳腺癌（GSE64790 人源 Agilent lncRNA 芯片 GPL19612、6 例 = 3 TNBC
+vs 3 配对正常乳腺组织；GSE42568 GPL570、121 例），但 `scripts/` 里没有
+任何一处依赖疾病或平台，换 `assets/config.<GSE>.yml` 就换分析。
+
 ## 这是一个**框架**，不是一条焊死的流水线
 
 本仓库提供的是**生信分析的骨架与判据**：数据门禁、方法学约定、验收项、
@@ -45,9 +50,6 @@ SKILL=$(./use.sh --print-path)    # 只取路径，便于脚本里用
 > `use.sh` 里每个可能失败的步骤都显式 `|| die`，**不依赖 `set -e`**。
 > 实测（bash 5.3）在 `resolved="$(pull)"` 这种「函数在命令替换里」的结构下，
 > 函数内部的失败不一定会中止外层脚本。出错的路径必须自己说出来。
-
-GEO 乳腺癌小样本芯片数据挖掘流水线。默认数据集 **GSE64790**（人源、Agilent lncRNA 芯片
-GPL19612、6 例 = 3 TNBC vs 3 配对正常乳腺组织）。
 
 完整实验设计见 [`EXPERIMENTAL_DESIGN.md`](EXPERIMENTAL_DESIGN.md) —— **改任何东西之前先读它**，
 尤其是 §2.2 关于 n=6 的统计功效边界（**没有任何基因能通过 FDR**）和 §2.10 的降级路径。
