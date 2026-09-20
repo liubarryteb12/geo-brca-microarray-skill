@@ -254,8 +254,12 @@ run_09_export_targets <- function(cfg) {
     n_multi_source_genes = sum(out$n_sources > 1L),
     per_source_counts = as.list(table(all$source)),
     top_genes = utils::head(out, 15),
-    method = ("汇总 Part 1 的四类候选来源（LASSO 签名 / WGCNA 模块 / "
-              "PPI 枢纽 / 显著调控子），按优先级去重，附上 logFC"),
+    # **R 没有隐式字符串拼接**（不像 Python/C）。写成
+    #   method = ("第一段" "第二段")
+    # 是语法错误：`unexpected string constant`。
+    # 必须显式 paste0()。这个错在 CI 上炸过一次（run 35482359507）。
+    method = paste0("汇总 Part 1 的四类候选来源（LASSO 签名 / WGCNA 模块 / ",
+                    "PPI 枢纽 / 显著调控子），按优先级去重，附上 logFC"),
     limitations = c(
       "**去重保留了优先级最高的来源，但 n_sources 记下了它被几个来源点名** ——",
       "      被多条证据同时点名的基因证据更强，这一列不要忽略",

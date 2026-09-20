@@ -95,6 +95,66 @@ function checkBalance(code, file) {
   for (const item of stack) problems.push(`${file}:${item.line} '${item.ch}' 未闭合`)
 }
 
+/**
+ * 相邻字符串字面量 —— R 没有隐式字符串拼接。
+ *
+ *   method = ("第一段"
+ *             "第二段")        # <- unexpected string constant
+ *
+ * Python / C 会把相邻字面量接起来，R **不会**，这是语法错误。
+ * 而 `c("a", "b")` / `paste0("a", "b")` 是逗号分隔的多参数，合法。
+ * 所以判据是：**两个字符串字面量之间除了空白/注释什么都没有**。
+ *
+ * **为什么必须在 stripLiterals 之前查：** 那个函数把每个字符串换成 `""`，
+ * 于是 `("a" "b")` 变成 `("" "")`，括号配平完全正常 —— 这个错实测从
+ * check_r_syntax.mjs 眼皮底下溜过去，到云端 `source()` 才炸
+ * （run 35482359507，09_export_targets.R:258）。
+ *
+ * 跨行的字符串（R 允许字面换行）也可能让这里误报，但那种写法本身罕见，
+ * 报出来人看一眼就知道是不是真的。
+ */
+function checkImplicitConcat(source, file) {
+  let i = 0
+  let line = 1
+  const lineAt = () => line
+  while (i < source.length) {
+    const ch = source[i]
+    if (ch === '\n') { line++; i++; continue }
+    if (ch === '#') { while (i < source.length && source[i] !== '\n') i++; continue }
+    if (ch !== '"' && ch !== "'") { i++; continue }
+
+    // 读掉一个字符串字面量
+    const quote = ch
+    const startLine = lineAt()
+    i++
+    while (i < source.length) {
+      if (source[i] === '\\') { i += 2; continue }
+      if (source[i] === '\n') { line++; i++; continue }
+      if (source[i] === quote) { i++; break }
+      i++
+    }
+
+    // 往后跳过空白与注释，看下一个有效字符是不是又一个引号
+    let j = i
+    let jLine = line
+    for (;;) {
+      const c = source[j]
+      if (c === undefined) break
+      if (c === '\n') { jLine++; j++; continue }
+      if (c === ' ' || c === '\t' || c === '\r') { j++; continue }
+      if (c === '#') { while (j < source.length && source[j] !== '\n') j++; continue }
+      break
+    }
+    const next = source[j]
+    if (next === '"' || next === "'") {
+      problems.push(
+        `${file}:${startLine} 相邻字符串字面量没有逗号 —— R 没有隐式字符串拼接，` +
+        `用 paste0(...) 或 c(...) 显式连接（下一段在第 ${jLine} 行）`
+      )
+    }
+  }
+}
+
 const definedFunctions = new Set()
 const calledFunctions = new Set()
 
@@ -103,6 +163,8 @@ for (const file of files) {
   const source = readFileSync(file, 'utf8')
   const code = stripLiterals(source, rel)
   checkBalance(code, rel)
+  // **必须在原始 source 上查**，不能用 stripLiterals 的结果（见函数注释）
+  checkImplicitConcat(source, rel)
 
   for (const m of code.matchAll(/(?:^|\n)\s*([A-Za-z_.][A-Za-z0-9_.]*)\s*<-\s*function/g)) {
     definedFunctions.add(m[1])
