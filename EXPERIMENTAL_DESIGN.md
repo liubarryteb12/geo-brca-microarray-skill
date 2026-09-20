@@ -1063,7 +1063,7 @@ gh run download --name geo-results-GSE42568
 Rscript scripts/main_analysis.R --config assets/config.GSE42568.yml
 ```
 
-**已验证的成功运行**：[run 35434644032](https://github.com/liubarryteb12/geo-brca-microarray-skill/actions/runs/35434644032)
+**已验证的成功运行**：[run 35434644032](https://github.com/liubarryteb12/geo-normal-pipeline-skill/actions/runs/35434644032)
 —— 两个 job 全绿（GSE64790 5m47s、GSE42568 6m25s），7 个步骤全部 `ok`。
 
 > **关于"逐字节可复现"：不要把浮点末位也当成已验证的性质。**

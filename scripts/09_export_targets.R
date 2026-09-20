@@ -227,7 +227,7 @@ run_09_export_targets <- function(cfg) {
   # 交出去多少、什么格式、丢了什么字段。
   record_cross_language(
     cfg,
-    src = "geo-brca-microarray-skill (R, Part 1)",
+    src = "geo-normal-pipeline-skill (R, Part 1)",
     dst = "scrna-pipeline-skill (Python, Part 2)",
     format = "csv",
     tool = "utils::write.csv / pandas.read_csv",

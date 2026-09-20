@@ -198,7 +198,7 @@ node tools/check_r_syntax.mjs
 
 # 2. 推，然后盯
 git push origin main
-gh run watch --repo liubarryteb12/geo-brca-microarray-skill
+gh run watch --repo liubarryteb12/geo-normal-pipeline-skill
 
 # 3. 红了就抓日志（jq 表达式不支持 .Substring()，用 ConvertFrom-Json）
 gh run view <run-id> --log --job <job-id> | Out-File -FilePath $env:TEMP\ci.log -Encoding utf8

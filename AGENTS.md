@@ -1,7 +1,13 @@
 # AGENTS.md — 仓库约定
 
-本仓库是一个 GEO 乳腺癌小样本芯片数据挖掘流水线，同时是一个 agent skill。
+本仓库是一个 **GEO 常规表达谱（bulk 芯片）分析流水线**，同时是一个 agent skill。
+疾病无关：`scripts/` 里没有一处依赖疾病或平台，换 `assets/config.<GSE>.yml` 就换分析
+（已验证的两个数据集恰好是乳腺癌 GSE64790 / GSE42568）。
 改代码前先读 [`EXPERIMENTAL_DESIGN.md`](EXPERIMENTAL_DESIGN.md)。
+
+> **这是一个框架，不是一条焊死的流水线。** 步骤、参数、产物、验收项都随分析需求
+> 变化；加一步、换一种方法、关掉某个可选步骤都是预期用法。见
+> [`README.md`](README.md) 开头与 [`references/module0.md`](references/module0.md)。
 
 ## 硬性规则
 
@@ -524,7 +530,7 @@ node tools/check_palette.mjs
 
 # —— 云端（真正的端到端）——
 gh workflow run geo_analysis.yml -f dataset=GSE42568
-gh run watch --repo liubarryteb12/geo-brca-microarray-skill
+gh run watch --repo liubarryteb12/geo-normal-pipeline-skill
 ```
 
 **本地静态检查不等于能跑通。** `check_r_syntax.mjs` 自己的输出就写着这句话。

@@ -1,8 +1,50 @@
-# GEO 乳腺癌芯片数据挖掘流水线
+# GEO 常规表达谱流水线（bulk 芯片）
 
-对 GEO 人源乳腺癌基因表达芯片数据执行端到端纯生信分析，产出清洗、QC、PCA、
+对 GEO 人源基因表达**芯片**数据执行端到端纯生信分析，产出清洗、QC、PCA、
 样本相关性、差异基因、聚类热图、GO/KEGG 富集、差异基因互作网络的**全部图表与表格**，
 并在 GitHub Actions 上运行后打包为 artifact。
+
+> **疾病无关。** 两个已验证数据集恰好是乳腺癌（GSE64790 n=6、GSE42568 n=121），
+> 但 `scripts/` 里没有任何一处依赖疾病 —— 换 `assets/config.<GSE>.yml` 就换分析。
+> 名字里的 `normal` 指**常规 bulk 芯片**，用来和姊妹项目
+> [`scrna-pipeline-skill`](https://github.com/liubarryteb12/scrna-pipeline-skill)（单细胞）、
+> [`spatial-pipeline-skill`](https://github.com/liubarryteb12/spatial-pipeline-skill)（空间转录组）区分。
+
+## 这是一个**框架**，不是一条焊死的流水线
+
+本仓库提供的是**生信分析的骨架与判据**：数据门禁、方法学约定、验收项、
+产物清单。**具体跑什么由输入数据和配置文件决定**，步骤本身可增删 ——
+加一步、换一种方法、关掉某个可选步骤，都是预期用法，不是"改坏了"。
+
+所以「这个仓库能做什么」的答案在 `assets/config.*.yml` 和验收项里，
+**不在目录结构里**。`scripts/` 中没有任何一处硬编码某个疾病或某个平台。
+
+后续会有一个独立的「流水线编排模块」，让使用者挑选分析模块并串起来，
+再与本仓库对接。**那部分不在本仓库职责范围内** —— 本仓库只负责把每一步做对。
+
+## 怎么拿到它：云端仓库是唯一真源
+
+本 skill **不需要"安装"**，也不依赖任何一台机器上的目录。真源是 GitHub 仓库：
+
+    https://github.com/liubarryteb12/geo-normal-pipeline-skill
+
+要用的时候从云端拉下来：
+
+```bash
+./use.sh                          # 拉取/更新到 ~/.cache/dsh-skills/，打印路径
+./use.sh --register               # 需要本机 agent 直接发现它时才加
+./use.sh --ref v1.0               # 钉住某一版
+SKILL=$(./use.sh --print-path)    # 只取路径，便于脚本里用
+./use.sh --clean                  # 清掉缓存副本并撤销注册
+```
+
+**拉取后会校验 `SKILL.md` 存在。** 远端改名或换结构时会明确报错，
+而不是安静地给一个空目录 —— 实测过：`git clone` 失败时后面的步骤照样会跑，
+最后就是靠这道校验拦住的。
+
+> `use.sh` 里每个可能失败的步骤都显式 `|| die`，**不依赖 `set -e`**。
+> 实测（bash 5.3）在 `resolved="$(pull)"` 这种「函数在命令替换里」的结构下，
+> 函数内部的失败不一定会中止外层脚本。出错的路径必须自己说出来。
 
 **两套设计模式**，由配置里的 `design_mode` 选择（不是一个门禁换个阈值，见
 [`AGENTS.md`](AGENTS.md) 规则 1）：
