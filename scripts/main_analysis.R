@@ -38,7 +38,8 @@ options(geo.orchestrated = TRUE)
 
 for (f in c("00_validate_inputs.R", "01_download_clean.R", "02_qc_pca_correlation.R",
             "03_deg.R", "04_heatmap_enrichment.R", "05_ppi.R",
-            "06_wgcna.R", "07_lasso.R", "08_tf_regulation.R")) {
+            "06_wgcna.R", "07_lasso.R", "08_tf_regulation.R",
+            "09_export_targets.R")) {
   p <- file.path(.geo_scripts_dir, f)
   if (!file.exists(p)) stop(sprintf("缺少步骤脚本: %s", p))
   source(p)
@@ -61,7 +62,10 @@ STEPS <- list(
   list(id = "ppi_string",         fn = run_05_ppi,                 required = FALSE),
   list(id = "wgcna",              fn = run_06_wgcna,               required = FALSE),
   list(id = "lasso_cox",          fn = run_07_lasso,               required = FALSE),
-  list(id = "tf_regulation",      fn = run_08_tf_regulation,       required = FALSE)
+  list(id = "tf_regulation",      fn = run_08_tf_regulation,       required = FALSE),
+  # §1.7/§1.8 的 Part 1 侧：把候选靶基因整理成 CSV 交给 Part 2。
+  # 放在最后 —— 它要汇总前面所有步骤的产物。
+  list(id = "export_targets",     fn = run_09_export_targets,      required = FALSE)
 )
 
 # ---- 模块零：运行清单（§0.3 / §0.4）---------------------------------------
@@ -116,6 +120,7 @@ check_acceptance <- function(cfg) {
   wgcna <- read_status("wgcna_status.json")
   lasso <- read_status("lasso_status.json")
   tf <- read_status("tf_status.json")
+  targets <- read_status("part2_targets_status.json")
   # 富集/PPI 允许"为空/回退"，但必须留下原因记录
   # 状态文件有两种形状：
   #   enrichment_status.json -> {"go": {"status": ...}, "kegg": {...}}
@@ -266,6 +271,38 @@ check_acceptance <- function(cfg) {
            }
            !is.null(c$n_common_pairs) && !is.null(c$jaccard) &&
              !is.null(c$n_mor_comparable) && !is.null(c$mor_agreement)
+         }),
+         required = FALSE),
+    # ---- §1.7/§1.8 交接给 Part 2 的候选靶基因 --------------------------------
+    # **Part 1 对 §1.7/§1.8 的全部职责就是这张表。** 规范把虚拟扰动的
+    # 计算放在 Part 2（Python + 单细胞），候选靶基因由 Part 1 产出；
+    # §0.2 规定跨部分只走 CSV。所以这张表在不在，决定了 Part 2 是
+    # "用 Part 1 的证据做扰动"还是"用它自己的调控子凑一个候选集"。
+    list(name = "Part 2 候选靶基因交接表（§1.7/§1.8）",
+         ok = settled(targets) &&
+              (is.null(targets) || !identical(targets$status, "ok") ||
+               file.exists(file.path(res, targets$output_file %||% "part2_targets.csv"))),
+         required = FALSE),
+    # **没有 logFC 的交接表是半成品。** Part 2 的 signature_alignment
+    # （预测扰动方向 vs 疾病签名方向）全靠这一列；缺了它那一列只能是空的，
+    # 而"空"和"算出来是 0"完全不同。所以单独报这一条。
+    list(name = "交接表带上了 logFC（Part 2 算 signature_alignment 要用）",
+         ok = local({
+           if (is.null(targets) || !identical(targets$status, "ok")) return(TRUE)
+           n <- targets$n_genes %||% 0
+           k <- targets$n_with_logfc %||% 0
+           n > 0 && k > 0
+         }),
+         required = FALSE),
+    # 跨部分交接必须在清单里留痕（§0.2：转换前后、丢了什么字段）
+    list(name = "跨部分交接已登记（清单 cross_language，含丢失字段）",
+         ok = local({
+           m <- read_manifest(cfg)
+           cl <- m$cross_language
+           if (is.null(cl) || length(cl) == 0L) return(FALSE)
+           e <- cl[[length(cl)]]
+           !is.null(e$src) && !is.null(e$dst) && !is.null(e$format) &&
+             length(e$lost_fields %||% list()) > 0L
          }),
          required = FALSE)
   )
