@@ -204,6 +204,26 @@ run_03_deg <- function(cfg) {
   tt$tier <- factor(tt$tier, levels = c("ns", "nominal", "fdr"))
   tt$direction <- factor(tt$direction, levels = c("ns", "down", "up"))
 
+  # **FDR 那句话必须随数据变。**
+  # 原来 "No gene passes FDR" 是格式串里的**写死文字**，不随数据变：GSE64790
+  # 恰好为真（0 个显著基因），但 GSE42568 有 3795 个基因通过 FDR —— 图上却
+  # 仍然声称"没有基因通过 FDR"，而且与同一句里印出的 "min adj.P = 0.000"
+  # 自相矛盾。**一张图上的事实陈述不能是常量。**
+  # 顺带把 min adj.P 的格式从 %.3f 改成 %.3g：前者把 1e-12 印成 "0.000"，
+  # 看上去像"完全没有信号"，而 %.3g 给 "1e-12"。
+  min_adjp <- if (nrow(tt)) min(tt$adj.P.Val, na.rm = TRUE) else NA_real_
+  fdr_note <- if (!is.finite(min_adjp)) {
+    sprintf("FDR status undetermined (min adj.P = NA) for adj.P < %g. ", padj_cut)
+  } else if (n_fdr > 0L) {
+    sprintf(paste0("%d gene%s pass FDR (adj.P < %g; min adj.P = %.3g) and are ",
+                   "drawn opaque; the semi-transparent points are nominal-P only. "),
+            n_fdr, if (n_fdr == 1L) "" else "s", padj_cut, min_adjp)
+  } else {
+    sprintf(paste0("No gene passes FDR (adj.P < %g; min adj.P = %.3g), so the ",
+                   "semi-transparent points are exploratory: nominal P only. "),
+            padj_cut, min_adjp)
+  }
+
   p_volcano <- ggplot(tt, aes(x = logFC, y = plot_y,
                               colour = direction, alpha = tier, size = tier)) +
     geom_point() +
@@ -225,14 +245,11 @@ run_03_deg <- function(cfg) {
     geom_hline(yintercept = -log10(0.05), linetype = "dashed",
                linewidth = 0.3, colour = PAL$ink) +
     labs(title = sprintf("Volcano: %s vs %s (%s)", numerator, denominator, cfg$dataset_id),
-         subtitle = wrap_subtitle(sprintf(
-           paste0("|log2FC| > %g (vertical); horizontal line = nominal P 0.05. ",
-                  "Red = higher in %s, blue = higher in %s. ",
-                  "No gene passes FDR (adj.P < %g, min adj.P = %.3f), so the ",
-                  "semi-transparent points are exploratory: nominal P only. ",
-                  "BH is per-gene, so the FDR cutoff is not a horizontal line."),
-           lfc_cut, numerator, denominator, padj_cut,
-           if (nrow(tt)) min(tt$adj.P.Val, na.rm = TRUE) else NA_real_),
+         subtitle = wrap_subtitle(paste0(
+           sprintf("|log2FC| > %g (vertical); horizontal line = nominal P 0.05. ", lfc_cut),
+           sprintf("Red = higher in %s, blue = higher in %s. ", numerator, denominator),
+           fdr_note,
+           "BH is per-gene, so the FDR cutoff is not a horizontal line."),
            fig_width = W_DOUBLE),
          x = sprintf("log2 fold change (%s / %s)", numerator, denominator),
          y = "-log10 raw P value",

@@ -110,6 +110,14 @@ make_soft_power_plot <- function(tab, chosen, cfg) {
     data.frame(power = tab$power, value = tab$r2, panel = "scale-free topology fit"),
     data.frame(power = tab$power, value = tab$mean_k, panel = "mean connectivity")
   )
+  # **面板顺序必须钉死，不能靠默认。**
+  # `facet_wrap` 按字母序排面板，而 "mean connectivity" < "scale-free
+  # topology fit" —— 所以左面板实际是 mean connectivity、右面板才是 R²，
+  # 与副标题写的 "Left: scale-free topology R2 / Right: mean connectivity"
+  # **正好相反**。读者照着文字读，会把连通性曲线当成 R² 曲线。
+  # 显式给 levels 之后，图上的左右与文字必然一致。
+  long$panel <- factor(long$panel,
+                       levels = c("scale-free topology fit", "mean connectivity"))
   ggplot2::ggplot(long, ggplot2::aes(x = power, y = value)) +
     ggplot2::geom_line(colour = PAL$muted, linewidth = 0.4) +
     ggplot2::geom_point(colour = PAL$ink, size = 1.4) +

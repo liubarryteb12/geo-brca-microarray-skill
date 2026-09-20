@@ -52,20 +52,29 @@ local({
 })
 
 #' 选出用于热图的基因：优先显著 DEG，不足时降级
+#'
+#' 返回 `label` 是**给读者看的图标题用词**，必须随实际取到的基因变：
+#' 原来图标题写死 "Top DEG heatmap"，于是 GSE64790（0 个基因通过 FDR、
+#' 回退到 top 20 by raw P）的图上仍然写着 "Top DEG" —— 而那张图里
+#' 一个差异表达基因都没有。`mode` 是给日志和状态文件的技术描述，
+#' `label` 是给图上的事实陈述，两者不能互相顶替。
 select_heatmap_genes <- function(deg, cfg) {
   top_n <- cfg$analysis$top_heatmap_genes
   sig <- deg[deg$adj.P.Val < cfg$thresholds$adj_p &
              abs(deg$logFC) > cfg$thresholds$log2fc, , drop = FALSE]
   if (nrow(sig) >= top_n) {
     return(list(genes = head(sig$gene[order(sig$adj.P.Val)], top_n),
-                mode = sprintf("top %d significant DEG by adj.P", top_n)))
+                mode = sprintf("top %d significant DEG by adj.P", top_n),
+                label = sprintf("Top %d significant DEG", top_n)))
   }
   if (nrow(sig) > 0L) {
     return(list(genes = sig$gene[order(sig$adj.P.Val)],
-                mode = sprintf("all %d significant DEG (< %d requested)", nrow(sig), top_n)))
+                mode = sprintf("all %d significant DEG (< %d requested)", nrow(sig), top_n),
+                label = sprintf("All %d significant DEG", nrow(sig))))
   }
   list(genes = head(deg$gene[order(deg$adj.P.Val)], 20),
-       mode = "WARNING: no significant DEG, fell back to top 20 by raw P")
+       mode = "WARNING: no significant DEG, fell back to top 20 by raw P",
+       label = "Top 20 genes by raw P - no gene passes FDR")
 }
 
 run_04a_heatmap <- function(cfg) {
@@ -126,7 +135,7 @@ run_04a_heatmap <- function(cfg) {
       show_rownames = show_rn, fontsize_row = row_fs,
       color = pal_diverging(100), border_color = "white",
       breaks = seq(-3, 3, length.out = 101),
-      main = sprintf("Top DEG heatmap (row Z-score) - %s", cfg$dataset_id),
+      main = sprintf("%s (row Z-score) - %s", pick$label, cfg$dataset_id),
       silent = FALSE
     )
     # pheatmap 的色条固定在图右侧、无位置参数；细长条，占宽有限，保留。
@@ -524,7 +533,9 @@ make_ora_dotplot <- function(df, cfg, title) {
     ggplot2::facet_wrap(~ panel, scales = "free_y", nrow = 1) +
     ggplot2::labs(title = title,
                   subtitle = wrap_subtitle(sprintf(
-                    paste0("top %d per direction. ORA itself is direction-agnostic, ",
+                    paste0("UP TO %d per direction - each panel header gives the count ",
+                           "actually shown, which is lower when a direction has fewer ",
+                           "terms passing the cutoff. ORA itself is direction-agnostic, ",
                            "so up and down are run as separate gene lists. ",
                            "x = significance, size = number of genes in the term."), n),
                     fig_width = W_DOUBLE),

@@ -495,6 +495,47 @@ run_10_survival_diagnostics <- function(cfg) {
   fig_ok <- tryCatch({
     sets_u <- unique(roc_df$set)
     cols <- stats::setNames(pal_categorical(length(sets_u)), sets_u)
+
+    # **天和年不能画在同一根线性轴上。**
+    #
+    # 原来两个队列共用一个 "Time since diagnosis" 线性轴，而主队列是**天**、
+    # 验证队列是**年**（规则 29 第 1 条：时间单位不跨队列共享）。实测后果：
+    # GSE20685 的点全部塌缩在 x≈0（3–4 个气泡叠成一个团、误差棒互相堆叠），
+    # 而训练队列的点散在 x≈430 与 x≈758，中间留下约 40% 的空白。
+    # 更要紧的是**横向位置没有意义**，而图看起来像是在做跨队列的时间比较。
+    #
+    # 改成按队列分面、每个面板各自一根 x 轴。分析层一点没动 ——
+    # 时间点本来就是各队列按自己的事件时间分位数算的（见 compute_time_roc）。
+    #
+    # 单位只存在于 config 的列名里（`overall survival time_days` /
+    # `follow_up_duration (years)`）：risk_df 的列名被归一成
+    # time/event/risk/set，原始列名已经丢了。所以单位在这里现取，
+    # **不写进 time_roc.csv**（那张表已经落盘，不动它）。
+    unit_of <- function(col) {
+      if (is.null(col) || !nzchar(col)) return(NA_character_)
+      m <- regmatches(col, regexpr("\\((days|weeks|months|years)\\)\\s*$",
+                                   col, ignore.case = TRUE))
+      if (length(m) == 1L) return(gsub("[()]", "", m))
+      m <- regmatches(col, regexpr("_(days|weeks|months|years)\\s*$",
+                                   col, ignore.case = TRUE))
+      if (length(m) == 1L) return(sub("^_", "", m))
+      NA_character_
+    }
+    val_ds <- as.character(cfg$survival$validation_dataset %||% "")
+    roc_df$unit <- vapply(roc_df$set, function(s) {
+      if (nzchar(val_ds) && identical(s, val_ds)) {
+        unit_of(cfg$survival$validation_time_column)
+      } else {
+        unit_of(cfg$survival$time_column)
+      }
+    }, character(1))
+    roc_df$panel <- ifelse(is.na(roc_df$unit), roc_df$set,
+                           sprintf("%s (%s)", roc_df$set, roc_df$unit))
+    roc_df$panel <- factor(roc_df$panel, levels = unique(roc_df$panel))
+    if (any(is.na(roc_df$unit))) {
+      log_warn("time_roc: 有队列的时间单位没能从 config 列名解析出来，面板标题只写队列名")
+    }
+
     p <- ggplot2::ggplot(roc_df,
         ggplot2::aes(x = horizon, y = auc, colour = set)) +
       ggplot2::geom_hline(yintercept = 0.5, linetype = "dashed",
@@ -504,21 +545,24 @@ run_10_survival_diagnostics <- function(cfg) {
       ggplot2::geom_errorbar(ggplot2::aes(ymin = ci_low, ymax = ci_high),
                              width = 0, linewidth = 0.35) +
       ggplot2::scale_colour_manual(values = cols) +
+      # free_x：每个队列一根自己的 x 轴，天和年因此永远不会落在同一尺度上
+      ggplot2::facet_wrap(~ panel, scales = "free_x") +
       ggplot2::labs(
-        x = "Time since diagnosis (native units per cohort)",
+        x = "Time since diagnosis (each panel in its cohort's native unit)",
         y = "Time-dependent AUC",
         colour = NULL,
         title = "Time-dependent AUC of the LASSO-Cox risk score",
         subtitle = wrap_subtitle(paste0(
           "Dashed line = no discrimination (AUC 0.5). Horizons are the 25th/50th/75th ",
-          "percentiles of EVENT times within each cohort, so the two cohorts' x-axes ",
-          "are not on a shared scale (primary cohort in days, validation in years). ",
+          "percentiles of EVENT times within each cohort, so each cohort is drawn on ",
+          "its OWN x-axis (native unit in the panel title) — days and years are never ",
+          "placed on a shared scale, and the panels must not be read across. ",
           "Horizons with fewer than ", MIN_EVENTS_AT_HORIZON,
-          " events remaining are not shown."), W_ONE_HALF)) +
+          " events remaining are not shown."), W_DOUBLE)) +
       theme_paper() +
       ggplot2::theme(legend.position = "bottom")
     save_pdf(file.path(fig, "time_roc.pdf"), print(p),
-             width = W_ONE_HALF, height = mm(80))
+             width = W_DOUBLE, height = mm(80))
     TRUE
   }, error = function(e) {
     log_warn(paste("time_roc 图失败:", conditionMessage(e)))
