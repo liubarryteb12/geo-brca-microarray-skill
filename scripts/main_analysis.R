@@ -106,6 +106,182 @@ INPUT_FILES <- list(
   list(f = "clinical.csv",     d = "临床表",       required = FALSE)
 )
 
+# ---- §0.4 Agent 决策链 ------------------------------------------------------
+#
+# **决策链不是日志。** 日志随 CI 滚动消失，而"为什么这样选"是
+# **结论的适用范围** —— 半年后拿到 deg_table.csv 的人必须能直接看到
+# 门禁怎么判的、哪些点名工具真跑了、哪些时间点为什么没报。
+#
+# **只汇总已落盘的状态，不重新推理。** 这里如果自己再判一遍，
+# 就会和真正的执行结果分叉 —— 而分叉出来的那份看起来同样合理。
+# 所以每条 answer 都从状态 JSON 里**取**，取不到就如实写"取不到"。
+record_geo_decisions <- function(cfg) {
+  res <- cfg$output$results_dir
+  rd <- function(f) {
+    p <- file.path(res, f)
+    if (!file.exists(p)) return(NULL)
+    tryCatch(jsonlite::fromJSON(p, simplifyVector = FALSE), error = function(e) NULL)
+  }
+  # 00_validate_inputs.R 把门禁结论写在 **data/**（输入侧的记录），不是 results/
+  rd_data <- function(f) {
+    p <- file.path(cfg$output$data_dir, f)
+    if (!file.exists(p)) return(NULL)
+    tryCatch(jsonlite::fromJSON(p, simplifyVector = FALSE), error = function(e) NULL)
+  }
+  g <- function(x, k, default = NULL) if (is.null(x)) default else (x[[k]] %||% default)
+  n_of <- function(x) if (is.null(x)) 0L else length(x)
+
+  # 1. 门禁与设计模式 —— 唯一防止"用错数据得出结论"的机制（硬性规则 1）
+  gm <- rd_data("geo_metadata.json")
+  record_decision(
+    cfg, "design_mode",
+    "这个数据集该走 small_sample 还是 cohort 门禁？",
+    sprintf("design_mode = %s（阈值 adj.P<%g, |log2FC|>%g）",
+            cfg$design_mode, cfg$thresholds$adj_p, cfg$thresholds$log2fc),
+    evidence = sprintf(
+      paste0("门禁结论来自 00_validate_inputs.R（%s）。",
+             "两种设计的降级路径与措辞约束不同，**不靠调阈值迁就数据集** —— ",
+             "规模不够就跑 small_sample，够就显式写 cohort。"),
+      if (is.null(gm)) "geo_metadata.json 取不到"
+      else sprintf("n_samples=%s，每组 %s，分组 %s",
+                   g(gm, "n_samples", "?"), g(gm, "min_per_group", "?"),
+                   paste(unlist(g(gm, "group_counts", list())), collapse = "/")))
+  )
+
+  # 2. 差异表达模式 —— 决定下游措辞能不能说"显著差异基因"
+  #
+  # **没有独立的 deg_mode 文件**，它散在几个步骤的状态里，而且**两套取值**：
+  #   04/05/07 走 `sel$mode` -> "fdr" / "ranked_fallback"
+  #   08 自己判 -> "significant" / "ranked_fallback"
+  # 只有回退那一个是同名同义的，所以判据只认 `ranked_fallback` 这个字符串。
+  # 取不到就说取不到 —— **不猜**，下游措辞按最保守的来。
+  tf0 <- rd("tf_status.json")
+  deg_mode <- "unknown"
+  deg_src <- ""
+  for (cand in c("enrichment_status.json", "ppi_status.json",
+                 "wgcna_status.json", "tf_status.json")) {
+    v <- g(rd(cand), "deg_mode")
+    if (is.character(v) && length(v) == 1L && nzchar(v)) {
+      deg_mode <- v
+      deg_src <- cand
+      break
+    }
+  }
+  record_decision(
+    cfg, "deg_mode",
+    "有没有 FDR 显著基因？下游该说『显著差异基因富集到』还是『最显著的 N 个基因里富集到』？",
+    sprintf("deg_mode = %s%s", deg_mode,
+            if (nzchar(deg_src)) sprintf("（取自 %s）", deg_src) else ""),
+    evidence = if (identical(deg_mode, "ranked_fallback")) {
+      "FDR 显著基因为 0，走排序表降级。**措辞必须收敛为『在最显著的 N 个基因里富集到……』**（硬性规则 3）—— 说成『显著差异基因富集到』是把降级藏起来。"
+    } else if (identical(deg_mode, "unknown")) {
+      "四个状态文件里都取不到 deg_mode（相关步骤未跑或状态缺失）—— **不猜**，下游措辞按最保守的来。"
+    } else {
+      "有 FDR 显著基因（取值 fdr / significant 两套，含义相同），可直接说『差异基因富集到……』。"
+    }
+  )
+
+  # 3. §1.5 TRRUST / ChEA3 —— 点名工具的落地边界（硬性规则 27）
+  tf <- tf0
+  tr <- g(tf, "trrust")
+  cmp <- g(tf, "trrust_vs_dorothea")
+  tr_ok <- is.list(tr) && identical(g(tr, "status", ""), "ok")
+  record_decision(
+    cfg, "tf_sources",
+    "§1.5 点名的 TRRUST / ChEA3 用上了没有？",
+    sprintf("TRRUST %s；ChEA3 未接入（需要 httr/curl，CI 包列表里没有）",
+            if (is.null(tr)) "状态取不到"
+            else if (tr_ok) "已接入（作为 dorothea 的独立交叉验证）"
+            else sprintf("未接入（%s）", g(tr, "reason", "理由缺失"))),
+    evidence = if (isTRUE(g(cmp, "compared", FALSE))) {
+      sprintf(paste0("TRRUST **是交叉验证，不替换主来源**（主来源仍是 dorothea）。",
+                     "配对重叠 Jaccard=%s（共有 %s 对），重叠部分 mor 符号一致率=%s —— ",
+                     "**mor 冲突是最该看的数**：两个库对同一对 TF-靶基因方向不一致时，",
+                     "任何基于 mor 定符号的活性打分都要打折。"),
+              g(cmp, "jaccard", "?"), g(cmp, "n_common_pairs", "?"),
+              g(cmp, "mor_agreement", "?"))
+    } else {
+      sprintf(paste0("两个库都没有 CRAN/Bioconductor 包（CRAN 上 TRRUST / trrust / ",
+                     "ChEA3 / chea3 四个名字实测全无），只能走数据/API。TRRUST 走官方 TSV + ",
+                     "base R download.file（不引新依赖）；比对未成立的原因：%s"),
+              g(cmp, "reason", "（状态取不到）"))
+    }
+  )
+
+  # 4. §1.6 时间点取舍 —— "在哪个时间段有用"（硬性规则 29）
+  sv <- rd("survival_diagnostics_status.json")
+  if (!is.null(sv)) {
+    record_decision(
+      cfg, "survival_horizons",
+      "§1.6 的时间依赖 AUC 报了哪几个时间点？没报的为什么？",
+      sprintf("status=%s，报了 %s 个时间点",
+              g(sv, "status", "?"), g(sv, "n_time_points", "0")),
+      evidence = sprintf(
+        "**时间点后事件不足 %s 个就不报 AUC**（事件少时方差极大，3 个事件能给 0.95 也能给 0.30）。时间单位不跨队列共享：主队列是天、验证队列是年，各自按事件时间分位数取。丢弃的时间点记在 roc_notes：%s",
+        g(sv, "min_events_at_horizon", "?"),
+        if (n_of(g(sv, "roc_notes")) == 0L) "（无）"
+        else paste(utils::head(unlist(g(sv, "roc_notes")), 4), collapse = " / "))
+    )
+  }
+
+  # 5. 跨部分交接 —— 本仓库唯一一处真正的跨语言转换（§0.2）
+  tgt <- rd("part2_targets_status.json")
+  if (!is.null(tgt)) {
+    record_decision(
+      cfg, "part2_handoff",
+      "交给 Part 2（Python）的靶基因表里有什么、丢了什么？",
+      sprintf("交出 %s 个基因，其中 %s 个带 logFC",
+              g(tgt, "n_genes", "?"), g(tgt, "n_with_logfc", "?")),
+      evidence = paste0(
+        "只走 CSV（§0.2）。**丢失字段逐条登记在清单的 cross_language 里** —— ",
+        "Part 2 用不到它们，但记下来才知道将来要用时回 Part 1 的哪张表取。",
+        if (identical(as.integer(g(tgt, "n_with_logfc", 0L)), 0L))
+          " **本轮没有 logFC**：Part 2 的 signature_alignment 会是空的，那是预期不是 bug。"
+        else "")
+    )
+  }
+
+  # 6. 可选步骤的终态 —— "没做"和"做了没问题"必须长得不一样（硬性规则 24）
+  #
+  # 状态文件有**两种形状**：`{"status": "..."}`（05/06/07/10）和
+  # `{"go": {"status": ...}, "kegg": {...}}`（04）。无条件取 `$status`
+  # 会在 04 上拿到 NULL —— 验收那边已经因为同样的形状问题崩过一次。
+  one_status <- function(s) {
+    if (is.null(s)) return("状态文件不存在")
+    if (is.character(s$status) && length(s$status) == 1L) return(s$status)
+    parts <- character(0)
+    for (k in c("go", "kegg")) {
+      node <- s[[k]]
+      if (is.list(node) && is.character(node$status)) {
+        parts <- c(parts, sprintf("%s=%s", k, node$status))
+      }
+    }
+    if (length(parts) > 0L) paste(parts, collapse = "+") else "status 字段缺失"
+  }
+  opt <- list(
+    list(f = "enrichment_status.json", n = "§1.3 GO/KEGG 富集"),
+    list(f = "wgcna_status.json",      n = "§1.4 WGCNA 共表达模块"),
+    list(f = "ppi_status.json",        n = "§1.5 PPI / 共表达网络"),
+    list(f = "lasso_status.json",      n = "§1.6 LASSO/Cox 预后模型")
+  )
+  st_txt <- vapply(opt, function(o) sprintf("%s=%s", o$n, one_status(rd(o$f))),
+                   character(1))
+  record_decision(
+    cfg, "optional_steps",
+    "可选步骤这一轮是『真跑了』『有理由地没跑』还是『崩了』？",
+    paste(st_txt, collapse = "；"),
+    evidence = paste(
+      "not_applicable / not_configured / too_few_events / package_missing /",
+      "not_done / not_run 是**有理由地没跑**（PASS，可见）；failed / partial_error /",
+      "schema_error 是**崩了**（FAIL）。两者混在一起时，崩溃会被洗成合法跳过 ——",
+      "实测踩过两次（07_grn 漏 import、timeROC 缺 Surv）。")
+  )
+
+  m <- read_manifest(cfg)
+  log_info(sprintf("决策链已登记：%d 条（写入 %s）",
+                   length(m$decisions %||% list()), MANIFEST_NAME))
+}
+
 # ---- 验收项（直接对应 spec 的 acceptance_criteria）-------------------------
 check_acceptance <- function(cfg) {
   res <- cfg$output$results_dir
@@ -465,6 +641,17 @@ main <- function() {
                      sprintf("，缺失 %d 项：%s", length(msum$inputs_missing),
                              paste(msum$inputs_missing, collapse = ", "))
                    } else "，全部就位"))
+
+  # ---- §0.4 Agent 决策链 -------------------------------------------------
+  #
+  # **决策链不是日志。** 日志随 CI 滚动消失，而"为什么这样选"是
+  # **结论的适用范围** —— 半年后拿到 deg_table.csv 的人必须能直接看到
+  # 门禁怎么判的、哪些点名工具真跑了、哪些时间点为什么没报，
+  # 而不是去翻几十个 JSON 自己拼。
+  #
+  # 三条判据都来自**已落盘的状态文件**，不是重新推理一遍：
+  # 这里只做汇总，不做二次判断 —— 二次判断会和真正的执行结果分叉。
+  record_geo_decisions(cfg)
 
   # ---- 验收 --------------------------------------------------------------
   log_info("=== 验收检查 ===")

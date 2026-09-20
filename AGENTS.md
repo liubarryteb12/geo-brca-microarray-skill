@@ -246,6 +246,32 @@
 比没有清单更糟。输入哈希在**步骤跑完之后**才登记 —— 可选步骤这轮有没有
 产物，跑完才知道。
 
+### 决策链要有调用点，光有函数等于没有
+
+**接口定义了但一次都没调用，清单里的 `decisions` 就是空数组 —— 而空数组
+和"这一轮没有任何决策"长得一模一样。** 实测三个仓库的
+`record_decision()` 都定义了，但只有 Part 2 真的在调，
+R 侧两个仓库一次都没调过。
+
+现在 R 侧的调用点是 `main_analysis.R` 的 `record_geo_decisions()`，
+放在**所有步骤跑完之后、验收之前**，记六条：`design_mode` / `deg_mode` /
+`tf_sources` / `survival_horizons` / `part2_handoff` / `optional_steps`。
+
+**每条 answer 都是从已落盘的状态文件里「取」的，不是重新推理一遍。**
+这一点是硬要求：自己再判一遍就会和真正的执行结果分叉，
+而**分叉出来的那份看起来同样合理** —— 读者没有任何办法发现。
+
+两个具体的坑（都写进代码注释了）：
+
+- **`deg_mode` 有两套取值**：04/05/07 走 `sel$mode` 给
+  `"fdr"`/`"ranked_fallback"`，08 自己判给 `"significant"`/`"ranked_fallback"`。
+  只有回退那一个同名同义，所以判据只认 `ranked_fallback`，
+  并且四个状态文件依次尝试；取不到写 `unknown`，**不猜**。
+- **状态文件有两种形状**：`{"status": ...}`（05/06/07/10）与
+  `{"go": {...}, "kegg": {...}}`（04）。无条件取 `$status` 在 04 上拿到
+  `NULL` —— 验收那边已经因为同样的形状问题崩过一次
+  （`$ operator is invalid for atomic vectors`）。
+
 ## 27. §1.5 的 TRRUST / ChEA3：能做的做，做不了的如实写
 
 **两个库都没有 CRAN/Bioconductor 包**（实测查过 CRAN 上 `TRRUST` /

@@ -39,6 +39,33 @@
 | §0.4 | 人工干预记录 | `record_human_review()` | `human_review` |
 | §0.2 | 跨语言转换前后维度、丢失字段 | `record_cross_language()` | `cross_language` |
 
+### 决策链到底记了哪几条
+
+`record_decision()` 定义在 `common.R`，**调用点在 `main_analysis.R` 的
+`record_geo_decisions()`**（所有步骤跑完之后、验收之前）。
+
+**为什么放在最后：** 每条 answer 都是从**已落盘的状态文件**里取的，
+不是重新推理一遍。早写会取不到可选步骤的终态，而且**自己再判一遍就会
+和真正的执行结果分叉** —— 分叉出来的那份看起来同样合理。
+
+| `node` | 问题 | evidence 里放了什么 |
+|---|---|---|
+| `design_mode` | 该走 `small_sample` 还是 `cohort` 门禁？ | 样本数、每组数、分组计数（取自 `data/geo_metadata.json`） |
+| `deg_mode` | 有没有 FDR 显著基因？措辞能不能说"显著差异基因"？ | 四个状态文件里第一个有 `deg_mode` 的那个 |
+| `tf_sources` | §1.5 点名的 TRRUST / ChEA3 用上了没有？ | Jaccard、共有对数、**mor 符号一致率** |
+| `survival_horizons` | §1.6 报了哪几个时间点？没报的为什么？ | 事件数门槛 + `roc_notes` 里被丢弃的时间点 |
+| `part2_handoff` | 交给 Part 2 的靶基因表里有什么、丢了什么？ | 基因数、带 logFC 的个数 |
+| `optional_steps` | 可选步骤是"真跑了""有理由地没跑"还是"崩了"？ | 四个状态文件的实际 `status` 取值 |
+
+**`deg_mode` 有两套取值**（`fdr`/`significant`，回退那一个同名同义），
+所以判据只认 `ranked_fallback` 这个字符串，并且四个来源依次尝试 ——
+取不到就写 `unknown`，**不猜**。
+
+**状态文件有两种形状**（`{"status": ...}` 与
+`{"go": {...}, "kegg": {...}}`），`optional_steps` 用 `one_status()`
+把两种都读出来。验收那边已经因为同样的形状问题崩过一次
+（`$ operator is invalid for atomic vectors`），所以这里显式处理。
+
 ---
 
 ## 2. 接口清单
