@@ -173,7 +173,17 @@ run_04a_heatmap <- function(cfg) {
       show_colnames = show_cn, fontsize_col = col_fs,
       color = pal_diverging(100), border_color = "white",
       breaks = seq(-3, 3, length.out = 101),
-      main = sprintf("%s (row Z-score) - %s", pick$label, cfg$dataset_id),
+      # **方向分布写进标题。**
+      # 这张图按 adj.P 取前 N 个（规范如此，规则 9 只要求 ORA 分方向，没要求
+      # 热图平衡），实测 GSE42568 取到的 50 个**全是下调** —— 而同一批数据的
+      # 火山图里上调 1957 / 下调 1873，几乎对半。两张图并排看，读者会怀疑
+      # 热图选错了基因。图本身没说谎（左侧 direction 注释条如实标了全蓝），
+      # 但"为什么一个上调都没有"必须有交代，否则就是"内容表达有歧义"。
+      # **这里只加说明，不动选择逻辑** —— 改选择等于改规范。
+      main = sprintf("%s (row Z-score) - %s [%d up / %d down]", pick$label,
+                     cfg$dataset_id,
+                     sum(annotation_row$direction == "up"),
+                     sum(annotation_row$direction == "down")),
       silent = FALSE
     )
     # pheatmap 的色条固定在图右侧、无位置参数；细长条，占宽有限，保留。

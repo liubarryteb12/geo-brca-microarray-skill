@@ -95,6 +95,10 @@ run_02_qc_pca_correlation <- function(cfg) {
     theme(axis.text.x = if (isTRUE(show_x))
             element_text(angle = 90, hjust = 1, vjust = 0.5, size = box_fs)
           else element_blank(),
+          # **刻度线跟着标签一起藏。** 121 个刻度线每个只占 0.75mm，密到连成
+          # 一条黑带，看上去像图坏了。刻度线存在的意义是给标签定位 ——
+          # 标签不画了，它就只剩副作用。
+          axis.ticks.x = if (isTRUE(show_x)) element_line() else element_blank(),
           legend.position = "none")
   save_pdf(file.path(res, "boxplot_before_after.pdf"), print(p_box), width = W_DOUBLE, height = mm(140))
   log_info("已生成 boxplot_before_after.pdf")
