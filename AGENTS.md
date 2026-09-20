@@ -362,6 +362,54 @@ R 只在云端跑，所以算法错误不在本地挡掉就要烧一整轮 CI。
 **"测试失败"和"代码有错"是两件事。** 上一轮（`_smoke_export_targets.py`）
 也是 3 条断言错、0 条代码错。所以失败时先核对期望是怎么来的。
 
+### `timeROC` 用了**未声明的依赖**，必须临时挂载 `survival`
+
+**实测（run 35483432635）：两个队列的 timeROC 全部失败，报
+`could not find function "Surv"`。** 查 CRAN 上 timeROC 0.4.1 的元数据：
+
+```
+Depends:  R (>= 2.10)                 <- 没有 survival
+Imports:  pec (>= 2.4.4), mvtnorm     <- 没有 survival
+Suggests: survival, timereg           <- survival 在这里
+NAMESPACE: import(pec); import(mvtnorm)
+           **没有任何 importFrom(survival, ...)**
+```
+
+它内部按名字调用 `Surv`，却只把 `survival` 写成 `Suggests`。
+正常用法能跑通是因为用户先 `library(survival)` 了，`Surv` 恰好在搜索路径上。
+
+**`pkg::fun()` 不 attach 任何东西**（连 `Depends` 都不 attach，更别说
+`Suggests`），所以本仓库的调用约定下它必然失败。从外面没有参数能改。
+
+这是本仓库**第二处** `library()`（第一处是规则 23 的 `blockwiseModules`），
+同样必须：先记 `"package:survival" %in% search()`，`on.exit` 立刻
+`detach(..., unload = FALSE)`。其余调用仍写全名。
+
+**推广：** 引入任何新 R 包前，先看它的 `NAMESPACE` 里
+**`importFrom` 有没有覆盖它自己用到的函数**。只用 `Suggests` 声明的包
+在本仓库的"不 attach"约定下会静默失败 —— 而失败点在包内部，
+报错信息不会提到依赖声明。
+
+### 崩溃不能伪装成"这一步不适用" —— 我自己又踩了一次
+
+第一版的 `too_few_events` 分支**无条件**写这个状态，于是上面那次
+timeROC 崩溃被记成"事件数不足"，验收照常 PASS。**这正是规则 24
+（可选步骤失败不等于这一步不适用）说的那个坑。**
+
+现在分三态：
+
+| 状态 | 含义 | 验收 |
+|---|---|---|
+| `ok` | 真跑了 | 要求 `n_time_points > 0` 且 CSV 存在 |
+| `too_few_events` / `not_configured` | **有理由地没跑**，且 `timeROC` 没报错 | PASS（可见） |
+| `failed` / `partial_error` | **崩溃了**，`reason` 里带错误原文 | **FAIL** |
+
+判据是"`roc_notes` 里有没有出现 `失败:`" —— 先把崩溃挑出来，
+剩下的才允许落到"没跑"。**顺序反了就会把崩溃洗成合法跳过。**
+
+**推广：** 任何"因为不适用所以没做"的分支，都要先排除"其实是崩了"。
+写这类分支时问一句：**如果这一步的代码坏了，它会落到哪个状态？**
+
 ## 代码约定
 
 - R 脚本结构：bootstrap 块 → 辅助函数 → `run_XX(cfg)` → `if (!GEO_ORCHESTRATED())` 自执行块。
@@ -438,7 +486,14 @@ GSE64790 244s / GSE42568 400s，暖缓存整轮 6m10s / 8m49s。
 - 提交 API key、token 或任何凭据
 - 在 `results/` 或 `data/` 里提交运行产物（`.gitignore` 已排除）
 - 把上游 k-dense `scientific-agent-skills` 库的内容复制进本仓库
-- **`library()` / `require()` / `attach()`** —— 唯一例外是规则 23 里
-  `blockwiseModules` 那次，且必须 `on.exit` 立刻 detach。
+- **`library()` / `require()` / `attach()`** —— 只有**两处**例外，都必须先记
+  `"package:X" %in% search()`、`on.exit` 立刻 detach：
+  1. 规则 23 的 `blockwiseModules`（`WGCNA::cor` 被包内常量按名字查找）
+  2. 规则 29 的 `timeROC::timeROC`（`Surv` 被包内代码按名字调用，
+     而 `survival` 只在它的 `Suggests` 里）
+
   其余一律 `pkg::fun()` 写全名：attach 会遮蔽 `stats::filter` / `stats::lag` /
   `dplyr::filter` 之类的同名函数，而遮蔽**不报错**，只是让某个调用悄悄换了实现。
+
+  **每加一处例外都要问：这是"包内部按名字找东西"吗？** 是，才允许。
+  只是"写全名太麻烦"不是理由。

@@ -270,6 +270,46 @@ run_10_survival_diagnostics <- function(cfg) {
   fig <- res
   ensure_dirs(cfg)
 
+  # ---- 临时挂载 survival（本仓库第二处 library()，理由见下）----------------
+  #
+  # **`timeROC::timeROC()` 不加这一步会直接报 `could not find function "Surv"`。**
+  # 实测（run 35483432635）：两个队列的 timeROC 全部失败，而状态文件当时
+  # 写的是"事件数不足" —— 一次崩溃伪装成了"这一步不适用"。
+  #
+  # **根因是 timeROC 用了未声明的依赖。** 查过 CRAN 上 timeROC 0.4.1 的
+  # DESCRIPTION 与 NAMESPACE：
+  #
+  #   Depends:  R (>= 2.10)                    <- 没有 survival
+  #   Imports:  pec (>= 2.4.4), mvtnorm        <- 没有 survival
+  #   Suggests: survival, timereg              <- survival 在这里
+  #   NAMESPACE: import(pec); import(mvtnorm)
+  #              **没有任何 importFrom(survival, ...)**
+  #
+  # 也就是说 `timeROC` 内部按名字调用 `Surv`，却把 `survival` 只写成
+  # `Suggests`。正常用法（用户先 `library(survival)` 再 `library(timeROC)`）
+  # 能跑通，是因为 `survival` 恰好在搜索路径上。
+  #
+  # **`pkg::fun()` 不 attach 任何东西**（连 `Depends` 也不 attach，更别说
+  # `Suggests`），所以本仓库的调用约定下它必然失败。
+  # 从外面没有参数能改 —— 只能在调用期间把 `survival` 放上搜索路径。
+  #
+  # 本仓库禁止 `library()`（AGENTS「禁止」段），唯一例外是规则 23 的
+  # `blockwiseModules`。这是第二处，同样必须：
+  #   1. 先记 `"package:survival" %in% search()`，避免拆掉调用方原有状态
+  #   2. `on.exit` 立刻 detach（`unload = FALSE` —— 别的包可能还在用它的
+  #      命名空间，卸载会引发难以定位的副作用）
+  # 脚本其余所有调用仍然写全名（`survival::coxph` / `survival::survfit` 等）。
+  surv_attached <- "package:survival" %in% search()
+  if (!surv_attached) {
+    suppressPackageStartupMessages(library(survival))
+    on.exit({
+      if ("package:survival" %in% search()) {
+        detach("package:survival", unload = FALSE, character.only = TRUE)
+      }
+    }, add = TRUE)
+    log_info("临时挂载 survival（timeROC 把它写在 Depends 里，:: 不会 attach）")
+  }
+
   status <- list(
     dataset_id = cfg$dataset_id,
     status = "ok",
@@ -341,10 +381,28 @@ run_10_survival_diagnostics <- function(cfg) {
   }
 
   if (length(roc_all) == 0L) {
-    status$status <- "too_few_events"
-    status$reason <- "所有队列的事件数都不足以算时间依赖 AUC"
+    # **崩溃和"事件不够"必须长得不一样。**
+    #
+    # 实测踩过（run 35483432635）：timeROC 因为 `Surv` 找不到而全部失败，
+    # 而这里无条件写 `too_few_events` + "事件数不足" —— 一次**代码崩溃**
+    # 伪装成了"这一步不适用"，验收照常 PASS。这正是 AGENTS 规则 24
+    # （可选步骤失败不等于这一步不适用）说的那个坑，我自己又踩了一次。
+    #
+    # 所以先看有没有 error：有 error 就是 failed，理由里带上错误原文。
+    errs <- roc_notes[!vapply(roc_notes, function(x) !grepl("失败:", x), logical(1))]
+    status$roc_errors <- as.list(errs)
+    if (length(errs) > 0L) {
+      status$status <- "failed"
+      status$reason <- sprintf(
+        "timeROC 在 %d 个队列上失败（**不是事件不足**）：%s",
+        length(errs), paste(unlist(errs), collapse = " | "))
+      log_error(status$reason)
+    } else {
+      status$status <- "too_few_events"
+      status$reason <- "所有队列的事件数都不足以算时间依赖 AUC（timeROC 未报错）"
+      log_warn(status$reason)
+    }
     status$notes <- roc_notes
-    log_warn(status$reason)
     write_json(file.path(res, "survival_diagnostics_status.json"), status)
     return(status)
   }
@@ -485,6 +543,16 @@ run_10_survival_diagnostics <- function(cfg) {
   status$n_time_points <- nrow(roc_df)
   status$sets <- sets
   status$roc_notes <- roc_notes
+  # 有队列失败时**不能报 ok** —— 部分失败也是失败，理由要带上错误原文
+  status$roc_errors <- as.list(
+    roc_notes[!vapply(roc_notes, function(x) !grepl("失败:", x), logical(1))])
+  if (length(status$roc_errors) > 0L) {
+    status$status <- "partial_error"
+    status$reason <- sprintf(
+      "%d 个队列的 timeROC 失败：%s",
+      length(status$roc_errors), paste(unlist(status$roc_errors), collapse = " | "))
+    log_error(status$reason)
+  }
   status$calibration_notes <- cal_notes
   status$rms_notes <- rms_notes
   status$n_calibration_rows <- if (is.null(cal_df)) 0L else nrow(cal_df)

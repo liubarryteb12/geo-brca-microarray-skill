@@ -319,6 +319,13 @@ check_acceptance <- function(cfg) {
            s <- read_status("survival_diagnostics_status.json")
            if (is.null(s)) return(FALSE)
            st <- s$status
+           # **`failed` / `partial_error` 是崩溃，不是"这一步不适用"。**
+           # 实测踩过：timeROC 因 `Surv` 找不到而全部失败，脚本却写成
+           # `too_few_events` + "事件数不足"，验收照常 PASS —— 一次崩溃
+           # 伪装成了合法的跳过。所以这里显式把这两个状态判成 FAIL。
+           if (identical(st, "failed") || identical(st, "partial_error")) {
+             return(FALSE)
+           }
            if (identical(st, "ok")) {
              return(!is.null(s$n_time_points) && s$n_time_points > 0L &&
                       file.exists(file.path(res, "time_roc.csv")))
