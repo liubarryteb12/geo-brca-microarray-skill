@@ -161,8 +161,27 @@ jobs:
 
       # 数据集预检：物种 / 数据类型 / 样本量 / 分组。
       # 00_validate_inputs.R 内部还会再判一次，这里只是让失败发生在**装包之前**。
+      #
+      # **预检必须用这个数据集真正在跑的那套门禁。** 原来不传 --design-mode，
+      # 于是默认落到 small_sample —— GSE42568（n=121，config 里是 cohort）
+      # 每次都打印
+      #   GSE42568  FAIL  (design_mode: small_sample)
+      #     FAIL  样本量不合规: 121（small_sample 要求 >= 1 且 < 10）
+      # 而同一个数据集在 cohort 下跑得好好的（同一份日志里就有
+      # "样本量 OK: 121 (>= 15, design_mode=cohort)"）。
+      #
+      # **一个与真实门禁矛盾的 FAIL 比没有预检更糟** —— 读者会以为这个数据集
+      # 不合规，或者以为预检坏了。两套门禁由 design_mode 选择，
+      # 不是一个门禁换个阈值（AGENTS.md 规则 1）。
+      #
+      # 保留 `|| true`（只报告、不拦）是有意的：真正的硬门禁在
+      # 00_validate_inputs.R 里，而这一步要访问 GEO 接口 —— 让网络抖动
+      # 变成 job 失败，会把"每次推送 CI 必须绿"这条约束稀释掉。
       - name: Pre-flight the dataset
-        run: node scripts/find_dataset.mjs check "$DATASET" || true
+        run: |
+          MODE=$(node -e 'const s=require("fs").readFileSync(process.argv[1],"utf8");const m=s.match(/^design_mode:\s*(\S+)/m);process.stdout.write(m?m[1]:"small_sample")' "$CONFIG")
+          echo "预检 design_mode=$MODE（读自 $CONFIG）"
+          node scripts/find_dataset.mjs check "$DATASET" --design-mode "$MODE" || true
 
       # 临床终点是**选数据集时**要看的，不是每次运行的硬门禁：
       # 没有随访的数据集照样能跑完整条流程，只是做不了预后模型。
