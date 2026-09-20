@@ -49,8 +49,8 @@
 #   results/<GSE>/tf_regulon_enrichment.csv   每个 TF 的 Fisher 检验
 #   results/<GSE>/tf_activity_by_sample.csv   每个样本 × TF 的活性分数
 #   results/<GSE>/tf_activity_group_test.csv  组间比较
-#   results/<GSE>/tf_regulon_enrichment.pdf        调控子富集条形图（+ 同名 .png）
-#   results/<GSE>/tf_activity_group_difference.pdf 调控子活性组间效应量（+ .png）
+#   results/<GSE>/01-08-01-unit1-tf-regulon-enrichment.pdf        调控子富集条形图（+ 同名 .png）
+#   results/<GSE>/01-08-02-unit1-tf-activity-group-difference.pdf 调控子活性组间效应量（+ .png）
 #   results/<GSE>/tf_status.json                   状态与方法学限定
 # ============================================================================
 
@@ -605,9 +605,9 @@ run_08_tf_regulation <- function(cfg) {
       # **不要用 ggsave + cfg$analysis$figure_dpi** —— 那个字段不存在，
       # 传 NULL 给 dpi 会报 "`dpi` must be a single number or string"，
       # 被下面的 tryCatch 接住，于是图静默消失、status 里 figure_written=false。
-      save_pdf(file.path(res, "tf_regulon_enrichment.pdf"),
+      save_pdf(file.path(res, "01-08-01-unit1-tf-regulon-enrichment.pdf"),
                print(p1), width = mm(178), height = mm(152))
-      figs_written <- c(figs_written, "tf_regulon_enrichment.pdf")
+      figs_written <- c(figs_written, "01-08-01-unit1-tf-regulon-enrichment.pdf")
       if (!is.null(act_test) && nrow(act_test) >= 2L) {
         tt <- utils::head(act_test[order(-abs(act_test$cohens_d)), ], 20L)
         tt$tf <- factor(tt$tf, levels = rev(tt$tf))
@@ -633,9 +633,9 @@ run_08_tf_regulation <- function(cfg) {
               act_test$group2[1], act_test$group1[1], min(table(g)))),
             x = NULL, y = "Cohen's d", fill = NULL) +
           theme_paper()
-        save_pdf(file.path(res, "tf_activity_group_difference.pdf"),
+        save_pdf(file.path(res, "01-08-02-unit1-tf-activity-group-difference.pdf"),
                  print(p2), width = mm(178), height = mm(152))
-        figs_written <- c(figs_written, "tf_activity_group_difference.pdf")
+        figs_written <- c(figs_written, "01-08-02-unit1-tf-activity-group-difference.pdf")
       }
       TRUE
     } else {
@@ -653,9 +653,9 @@ run_08_tf_regulation <- function(cfg) {
   figs_written <- figs_written[
     file.exists(file.path(res, figs_written))]
   figs_missing <- setdiff(
-    c("tf_regulon_enrichment.pdf",
+    c("01-08-01-unit1-tf-regulon-enrichment.pdf",
       if (!is.null(act_test) && nrow(act_test) >= 2L)
-        "tf_activity_group_difference.pdf"),
+        "01-08-02-unit1-tf-activity-group-difference.pdf"),
     figs_written)
   if (length(figs_missing) > 0L) {
     log_warn(sprintf("TF 图缺失: %s", paste(figs_missing, collapse = ", ")))

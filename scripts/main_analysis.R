@@ -387,32 +387,36 @@ check_acceptance <- function(cfg) {
   }
 
   checks <- list(
-    chk("boxplot_before_after.pdf"),
-    chk("density_plot.pdf"),
-    chk("pca_plot.pdf"),
+    chk("01-02-01-unit1-boxplot-before-after.pdf"),
+    chk("01-02-02-unit1-density-plot.pdf"),
+    chk("01-02-03-unit1-pca-plot.pdf"),
     # 椭圆坐标落盘：从 PNG 反推"椭圆画没画、多大"是猜（实测 stat_ellipse 在 n=3 时
     # 静默产出空数据，图上只有点）。有这张表就能直接核对。
     chk("pca_ellipse.csv", required = FALSE),
-    chk("correlation_heatmap.pdf"),
+    chk("01-02-04-unit1-correlation-heatmap.pdf"),
     chk("correlation_matrix.csv"),
     chk("deg_table.csv"),
-    chk("volcano_plot.pdf"),
-    chk("top50_heatmap.pdf"),
+    chk("01-03-01-unit1-volcano-plot.pdf"),
+    chk("01-04-01-unit1-top50-heatmap.pdf"),
     # DE 之后的 QC 关卡（bulk-rnaseq skill）：p 值分布要"均匀 + 0 附近有峰"。
     # 它区分"功效不足"和"设计有问题"，对 n<10 的设计尤其关键，所以是必需项。
-    chk("pvalue_histogram.pdf"),
+    chk("01-03-02-unit1-pvalue-histogram.pdf"),
+    # **这两个名字原来写错了。** 写的是 `GO_dotplot.pdf` / `KEGG_dotplot.pdf`，
+    # 而实际产物从来没有这两个名字 —— 所以 `has(...)` 那一半**永远是 false**，
+    # 这条检查一直只靠 `|| documented(...)` 通过。现在改成真实图名。
+    # （改对只会把 FAIL 变成 PASS，不会新增失败：原来能过的仍然能过。）
     list(name = "GO 富集（结果或空原因）",
-         ok = has("GO_dotplot.pdf") || documented(enrich, "go"),   required = TRUE),
+         ok = has("01-04-04-unit1-go-ora-dotplot.pdf") || documented(enrich, "go"),   required = TRUE),
     list(name = "KEGG 富集（结果或空原因）",
-         ok = has("KEGG_dotplot.pdf") || documented(enrich, "kegg"), required = TRUE),
+         ok = has("01-04-05-unit1-kegg-ora-dotplot.pdf") || documented(enrich, "kegg"), required = TRUE),
     # GSEA 是弱功效数据集的主力方法，但基因集数据库/网络问题可能让它拿不到结果，
     # 所以按可选步骤处理，只要有记录在案的状态即可。
     list(name = "preranked GSEA / GO（结果或原因）",
-         ok = has("GSEA_GO_dotplot.pdf") || documented(enrich, "gsea_go"),   required = FALSE),
+         ok = has("01-04-02-unit1-gsea-go-dotplot.pdf") || documented(enrich, "gsea_go"),   required = FALSE),
     list(name = "preranked GSEA / KEGG（结果或原因）",
-         ok = has("GSEA_KEGG_dotplot.pdf") || documented(enrich, "gsea_kegg"), required = FALSE),
+         ok = has("01-04-03-unit1-gsea-kegg-dotplot.pdf") || documented(enrich, "gsea_kegg"), required = FALSE),
     list(name = "PPI 网络（结果或回退原因）",
-         ok = has("PPI_network.png") || documented(ppi, "status"),  required = FALSE),
+         ok = has("01-05-01-unit1-ppi-network.png") || documented(ppi, "status"),  required = FALSE),
     # 热图行名放不下时会被隐藏 —— 那就必须有一张表能还原"第 N 行是哪个基因"。
     #
     # **原来这条是空转的**：`ok = has(csv) || has(pdf)`，而 pdf 一定会产出，
@@ -423,20 +427,20 @@ check_acceptance <- function(cfg) {
          # 没藏行名 -> 不需要这张表；藏了 -> 必须有；读不到决策 -> 不误报失败
          # **按 label 过滤**：同一张图还记着列名的决策，不过滤的话
          # "行名藏了、列名显示了"会被 any() 判成"没藏"（见 label_hidden 注释）。
-         ok = !isTRUE(label_hidden("top50_heatmap", "热图基因")) ||
+         ok = !isTRUE(label_hidden("01-04-01-unit1-top50-heatmap", "热图基因")) ||
               has("top50_heatmap_genes.csv"),
          required = TRUE),
     # 列名同理：121 个样本在 183 mm 里放不下（可容纳约 42 个），列名会被藏。
     # **藏了就必须能查回"图上第 N 列是哪个样本"** —— 规则 21 在列方向上是同一件事。
     list(name = "top50_heatmap_samples.csv（列名隐藏时的对照表）",
-         ok = !isTRUE(label_hidden("top50_heatmap", "热图样本名（列）")) ||
+         ok = !isTRUE(label_hidden("01-04-01-unit1-top50-heatmap", "热图样本名（列）")) ||
               has("top50_heatmap_samples.csv"),
          required = TRUE),
     # 决策本身要落盘。日志里有同样的算式，但 CI 日志会滚掉，文件不会。
     list(name = "label_decisions.csv（标签决策，可核对为什么藏了行名）",
          ok = has("label_decisions.csv"), required = FALSE),
     list(name = "PPI 图注文件（图上写了什么，可检索）",
-         ok = has("PPI_network_caption.txt") || !has("PPI_network.png"),
+         ok = has("PPI_network_caption.txt") || !has("01-05-01-unit1-ppi-network.png"),
          required = FALSE),
     list(name = "WGCNA（结果或不适用原因）", ok = settled(wgcna), required = FALSE),
     # 批次与分组的混杂评估。**判据是"有记录"，不是"有批次"** ——

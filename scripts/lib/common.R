@@ -732,7 +732,7 @@ fits_labels <- function(n, height_in, fontsize, panel_frac = 0.75, min_gap = 2.5
 #' 想回答"这轮为什么把行名藏了"，翻文件比翻几万行日志快。
 #'
 #' @param what 标签指代的东西，用于日志（如 "热图基因"）
-#' @param figure 图的名字（如 "top50_heatmap"）；`NULL` 表示只记日志不落盘
+#' @param figure 图的名字（如 "01-04-01-unit1-top50-heatmap"）；`NULL` 表示只记日志不落盘
 #' @return 逻辑值
 decide_rownames <- function(n, height_in, fontsize, what = "行名",
                             panel_frac = 0.75, min_gap = 2.5, figure = NULL) {
@@ -853,7 +853,7 @@ theme_paper <- function(base_size = 10) {
       # **多个图例要竖着摞，不能并排。**
       # `legend.direction` 管的是一个图例内部（键横排），`legend.box` 管的是
       # **多个图例之间**。原来是 "horizontal" —— 多个图例的宽度**相加**。
-      # 实测 volcano_plot（colour + alpha 两个图例）：并排后总宽超出 183 mm，
+      # 实测 01-03-01-unit1-volcano-plot（colour + alpha 两个图例）：并排后总宽超出 183 mm，
       # 两端被静默裁掉 —— 左端只剩 "…nificant"，右端
       # "nominal P < 0.05, NOT FDR-significant (1873)" 的计数整段消失。
       # ggplot 裁图例**不报警**，图上只表现为"这个图例好像短了一截"。

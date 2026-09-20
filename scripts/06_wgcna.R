@@ -17,7 +17,7 @@
 #
 # 输出：results/<GSE>/wgcna_modules.csv, wgcna_module_trait.csv,
 #       wgcna_soft_power.csv, wgcna_module_sizes.csv,
-#       wgcna_soft_power.pdf, wgcna_module_trait_heatmap.pdf, wgcna_status.json
+#       01-06-01-unit1-wgcna-scale-free-fit.pdf, 01-06-02-unit1-wgcna-module-trait-heatmap.pdf, wgcna_status.json
 # ============================================================================
 
 suppressPackageStartupMessages({
@@ -104,33 +104,40 @@ pick_power <- function(datExpr, powers = c(1:10, seq(12, 20, by = 2)), seed = NU
   }
 }
 
-#' 软阈值诊断图
-make_soft_power_plot <- function(tab, chosen, cfg) {
-  long <- rbind(
-    data.frame(power = tab$power, value = tab$r2, panel = "scale-free topology fit"),
-    data.frame(power = tab$power, value = tab$mean_k, panel = "mean connectivity")
-  )
-  # **面板顺序必须钉死，不能靠默认。**
-  # `facet_wrap` 按字母序排面板，而 "mean connectivity" < "scale-free
-  # topology fit" —— 所以左面板实际是 mean connectivity、右面板才是 R²，
-  # 与副标题写的 "Left: scale-free topology R2 / Right: mean connectivity"
-  # **正好相反**。读者照着文字读，会把连通性曲线当成 R² 曲线。
-  # 显式给 levels 之后，图上的左右与文字必然一致。
-  long$panel <- factor(long$panel,
-                       levels = c("scale-free topology fit", "mean connectivity"))
-  ggplot2::ggplot(long, ggplot2::aes(x = power, y = value)) +
+#' 软阈值诊断图 —— **两张单图，不是一张双面板图**
+#'
+#' 两个面板问的是**两个不同的问题**、y 轴含义也不同（R² vs 平均连通性），
+#' 所以按仓库的出图约定拆成 `unit1` / `unit2` 两张单图。
+#'
+#' 原来的双面板图还有一个隐患：`scales = "free_y"` 下左右两边的 y 轴刻度
+#' **不一样**，读者很容易把两条曲线按同一把尺子比 —— 而副标题里写着
+#' "Left/Right"，一旦面板顺序或布局变了，文字与图就对不上。
+#' 拆开之后各自的 y 轴含义直接写在轴上，不需要靠文字指认左右。
+#'
+#' （原来还专门为"facet_wrap 按字母序排面板会让左右与文字相反"钉过 levels，
+#' 拆成单图之后那一类问题从根上没有了。）
+make_soft_power_panel <- function(tab, chosen, cfg, panel) {
+  if (identical(panel, "scale-free topology fit")) {
+    d <- data.frame(power = tab$power, value = tab$r2)
+    ylab <- "scale-free topology fit R2"
+    title <- sprintf("WGCNA scale-free topology fit - %s", cfg$dataset_id)
+    sub <- sprintf(paste0("dashed line = chosen power %d. Target R2 >= 0.8; ",
+                          "the chosen power is the smallest one reaching it."), chosen)
+  } else {
+    d <- data.frame(power = tab$power, value = tab$mean_k)
+    ylab <- "mean connectivity"
+    title <- sprintf("WGCNA mean connectivity - %s", cfg$dataset_id)
+    sub <- sprintf(paste0("dashed line = chosen power %d. Mean connectivity ",
+                          "must stay above 0."), chosen)
+  }
+  ggplot2::ggplot(d, ggplot2::aes(x = power, y = value)) +
     ggplot2::geom_line(colour = PAL$muted, linewidth = 0.4) +
     ggplot2::geom_point(colour = PAL$ink, size = 1.4) +
     ggplot2::geom_vline(xintercept = chosen, linetype = "dashed",
                         linewidth = 0.4, colour = PAL$up) +
-    ggplot2::facet_wrap(~ panel, scales = "free_y") +
-    ggplot2::labs(
-      title = sprintf("WGCNA soft-thresholding power - %s", cfg$dataset_id),
-      subtitle = wrap_subtitle(sprintf(
-        paste0("dashed line = chosen power %d. Left: scale-free topology R2 ",
-               "(target >= 0.8). Right: mean connectivity, which must stay above 0."),
-        chosen), fig_width = W_DOUBLE),
-      x = "soft-thresholding power", y = NULL) +
+    ggplot2::labs(title = title,
+                  subtitle = wrap_subtitle(sub, fig_width = W_ONE_HALF),
+                  x = "soft-thresholding power", y = ylab) +
     theme_paper(10)
 }
 
@@ -270,9 +277,14 @@ run_06_wgcna <- function(cfg) {
     log_info(sprintf("WGCNA: 软阈值 power=%d（R2=%.3f >= 0.8）", pw$power, pw$r2))
   }
   utils::write.csv(pw$table, file.path(res, "wgcna_soft_power.csv"), row.names = FALSE)
-  save_pdf(file.path(res, "wgcna_soft_power.pdf"),
-           print(make_soft_power_plot(pw$table, pw$power, cfg)),
-           width = W_DOUBLE, height = mm(114))
+  save_pdf(file.path(res, "01-06-01-unit1-wgcna-scale-free-fit.pdf"),
+           print(make_soft_power_panel(pw$table, pw$power, cfg,
+                                       "scale-free topology fit")),
+           width = W_ONE_HALF, height = mm(80))
+  save_pdf(file.path(res, "01-06-01-unit2-wgcna-mean-connectivity.pdf"),
+           print(make_soft_power_panel(pw$table, pw$power, cfg,
+                                       "mean connectivity")),
+           width = W_ONE_HALF, height = mm(80))
 
   # ---- 5. 模块识别 --------------------------------------------------------
   #
@@ -412,7 +424,7 @@ run_06_wgcna <- function(cfg) {
   log_info(sprintf("WGCNA 模块-性状: %d 对检验，BH 校正后 %d 对 p_adj < 0.05",
                    nrow(cor_df), n_sig))
 
-  save_pdf(file.path(res, "wgcna_module_trait_heatmap.pdf"),
+  save_pdf(file.path(res, "01-06-02-unit1-wgcna-module-trait-heatmap.pdf"),
            print(make_module_trait_plot(cor_df, cfg)),
            width = W_DOUBLE, height = max(mm(81), 0.32 * length(unique(cor_df$module)) + 1.6))
 

@@ -142,7 +142,7 @@ gh workflow run geo_analysis.yml -f dataset=GSE42568
   当权重会报 `Weights must be positive for Fruchterman-Reingold layout` 并中断步骤。
   布局权重取 `|r|`，有符号的 r 另存在边表里。
 - **先落状态 JSON，再出图。** 出图是最后一步，画不出来时如果状态还没写，
-  就会同时丢掉图和状态文件（本仓库踩过：`PPI_network.png` 和 `ppi_status.json`
+  就会同时丢掉图和状态文件（本仓库踩过：`01-05-01-unit1-ppi-network.png` 和 `ppi_status.json`
   一起消失，只剩 `hub_genes.csv`）。
 - **验收检查要能处理两种状态文件形状。** `enrichment_status.json` 是
   `{"go": {...}, "kegg": {...}}`，而 `ppi_status.json` 把 `status` 放在**顶层**。

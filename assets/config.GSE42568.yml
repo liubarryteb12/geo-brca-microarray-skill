@@ -89,7 +89,7 @@ analysis:
   ppi_plot_modules: 4
   # 降级路径。队列级数据**正常情况下不应该走到这里** ——
   # 如果 enrichment_status.json 出现 deg_mode=ranked_fallback，
-  # 说明 DEG 结果异常（而不只是功效不足），要先查 pvalue_histogram。
+  # 说明 DEG 结果异常（而不只是功效不足），要先查 01-03-02-unit1-pvalue-histogram。
   ranked_fallback_genes: 500
   gsea_min_set: 15
   gsea_max_set: 500

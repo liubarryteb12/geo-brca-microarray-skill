@@ -7,7 +7,7 @@
 # 回退路径：STRING 网络文件下载失败时，改用表达相关性构建共表达网络
 #           （igraph 本地计算），并在 ppi_status.json 中**明确标注为共表达而非 PPI**。
 #
-# 输出：results/PPI_network.png
+# 输出：results/01-05-01-unit1-ppi-network.png
 #       results/hub_genes.csv
 #       results/ppi_edges.csv
 #       results/ppi_status.json
@@ -280,7 +280,6 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
   #      PDF 与 PNG 共用同一份坐标，天然可复现
   plot_ppi_network <- function(cfg, g, method, status) {
     res <- cfg$output$results_dir
-    png_path <- file.path(res, "PPI_network.png")
 
     g_full <- g
     # 1. 最大连通分量
@@ -598,12 +597,12 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
       # 就要求面板高约 183 mm，再加标题、**两行**图注和底部图例 ≈ 198 mm。
       # 原来图注是七段散文、多占约 33 mm，才把画布顶到 239 mm（超出 A4 正文版心）。
       # 全文没有丢 —— 它在同目录的 `PPI_network_caption.txt` 里。
-      save_pdf(file.path(res, "PPI_network.pdf"), print(p), width = W_DOUBLE, height = mm(198))
+      save_pdf(file.path(res, "01-05-01-unit1-ppi-network.pdf"), print(p), width = W_DOUBLE, height = mm(198))
       NULL
     }, error = function(e) conditionMessage(e))
 
     if (is.null(plot_err)) {
-      status$plot <- "PPI_network.png"
+      status$plot <- "01-05-01-unit1-ppi-network.png"
       status$plot_nodes <- igraph::vcount(g)
       status$plot_edges <- igraph::ecount(g)
       status$plot_modules <- n_comm
@@ -630,7 +629,7 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
         paste(utils::head(vdf$name[order(-vdf$degree)], 5), collapse = " / "),
         igraph::vcount(g_full),
         paste(utils::head(status$hub_genes, 5), collapse = " / "))
-      log_info(sprintf("已生成 PPI_network.png（%d 节点 / %d 边 / %d 个模块 / %d 个同心环 %s）",
+      log_info(sprintf("已生成 01-05-01-unit1-ppi-network.png（%d 节点 / %d 边 / %d 个模块 / %d 个同心环 %s）",
                        igraph::vcount(g), igraph::ecount(g), n_comm, n_rings,
                        paste(sizes_r, collapse = "-")))
     } else {

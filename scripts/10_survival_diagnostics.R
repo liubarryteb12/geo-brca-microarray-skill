@@ -19,7 +19,7 @@
 # | `timeROC` | **在哪个时间点**模型有区分度？ | `time_roc.csv`（各时间点 AUC + CI） |
 # | `rms`     | 预测的**绝对风险**准不准？ | `calibration.csv` + `rms_validate.csv` |
 #
-# **区分度（AUC）和校准（calibration）是两件事，缺一不可。**
+# **区分度（AUC）和校准（calibration 图）是两件事，缺一不可。**
 # 一个模型可以把所有人排序排得很准（AUC 高），同时把每个人的风险都
 # 高估一倍（校准差）—— 而后者直接影响"要不要化疗"这类决策。
 # 只报 AUC 等于只报了一半。
@@ -37,7 +37,7 @@
 #   results/<GSE>/calibration.csv         预测风险 vs KM 观测生存（分位分组）
 #   results/<GSE>/rms_validate.csv        乐观校正后的 Dxy / 斜率 / R2
 #   results/<GSE>/survival_diagnostics_status.json
-#   figures/time_roc.png / calibration.png
+#   figures/01-10-01-unit1-time-roc.png / 01-10-02-unit1-calibration.png
 # ============================================================================
 
 suppressPackageStartupMessages({
@@ -561,7 +561,7 @@ run_10_survival_diagnostics <- function(cfg) {
           " events remaining are not shown."), W_DOUBLE)) +
       theme_paper() +
       ggplot2::theme(legend.position = "bottom")
-    save_pdf(file.path(fig, "time_roc.pdf"), print(p),
+    save_pdf(file.path(fig, "01-10-01-unit1-time-roc.pdf"), print(p),
              width = W_DOUBLE, height = mm(80))
     TRUE
   }, error = function(e) {
@@ -595,7 +595,7 @@ run_10_survival_diagnostics <- function(cfg) {
             "are not 'event-free'."), W_ONE_HALF)) +
         theme_paper() +
         ggplot2::theme(legend.position = "bottom")
-      save_pdf(file.path(fig, "calibration.pdf"), print(p),
+      save_pdf(file.path(fig, "01-10-02-unit1-calibration.pdf"), print(p),
                width = W_ONE_HALF, height = mm(80))
       TRUE
     }, error = function(e) {
@@ -629,7 +629,7 @@ run_10_survival_diagnostics <- function(cfg) {
   status$rms_notes <- rms_notes
   status$n_calibration_rows <- if (is.null(cal_df)) 0L else nrow(cal_df)
   status$n_rms_rows <- length(rms_rows)
-  status$figures <- c(if (fig_ok) "time_roc.png", if (cal_ok) "calibration.png")
+  status$figures <- c(if (fig_ok) "01-10-01-unit1-time-roc.png", if (cal_ok) "01-10-02-unit1-calibration.png")
   status$outputs <- c("time_roc.csv", if (!is.null(cal_df)) "calibration.csv",
                       if (length(rms_rows) > 0L) "rms_validate.csv")
 

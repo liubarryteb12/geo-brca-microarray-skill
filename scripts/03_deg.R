@@ -5,7 +5,7 @@
 #
 # 设计矩阵 ~ 0 + group，对比 = contrast[1] - contrast[2]。
 # 输出：results/deg_table.csv（含 gene/logFC/AveExpr/t/P.Value/adj.P.Val/B）
-#       results/volcano_plot.pdf
+#       results/01-03-01-unit1-volcano-plot.pdf
 #       results/deg_summary.json
 # ============================================================================
 
@@ -261,8 +261,8 @@ run_03_deg <- function(cfg) {
   if (nrow(label_df) > 0L) {
     p_volcano <- p_volcano + ggrepel_labels(label_df, seed = cfg$analysis$seed)
   }
-  save_pdf(file.path(res, "volcano_plot.pdf"), print(p_volcano), width = W_DOUBLE, height = mm(165))
-  log_info("已生成 volcano_plot.pdf")
+  save_pdf(file.path(res, "01-03-01-unit1-volcano-plot.pdf"), print(p_volcano), width = W_DOUBLE, height = mm(165))
+  log_info("已生成 01-03-01-unit1-volcano-plot.pdf")
 
   # ---- 5. p 值分布诊断（DE 之后的 QC 关卡）--------------------------------
   #
@@ -296,7 +296,7 @@ run_03_deg <- function(cfg) {
         fig_width = mm(165)),
       x = "raw P value", y = "gene count") +
     theme_paper(10)
-  save_pdf(file.path(res, "pvalue_histogram.pdf"), print(p_hist), width = mm(165), height = mm(127))
+  save_pdf(file.path(res, "01-03-02-unit1-pvalue-histogram.pdf"), print(p_hist), width = mm(165), height = mm(127))
 
   # 诊断结论：把"功效不足"和"设计有问题"分开
   n_below_001 <- sum(pv < 0.001)
@@ -349,7 +349,7 @@ run_03_deg <- function(cfg) {
     top10_by_p = head(tt$gene, 10)
   ))
 
-  log_info("已生成 deg_table.csv / deg_significant.csv / deg_summary.json / pvalue_histogram.pdf")
+  log_info("已生成 deg_table.csv / deg_significant.csv / deg_summary.json / 01-03-02-unit1-pvalue-histogram.pdf")
   invisible(tt)
 }
 

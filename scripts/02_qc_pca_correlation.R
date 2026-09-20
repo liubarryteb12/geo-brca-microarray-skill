@@ -3,10 +3,10 @@
 # ============================================================================
 # spec 的 qc / pca / sample_correlation 三个步骤。
 #
-# 输出：results/boxplot_before_after.pdf
-#       results/density_plot.pdf
-#       results/pca_plot.pdf
-#       results/correlation_heatmap.pdf
+# 输出：results/01-02-01-unit1-boxplot-before-after.pdf
+#       results/01-02-02-unit1-density-plot.pdf
+#       results/01-02-03-unit1-pca-plot.pdf
+#       results/01-02-04-unit1-correlation-heatmap.pdf
 #       results/correlation_matrix.csv
 # ============================================================================
 
@@ -76,7 +76,7 @@ run_02_qc_pca_correlation <- function(cfg) {
   box_fs <- 6
   show_x <- decide_rownames(ncol(expr), W_DOUBLE / 2, box_fs, "箱线图样本名",
                             panel_frac = 0.85, min_gap = 2.5,
-                            figure = "boxplot_before_after")
+                            figure = "01-02-01-unit1-boxplot-before-after")
 
   p_box <- ggplot(long, aes(x = sample, y = expression, fill = stage)) +
     geom_boxplot(outlier.size = 0.3, linewidth = 0.25) +
@@ -100,8 +100,8 @@ run_02_qc_pca_correlation <- function(cfg) {
           # 标签不画了，它就只剩副作用。
           axis.ticks.x = if (isTRUE(show_x)) element_line() else element_blank(),
           legend.position = "none")
-  save_pdf(file.path(res, "boxplot_before_after.pdf"), print(p_box), width = W_DOUBLE, height = mm(140))
-  log_info("已生成 boxplot_before_after.pdf")
+  save_pdf(file.path(res, "01-02-01-unit1-boxplot-before-after.pdf"), print(p_box), width = W_DOUBLE, height = mm(140))
+  log_info("已生成 01-02-01-unit1-boxplot-before-after.pdf")
 
   # ---- 2. 密度曲线 --------------------------------------------------------
   # 按**分组**上色（不是按样本），这样密度图和 PCA 用的是同一套条件色，
@@ -120,8 +120,8 @@ run_02_qc_pca_correlation <- function(cfg) {
                                           cfg$dataset_id), fig_width = W_DOUBLE),
          x = "log2 expression", y = "density") +
     theme_paper(9)
-  save_pdf(file.path(res, "density_plot.pdf"), print(p_density), width = W_DOUBLE, height = mm(152))
-  log_info("已生成 density_plot.pdf")
+  save_pdf(file.path(res, "01-02-02-unit1-density-plot.pdf"), print(p_density), width = W_DOUBLE, height = mm(152))
+  log_info("已生成 01-02-02-unit1-density-plot.pdf")
 
   # ---- 3. PCA -------------------------------------------------------------
   top_n <- cfg$analysis$pca_top_genes
@@ -193,7 +193,7 @@ run_02_qc_pca_correlation <- function(cfg) {
   pt_per_label <- max(nchar(as.character(pca_df$sample))) * 0.5 * pt_fs
   show_pt <- decide_rownames(nrow(pca_df), mm(165), pt_per_label, "PCA 样本名",
                              panel_frac = 0.85, min_gap = 2.5,
-                             figure = "pca_plot")
+                             figure = "01-02-03-unit1-pca-plot")
   log_info(sprintf("PCA 散点标签：%d 个样本、字号 %gpt、最长标签 %d 字符 -> %s",
                    nrow(pca_df), pt_fs, max(nchar(as.character(pca_df$sample))),
                    if (isTRUE(show_pt)) "标注" else "不标注（放不下，会糊成一片）"))
@@ -238,8 +238,8 @@ run_02_qc_pca_correlation <- function(cfg) {
          x = sprintf("PC1 (%.1f%% variance)", var_explained[1L]),
          y = sprintf("PC2 (%.1f%% variance)", var_explained[2L])) +
     theme_paper(10)
-  save_pdf(file.path(res, "pca_plot.pdf"), print(p_pca), width = mm(165), height = mm(152))
-  log_info(sprintf("已生成 pca_plot.pdf（PC1=%.1f%%, PC2=%.1f%%）",
+  save_pdf(file.path(res, "01-02-03-unit1-pca-plot.pdf"), print(p_pca), width = mm(165), height = mm(152))
+  log_info(sprintf("已生成 01-02-03-unit1-pca-plot.pdf（PC1=%.1f%%, PC2=%.1f%%）",
                    var_explained[1L], var_explained[2L]))
 
   # ---- 4. 样本间相关性 ----------------------------------------------------
@@ -313,19 +313,19 @@ run_02_qc_pca_correlation <- function(cfg) {
   num_len <- nchar(sprintf("%.3f", 0)) * 0.5 * num_fs
   show_num <- decide_rownames(ncol(pearson), W_DOUBLE, num_len, "相关性热图格内数值",
                               panel_frac = 0.62, min_gap = 2.5,
-                              figure = "correlation_heatmap")
+                              figure = "01-02-04-unit1-correlation-heatmap")
   # 行列名同理：旋转 90°，横向占用的正是它的行高 `fontsize + min_gap`。
   cor_fs   <- 5
   show_cn2 <- decide_rownames(ncol(pearson), W_DOUBLE, cor_fs, "相关性热图样本名",
                               panel_frac = 0.62, min_gap = 2.5,
-                              figure = "correlation_heatmap")
+                              figure = "01-02-04-unit1-correlation-heatmap")
   log_info(sprintf(paste0("相关性热图：%d 个样本 -> 格内数值 %s（字号 %gpt，",
                           "每个数占 %.1fpt）、行列名 %s（字号 %gpt）"),
                    ncol(pearson),
                    if (isTRUE(show_num)) "显示" else "隐藏（放不下）", num_fs, num_len,
                    if (isTRUE(show_cn2)) "显示" else "隐藏（放不下）", cor_fs))
 
-  save_pdf(file.path(res, "correlation_heatmap.pdf"), {
+  save_pdf(file.path(res, "01-02-04-unit1-correlation-heatmap.pdf"), {
     pheatmap::pheatmap(
       pearson,
       annotation_col = annotation_col,
@@ -347,7 +347,7 @@ run_02_qc_pca_correlation <- function(cfg) {
     # pheatmap 的色条固定在图右侧，没有位置参数可调。
     # 它是**细长条**，占的宽度远小于 ggplot 的右侧图例，所以这张图保留右侧。
   }, width = W_DOUBLE, height = mm(165))
-  log_info("已生成 correlation_heatmap.pdf")
+  log_info("已生成 01-02-04-unit1-correlation-heatmap.pdf")
 
   # ---- 6. 相关性矩阵落盘 --------------------------------------------------
   cor_df <- data.frame(

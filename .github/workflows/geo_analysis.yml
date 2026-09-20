@@ -198,6 +198,13 @@ jobs:
       - name: Check R syntax and structure
         run: node tools/check_r_syntax.mjs
 
+      # 出图名必须与代码阶段对应：`<阶段>-<模块>-<图>-unit<单元>-<名称>`。
+      # **图名和脚本序号是两处，而"图名里的模块号写错了"没有任何东西能发现** ——
+      # 图照样生成、CI 照样绿、验收照样过，只是读者按图名去 scripts/ 里找
+      # 对应代码时会找错文件。这正是"两处定义必然分叉"那一类。
+      - name: Check figure names match the code stage
+        run: node tools/check_fig_names.mjs
+
       # "一个颜色一个含义"是条不变量，但没有东西守着它。
       # 实测本仓库曾经同时存在三种红（其中 firebrick 与 up 红只差 0.4°）、
       # 一套在 protanopia 下 up 红与分类棕距离 0.002 的色板。
@@ -231,12 +238,12 @@ jobs:
 
       # **给图加带版本号的副本。**
       #
-      # 规范文件名（`PPI_network.png`）必须保留 —— `check_acceptance()`、README
+      # 规范文件名（`01-05-01-unit1-ppi-network.png`）必须保留 —— `check_acceptance()`、README
       # 的输出清单、以及任何下游脚本都按它找文件。
       #
       # 但同名文件在不同 commit 上内容不同，**光看名字分不出手上这份是哪个版本**。
       # 实测就是这么把两轮 CI 的图当成同一张的：本地的图和刚产出的图都叫
-      # `PPI_network.png`，谁也说不清看的是哪一份。
+      # `01-05-01-unit1-ppi-network.png`，谁也说不清看的是哪一份。
       #
       # 所以额外写一份 `<名字>__<短SHA>.png`。SHA 取自 `github.sha`，
       # **同一个 commit 上稳定**，所以不影响"连跑两轮逐字节一致"这个保证 ——

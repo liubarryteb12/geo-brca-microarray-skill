@@ -16,7 +16,8 @@
 #   * **报外部验证的 C-index**，因为只有它不受过拟合影响。
 #
 # 输出：results/<GSE>/lasso_coefficients.csv, lasso_risk_scores.csv,
-#       lasso_cv_curve.csv, lasso_stability.csv, lasso_km.pdf,
+#       lasso_cv_curve.csv, lasso_stability.csv,
+#       01-07-01-unit1-lasso-km-training.pdf（+ unit2 验证集，有外部队列时）,
 #       lasso_validation.csv（有外部队列时）, lasso_status.json
 # ============================================================================
 
@@ -670,16 +671,24 @@ run_07_lasso <- function(cfg) {
                               cvsd = final_cv$cvsd, nzero = final_cv$nzero),
                    file.path(res, "lasso_cv_curve.csv"), row.names = FALSE)
 
-  # KM：训练集与验证集各一张，**切点都用训练集的中位数**
-  save_pdf(file.path(res, "lasso_km.pdf"), {
+  # KM：训练集与验证集**各出一张单图**（`unit1` / `unit2` 共用一个图号），
+  # 切点都用训练集的中位数（跨队列可比）。
+  #
+  # **原来是把两张图 `print()` 进同一个 `save_pdf`。** 那会写出一个
+  # **两页的 PDF**，而 PNG 只留得下其中一页 —— 读者拿到 PDF 看到两张、
+  # 拿到 PNG 只看到一张，而两边的文件名是同一个。
+  # 拆成单图之后两边一致（这也是仓库出图约定里"尽量出单图"的一条）。
+  save_pdf(file.path(res, "01-07-01-unit1-lasso-km-training.pdf"), {
     print(make_km_plot(risk_df[risk_df$set == "training", , drop = FALSE], cutoff,
                        sprintf("LASSO-Cox risk groups (training) - %s", cfg$dataset_id), cfg))
-    if (any(risk_df$set != "training")) {
-      vset <- unique(risk_df$set[risk_df$set != "training"])[1L]
+  }, width = W_DOUBLE, height = mm(70))
+  if (any(risk_df$set != "training")) {
+    vset <- unique(risk_df$set[risk_df$set != "training"])[1L]
+    save_pdf(file.path(res, "01-07-01-unit2-lasso-km-validation.pdf"), {
       print(make_km_plot(risk_df[risk_df$set == vset, , drop = FALSE], cutoff,
                          sprintf("LASSO-Cox risk groups (external validation: %s)", vset), cfg))
-    }
-  }, width = W_DOUBLE, height = mm(140))
+    }, width = W_DOUBLE, height = mm(70))
+  }
 
   # ---- 8. 推荐哪一个签名 --------------------------------------------------
   #
@@ -715,7 +724,8 @@ run_07_lasso <- function(cfg) {
   status$status <- "ok"
   write_json(file.path(res, "lasso_status.json"), status)
   log_info(paste0("已生成 lasso_coefficients.csv / lasso_risk_scores.csv / lasso_stability.csv / ",
-                  "lasso_cv_curve.csv / lasso_km.pdf / lasso_status.json"))
+                  "lasso_cv_curve.csv / 01-07-01-unit1-lasso-km-training.pdf",
+                  "（+ unit2 验证集）/ lasso_status.json"))
   invisible(coef_df)
 }
 

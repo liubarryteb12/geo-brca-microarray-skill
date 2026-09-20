@@ -20,11 +20,11 @@
 #
 # 富集为空或 KEGG 接口失败时写空表 + 状态文件，**不终止流程**。
 #
-# 输出：results/top50_heatmap.pdf
-#       results/GSEA_GO_dotplot.pdf  / GSEA_GO_table.csv
-#       results/GSEA_KEGG_dotplot.pdf / GSEA_KEGG_table.csv
-#       results/GO_dotplot.pdf  / GO_table.csv      （含 direction 列）
-#       results/KEGG_dotplot.pdf / KEGG_table.csv   （含 direction 列）
+# 输出：results/01-04-01-unit1-top50-heatmap.pdf
+#       results/01-04-02-unit1-gsea-go-dotplot.pdf  / GSEA_GO_table.csv
+#       results/01-04-03-unit1-gsea-kegg-dotplot.pdf / GSEA_KEGG_table.csv
+#       results/01-04-04-unit1-go-ora-dotplot.pdf  / GO_table.csv      （含 direction 列）
+#       results/01-04-05-unit1-kegg-ora-dotplot.pdf / KEGG_table.csv   （含 direction 列）
 #       results/enrichment_status.json
 # ============================================================================
 
@@ -134,7 +134,7 @@ run_04a_heatmap <- function(cfg) {
   # 和画布高度毫无关系 —— 50 个基因时每行只剩约 3.6px 间隙，糊成一片。
   show_rn <- decide_rownames(length(genes), fig_h, row_fs, "热图基因",
                              panel_frac = panel_frac, min_gap = min_gap,
-                             figure = "top50_heatmap")
+                             figure = "01-04-01-unit1-top50-heatmap")
   log_info(sprintf("热图画布 %.1f mm（%d 个基因，行名 %s）",
                    fig_h * 25.4, length(genes),
                    if (isTRUE(show_rn)) "显示" else "隐藏"))
@@ -158,11 +158,11 @@ run_04a_heatmap <- function(cfg) {
   col_panel_frac <- 0.62
   show_cn <- decide_rownames(ncol(mat), W_DOUBLE, col_fs, "热图样本名（列）",
                              panel_frac = col_panel_frac, min_gap = min_gap,
-                             figure = "top50_heatmap")
+                             figure = "01-04-01-unit1-top50-heatmap")
   log_info(sprintf("热图列名 %s（%d 个样本，画布宽 %.1f mm）",
                    if (isTRUE(show_cn)) "显示" else "隐藏", ncol(mat), W_DOUBLE * 25.4))
 
-  save_pdf(file.path(res, "top50_heatmap.pdf"), {
+  save_pdf(file.path(res, "01-04-01-unit1-top50-heatmap.pdf"), {
     pheatmap::pheatmap(
       mat,
       annotation_col = annotation_col,
@@ -188,7 +188,7 @@ run_04a_heatmap <- function(cfg) {
     )
     # pheatmap 的色条固定在图右侧、无位置参数；细长条，占宽有限，保留。
   }, width = W_DOUBLE, height = fig_h)
-  log_info("已生成 top50_heatmap.pdf")
+  log_info("已生成 01-04-01-unit1-top50-heatmap.pdf")
 
   # **行名一旦不显示，基因身份就只剩这张表能提供。**
   # 而且必须是**显示顺序** —— 热图按聚类重排行，写 `genes` 的原始顺序
@@ -364,8 +364,8 @@ run_04b_enrichment <- function(cfg) {
           top_down = head(df$Description[df$NES < 0][order(df$p.adjust[df$NES < 0])], 3))
         decide_rownames(min(2 * cfg$enrichment$top_terms, nrow(df)), 6.5, 7,
                         "GSEA GO 点图", panel_frac = 0.75, min_gap = 2.5,
-                        figure = "GSEA_GO_dotplot")
-        save_pdf(file.path(res, "GSEA_GO_dotplot.pdf"),
+                        figure = "01-04-02-unit1-gsea-go-dotplot")
+        save_pdf(file.path(res, "01-04-02-unit1-gsea-go-dotplot.pdf"),
                  print(make_gsea_dotplot(df, cfg,
                          sprintf("GSEA (preranked) GO %s - %s", cfg$enrichment$ont,
                                  cfg$dataset_id))),
@@ -406,8 +406,8 @@ run_04b_enrichment <- function(cfg) {
           top = head(df$Description[order(df$p.adjust)], 5))
         decide_rownames(min(2 * cfg$enrichment$top_terms, nrow(df)), 6.5, 7,
                         "GSEA KEGG 点图", panel_frac = 0.75, min_gap = 2.5,
-                        figure = "GSEA_KEGG_dotplot")
-        save_pdf(file.path(res, "GSEA_KEGG_dotplot.pdf"),
+                        figure = "01-04-03-unit1-gsea-kegg-dotplot")
+        save_pdf(file.path(res, "01-04-03-unit1-gsea-kegg-dotplot.pdf"),
                  print(make_gsea_dotplot(df, cfg,
                          sprintf("GSEA (preranked) KEGG - %s", cfg$dataset_id))),
                  width = W_DOUBLE, height = mm(165))
@@ -501,7 +501,12 @@ run_04b_enrichment <- function(cfg) {
   kegg_df <- combine_ora(function(x) if (is.null(x)) NULL else x$kegg)
 
   # 去冗余 + 落盘
-  emit_ora <- function(df, label, file_base, key) {
+  #
+  # `fig_name` 与 `file_base` **分开两个参数**：前者是出图名（按仓库约定
+  # 带阶段-模块-图-单元前缀），后者是 CSV 表名前缀（`GO_table.csv`）。
+  # 一个参数兼两用会让改图名顺带改掉数据产物的名字 —— 而数据产物
+  # 是别的脚本和验收项在引用的。
+  emit_ora <- function(df, label, fig_name, file_base, key) {
     if (is.null(df) || nrow(df) == 0L) {
       utils::write.csv(data.frame(), file.path(res, paste0(file_base, "_table.csv")),
                        row.names = FALSE)
@@ -527,16 +532,17 @@ run_04b_enrichment <- function(cfg) {
     ora_w <- W_DOUBLE; ora_h <- mm(165)   # 10 in = 254 mm，装不进一页
     decide_rownames(min(cfg$enrichment$top_terms, nrow(out)), ora_h, 7,
                     sprintf("%s 点图", label), panel_frac = 0.68, min_gap = 2.5,
-                    figure = paste0(file_base, "_dotplot"))
-    save_pdf(file.path(res, paste0(file_base, "_dotplot.pdf")),
+                    figure = fig_name)
+    save_pdf(file.path(res, paste0(fig_name, ".pdf")),
              print(make_ora_dotplot(out, cfg, sprintf("%s - %s", label, cfg$dataset_id))),
              width = ora_w, height = ora_h)
     invisible(NULL)
   }
 
   emit_ora(go_df, sprintf("GO %s ORA (up/down split)", cfg$enrichment$ont),
-           "GO", "go")
-  emit_ora(kegg_df, "KEGG ORA (up/down split)", "KEGG", "kegg")
+           "01-04-04-unit1-go-ora-dotplot", "GO", "go")
+  emit_ora(kegg_df, "KEGG ORA (up/down split)",
+           "01-04-05-unit1-kegg-ora-dotplot", "KEGG", "kegg")
 
   # 排序指标与置换设置要记录 —— 可复现性清单要求
   status$gsea_ranking_metric <- "limma moderated t statistic (sign = direction)"

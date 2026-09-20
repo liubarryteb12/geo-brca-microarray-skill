@@ -475,8 +475,8 @@ tumor-vs-normal 的差异基因表里，**分不清多少来自恶性转化、�
 | --- | --- | --- |
 | `impute::impute.knn` 用 `sample()` 处理并列近邻 | 插补值每次不同 → t 统计量 → GSEA 排序 → 所有 p 值全部分叉 | 调用前 `set.seed()` |
 | `fgsea` 的 `fgseaMultilevel` 自适应采样 | NES / p 值在第 4 位有效数字分叉，条目集合都不同（1072 vs 1095） | 调用前 `set.seed()` |
-| `igraph::layout_with_fr()` 随机初始位置 | `PPI_network.png` 节点摆位不同（边完全相同） | 调用前 `set.seed()` |
-| `ggrepel::geom_text_repel()` 用环境 RNG 做标签排布 | 12 张图里 11 张一致，只有 `volcano_plot.png` 不一致 | 传 `seed=` |
+| `igraph::layout_with_fr()` 随机初始位置 | `01-05-01-unit1-ppi-network.png` 节点摆位不同（边完全相同） | 调用前 `set.seed()` |
+| `ggrepel::geom_text_repel()` 用环境 RNG 做标签排布 | 12 张图里 11 张一致，只有 `01-03-01-unit1-volcano-plot.png` 不一致 | 传 `seed=` |
 
 > **`gseGO(seed = 123)` 这个参数不足以保证复现。** 它被接受了（日志里没有退回警告），
 > 但没有真正转发到 fgsea 的采样器。**不要依赖它** —— 直接在调用前设 RNG 状态。
@@ -512,11 +512,11 @@ tumor-vs-normal 的差异基因表里，**分不清多少来自恶性转化、�
 
 | 图 | 内容 | 判据 |
 | --- | --- | --- |
-| `boxplot_before_after.pdf` | 标准化前后各样本表达分布 | 标准化后中位数应齐平 |
-| `density_plot.pdf` | 标准化前后密度曲线 | 曲线应重合 |
-| `pca_plot.pdf` | PCA 散点（PC1/PC2），按分组着色 + 形状 | 记录 PC1/PC2 方差解释率；组内 95% 椭圆 |
+| `01-02-01-unit1-boxplot-before-after.pdf` | 标准化前后各样本表达分布 | 标准化后中位数应齐平 |
+| `01-02-02-unit1-density-plot.pdf` | 标准化前后密度曲线 | 曲线应重合 |
+| `01-02-03-unit1-pca-plot.pdf` | PCA 散点（PC1/PC2），按分组着色 + 形状 | 记录 PC1/PC2 方差解释率；组内 95% 椭圆 |
 | `pca_ellipse.csv` | 椭圆的坐标（每组 120 个点 + 半径系数） | 椭圆跨度 / 数据跨度比值记进日志 |
-| `correlation_heatmap.pdf` | 样本间 Pearson 相关热图 | — |
+| `01-02-04-unit1-correlation-heatmap.pdf` | 样本间 Pearson 相关热图 | — |
 | `correlation_matrix.csv` | Pearson + Spearman 相关矩阵 | **cor < 0.8 的样本标记为离群** |
 
 额外计算**分组混杂指标**（§2.9）：`mean_within_group_pearson`、
@@ -596,7 +596,7 @@ ggplot 的 `stat_ellipse` 默认 `type = "t"`，半径是 `sqrt(2 * qf(0.95, 2, 
 > misspecified design, unmodeled batch, or filtering issues.
 > **Fix the design rather than trusting the gene list.**"
 
-输出 `pvalue_histogram.pdf/.png`（直方图 + 均匀分布的期望线），并在
+输出 `01-03-02-unit1-pvalue-histogram.pdf/.png`（直方图 + 均匀分布的期望线），并在
 `deg_summary.json` 写入 `n_p_lt_0p001` / `frac_p_lt_0p05` / `pvalue_diagnosis`。
 
 **这张图对本设计尤其关键**：n=6 时几乎不可能有基因通过 FDR，
@@ -612,7 +612,7 @@ GSE64790 实测 **11.6%**（超出 2.3 倍），36 个基因 P<0.001 →
 - 取 top 50 显著 DEG（按 `adj.P.Val` 升序）
 - **降级逻辑**：显著基因 < 50 时取全部显著基因；为 0 时取全表 top 20 并标记 `warning`
 - 行聚类 euclidean + complete，表达量按行 Z-score
-- 输出 `top50_heatmap.pdf`
+- 输出 `01-04-01-unit1-top50-heatmap.pdf`
 
 ### 3.6 preranked GSEA + GO / KEGG 富集（`04_heatmap_enrichment.R`）
 
@@ -687,7 +687,7 @@ GO 会返回大量近义条目 —— 实测下调簇的前 4 名就是
 - **直接读 STRING 的 `protein.links` 文件建边**，不用 `STRINGdb::get_interactions()` ——
   后者实测在 GSE92252 上静默返回 0 行，导致"STRING 未返回任何达到阈值的互作"的假象
 - 计算节点 degree，**hub 基因 = degree 排名前 10**
-- 输出 `PPI_network.png`、`hub_genes.csv`、`ppi_edges.csv`
+- 输出 `01-05-01-unit1-ppi-network.png`、`hub_genes.csv`、`ppi_edges.csv`
 - **回退顺序**：STRING links 文件 → 共表达网络（标注 `method=coexpression`）→ 跳过
 - **状态先落盘再画图**：`ppi_status.json` 在绘图**之前**写出，绘图单独 `tryCatch`。
   这样即使画图失败（如 `layout_with_fr` 拒绝负权重），节点/边数与原因仍然留存
@@ -881,20 +881,20 @@ PNG 由 `save_pdf()` 在 150 dpi 下渲染，PNG 失败只记 warning，不影�
 
 ```
 results/
-├── boxplot_before_after.pdf/.png  QC：标准化前后箱线图
-├── density_plot.pdf/.png          QC：密度曲线
-├── pca_plot.pdf/.png              PCA（含方差解释率）
-├── correlation_heatmap.pdf/.png   样本相关性热图
+├── 01-02-01-unit1-boxplot-before-after.pdf/.png  QC：标准化前后箱线图
+├── 01-02-02-unit1-density-plot.pdf/.png          QC：密度曲线
+├── 01-02-03-unit1-pca-plot.pdf/.png              PCA（含方差解释率）
+├── 01-02-04-unit1-correlation-heatmap.pdf/.png   样本相关性热图
 ├── correlation_matrix.csv         Pearson + Spearman 矩阵 + 离群标记
 ├── deg_table.csv                  全基因差异分析表
-├── volcano_plot.pdf/.png          火山图
-├── pvalue_histogram.pdf/.png      DE 后 QC：p 值分布（均匀性 + 0 附近是否有峰）
-├── top50_heatmap.pdf/.png         top DEG 聚类热图（Z-score）
-├── GSEA_GO_dotplot.pdf/.png + GSEA_GO_table.csv     preranked GSEA / GO BP（主力）
-├── GSEA_KEGG_dotplot.pdf/.png + GSEA_KEGG_table.csv preranked GSEA / KEGG
-├── GO_dotplot.pdf/.png + GO_table.csv       ORA GO BP（含 direction 列）
-├── KEGG_dotplot.pdf/.png + KEGG_table.csv   ORA KEGG（含 direction 列）
-├── PPI_network.png + hub_genes.csv + ppi_edges.csv   STRING PPI 与 hub 基因
+├── 01-03-01-unit1-volcano-plot.pdf/.png          火山图
+├── 01-03-02-unit1-pvalue-histogram.pdf/.png      DE 后 QC：p 值分布（均匀性 + 0 附近是否有峰）
+├── 01-04-01-unit1-top50-heatmap.pdf/.png         top DEG 聚类热图（Z-score）
+├── 01-04-02-unit1-gsea-go-dotplot.pdf/.png + GSEA_GO_table.csv     preranked GSEA / GO BP（主力）
+├── 01-04-03-unit1-gsea-kegg-dotplot.pdf/.png + GSEA_KEGG_table.csv preranked GSEA / KEGG
+├── 01-04-04-unit1-go-ora-dotplot.pdf/.png + GO_table.csv       ORA GO BP（含 direction 列）
+├── 01-04-05-unit1-kegg-ora-dotplot.pdf/.png + KEGG_table.csv   ORA KEGG（含 direction 列）
+├── 01-05-01-unit1-ppi-network.png + hub_genes.csv + ppi_edges.csv   STRING PPI 与 hub 基因
 ├── enrichment_status.json         富集模式（fdr / ranked_fallback）、GSEA 参数、去冗余阈值及原因
 ├── ppi_status.json                PPI 方法、节点边数及回退原因
 └── state.json                     各步骤执行状态 + 验收结果
@@ -1016,8 +1016,8 @@ GSE42568 是**同一个对比的放大版**，用途是把 GSE64790 上"信号�
 - 模块-性状关联：**Pearson + BH 校正**。几十上百次检验不校正的话，
   p<0.05 的格子会有一堆是偶然的，而它们在热图上和真信号长得一样。
 - 产物：`wgcna_modules.csv`、`wgcna_module_sizes.csv`、`wgcna_soft_power.csv`、
-  `wgcna_module_trait.csv`、`wgcna_soft_power.pdf`、
-  `wgcna_module_trait_heatmap.pdf`、`wgcna_status.json`。
+  `wgcna_module_trait.csv`、`01-06-01-unit1-wgcna-scale-free-fit.pdf`、
+  `01-06-02-unit1-wgcna-module-trait-heatmap.pdf`、`wgcna_status.json`。
 
 #### 步骤 07：LASSO-Cox 预后签名
 
@@ -1042,7 +1042,9 @@ GSE42568 是**同一个对比的放大版**，用途是把 GSE64790 上"信号�
   两个都在外部队列上打分，让读者看到少要基因的代价。
 - 产物：`lasso_coefficients.csv`、`lasso_coefficients_epv.csv`、
   `lasso_risk_scores.csv`、`lasso_stability.csv`、
-  `lasso_selection_frequency.csv`、`lasso_cv_curve.csv`、`lasso_km.pdf`、
+  `lasso_selection_frequency.csv`、`lasso_cv_curve.csv`、
+  `01-07-01-unit1-lasso-km-training.pdf`（有外部队列时另出
+  `01-07-01-unit2-lasso-km-validation.pdf`）、
   `lasso_status.json`。
 
 > **GSE64790 做不了 LASSO**：没有随访终点，且 `min(n, p) = 6`、

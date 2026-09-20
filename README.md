@@ -108,26 +108,26 @@ GSE64790 244s / GSE42568 400s，暖缓存整轮 6m10s / 8m49s。全冷缓存装�
 
 | 文件 | 内容 |
 | --- | --- |
-| `boxplot_before_after.pdf` / `.png` | 标准化前后表达分布箱线图 |
-| `density_plot.pdf` / `.png` | 标准化前后密度曲线 |
-| `pca_plot.pdf` / `.png` + `pca_ellipse.csv` | PCA 散点，分组用**颜色 + 形状**双重编码；组内 95% 正态椭圆（半径 2.45 SD，坐标落在 `pca_ellipse.csv` 里可核对） |
-| `correlation_heatmap.pdf` / `.png` | 样本间 Pearson 相关热图（序列色，相关性无负值故不用发散色） |
+| `01-02-01-unit1-boxplot-before-after.pdf` / `.png` | 标准化前后表达分布箱线图 |
+| `01-02-02-unit1-density-plot.pdf` / `.png` | 标准化前后密度曲线 |
+| `01-02-03-unit1-pca-plot.pdf` / `.png` + `pca_ellipse.csv` | PCA 散点，分组用**颜色 + 形状**双重编码；组内 95% 正态椭圆（半径 2.45 SD，坐标落在 `pca_ellipse.csv` 里可核对） |
+| `01-02-04-unit1-correlation-heatmap.pdf` / `.png` | 样本间 Pearson 相关热图（序列色，相关性无负值故不用发散色） |
 | `correlation_matrix.csv` | Pearson + Spearman 矩阵 + 离群标记 |
 | `deg_table.csv` | 全基因 limma 结果（gene/logFC/P.Value/adj.P.Val） |
-| `volcano_plot.pdf` / `.png` | 火山图。**颜色 = 方向**（up 红 `#B2182B` / down 蓝 `#2166AC`），**alpha + 大小 = 置信度**（FDR 显著实心大点，名义显著半透明小点）。纵轴统一 raw P |
-| `top50_heatmap.pdf` / `.png` + `top50_heatmap_genes.csv` | top DEG 聚类热图（行 Z-score，euclidean + complete）。**行名放不放得下是算出来的**：一行标签要 `字号 + 2.5pt`，画布能给 `高(in) x 72 x 0.82` 点。放不下就整张不显示行名（GSE42568 实测 50 行 > 容量 45 → 隐藏），此时靠 `top50_heatmap_genes.csv` 对照，且该表是**图上的显示顺序**（行聚类自己算再传给 pheatmap，两边同一棵树） |
+| `01-03-01-unit1-volcano-plot.pdf` / `.png` | 火山图。**颜色 = 方向**（up 红 `#B2182B` / down 蓝 `#2166AC`），**alpha + 大小 = 置信度**（FDR 显著实心大点，名义显著半透明小点）。纵轴统一 raw P |
+| `01-04-01-unit1-top50-heatmap.pdf` / `.png` + `top50_heatmap_genes.csv` | top DEG 聚类热图（行 Z-score，euclidean + complete）。**行名放不放得下是算出来的**：一行标签要 `字号 + 2.5pt`，画布能给 `高(in) x 72 x 0.82` 点。放不下就整张不显示行名（GSE42568 实测 50 行 > 容量 45 → 隐藏），此时靠 `top50_heatmap_genes.csv` 对照，且该表是**图上的显示顺序**（行聚类自己算再传给 pheatmap，两边同一棵树） |
 | `label_decisions.csv` | **每张图的标签决策落盘**：`figure / label / n_labels / capacity / height_in / fontsize / panel_frac / min_gap / shown`。日志里有同样的算式，但 CI 日志会滚掉，文件不会 —— 想回答"这张图为什么把行名藏了"直接查这张表 |
-| `pvalue_histogram.pdf` / `.png` | DE 后 QC：p 值分布（区分"功效不足"与"模型设定错"） |
-| `GSEA_GO_dotplot.pdf` / `.png` + `GSEA_GO_table.csv` | **preranked GSEA / GO BP（主力方法）** |
-| `GSEA_KEGG_dotplot.pdf` / `.png` + `GSEA_KEGG_table.csv` | preranked GSEA / KEGG |
-| `GO_dotplot.pdf` / `.png` + `GO_table.csv` | ORA GO BP。**按方向分面**（两个面板各有标题和条目数）—— 初版两个 x 轴标签都写成 "up in tumor"，整张图上 "down" 一次都没出现，而数据里下调比上调还多 |
-| `KEGG_dotplot.pdf` / `.png` + `KEGG_table.csv` | ORA KEGG，同样按方向分面 |
-| `PPI_network.pdf` / `.png` + `hub_genes.csv` + `ppi_edges.csv` + `ppi_plot_layout.csv` + `PPI_network_caption.txt` | STRING PPI 网络与 hub 基因。**图做过可读性过滤，并按同心圆环排布**（最大连通分量 → degree 前 200 → 最强 450 条边 → 3 环，内圈 = hub 核心；最大 4 个 Louvain 模块上色）。完整网络见 `ppi_edges.csv`，每个节点的环号/半径/角度见 `ppi_plot_layout.csv`，图注七段式（方法/输入/展示范围/视觉编码/环/陷阱/文件）另存为可检索的 txt |
-| `wgcna_modules.csv` + `wgcna_module_sizes.csv` + `wgcna_soft_power.csv` + `wgcna_module_trait.csv` + `wgcna_soft_power.pdf` + `wgcna_module_trait_heatmap.pdf` + `wgcna_status.json` | **WGCNA 共表达模块（可选，仅 `cohort`）**。只用肿瘤组（带上正常样本的话第一个模块必然是"肿瘤 vs 正常"轴，而 DEG 已经答过那件事）。软阈值取最小的 R²≥0.8 的 power，达不到就如实记录不假装通过；模块-性状做 **BH 校正**。实测 GSE42568：15 个模块（14 非 grey）、power=8（R²=0.858）、126 次检验中 30 个校正后显著 |
-| `lasso_coefficients.csv` + `lasso_coefficients_epv.csv` + `lasso_risk_scores.csv` + `lasso_stability.csv` + `lasso_selection_frequency.csv` + `lasso_cv_curve.csv` + `lasso_km.pdf` + `lasso_status.json` | **LASSO-Cox 预后签名（可选，需随访终点）**。终点由 config 显式指定（自动配对在字段名不规整时一定配错，而配错不报错）。报**三个** C-index：训练集 / 交叉验证 / 外部验证。实测 GSE42568：16 基因签名训练集 0.879、CV 0.793、**外部验证 0.672**；EPV 合规的 3 基因版本外部 0.642。重复 CV 选出 [16,3,3,22,3] → `signature_stable: false` |
+| `01-03-02-unit1-pvalue-histogram.pdf` / `.png` | DE 后 QC：p 值分布（区分"功效不足"与"模型设定错"） |
+| `01-04-02-unit1-gsea-go-dotplot.pdf` / `.png` + `GSEA_GO_table.csv` | **preranked GSEA / GO BP（主力方法）** |
+| `01-04-03-unit1-gsea-kegg-dotplot.pdf` / `.png` + `GSEA_KEGG_table.csv` | preranked GSEA / KEGG |
+| `01-04-04-unit1-go-ora-dotplot.pdf` / `.png` + `GO_table.csv` | ORA GO BP。**按方向分面**（两个面板各有标题和条目数）—— 初版两个 x 轴标签都写成 "up in tumor"，整张图上 "down" 一次都没出现，而数据里下调比上调还多 |
+| `01-04-05-unit1-kegg-ora-dotplot.pdf` / `.png` + `KEGG_table.csv` | ORA KEGG，同样按方向分面 |
+| `01-05-01-unit1-ppi-network.pdf` / `.png` + `hub_genes.csv` + `ppi_edges.csv` + `ppi_plot_layout.csv` + `PPI_network_caption.txt` | STRING PPI 网络与 hub 基因。**图做过可读性过滤，并按同心圆环排布**（最大连通分量 → degree 前 200 → 最强 450 条边 → 3 环，内圈 = hub 核心；最大 4 个 Louvain 模块上色）。完整网络见 `ppi_edges.csv`，每个节点的环号/半径/角度见 `ppi_plot_layout.csv`，图注七段式（方法/输入/展示范围/视觉编码/环/陷阱/文件）另存为可检索的 txt |
+| `wgcna_modules.csv` + `wgcna_module_sizes.csv` + `wgcna_soft_power.csv` + `wgcna_module_trait.csv` + `01-06-01-unit1-wgcna-scale-free-fit.pdf` + `01-06-02-unit1-wgcna-module-trait-heatmap.pdf` + `wgcna_status.json` | **WGCNA 共表达模块（可选，仅 `cohort`）**。只用肿瘤组（带上正常样本的话第一个模块必然是"肿瘤 vs 正常"轴，而 DEG 已经答过那件事）。软阈值取最小的 R²≥0.8 的 power，达不到就如实记录不假装通过；模块-性状做 **BH 校正**。实测 GSE42568：15 个模块（14 非 grey）、power=8（R²=0.858）、126 次检验中 30 个校正后显著 |
+| `lasso_coefficients.csv` + `lasso_coefficients_epv.csv` + `lasso_risk_scores.csv` + `lasso_stability.csv` + `lasso_selection_frequency.csv` + `lasso_cv_curve.csv` + `01-07-01-unit1-lasso-km-training.pdf`（有外部队列时另出 `01-07-01-unit2-lasso-km-validation.pdf`）+ `lasso_status.json` | **LASSO-Cox 预后签名（可选，需随访终点）**。终点由 config 显式指定（自动配对在字段名不规整时一定配错，而配错不报错）。报**三个** C-index：训练集 / 交叉验证 / 外部验证。实测 GSE42568：16 基因签名训练集 0.879、CV 0.793、**外部验证 0.672**；EPV 合规的 3 基因版本外部 0.642。重复 CV 选出 [16,3,3,22,3] → `signature_stable: false` |
 | `enrichment_status.json` | 富集模式（`fdr` / `ranked_fallback`）、GSEA 参数、去冗余阈值与原因 |
 | `ppi_status.json` | PPI 方法、节点边数、绘图过滤与环参数、回退原因 |
-| `tf_regulon_enrichment.csv` + `tf_activity_by_sample.csv` + `tf_activity_group_test.csv` + `tf_regulon_enrichment.pdf` + `tf_activity_group_difference.pdf` + `tf_status.json` | **TF 调控（可选）**。调控子来自 `dorothea`（置信度 A/B/C，271 个 TF、13223 条关系）。两件事分开做：**调控子富集**用 Fisher 精确检验（背景集 = 检测到的基因，不依赖样本量）；**调控子活性**是靶基因 z-score 的 mor 加权均值，再做组间比较。实测 GSE42568：87 个 TF 富集 BH<0.05（top `E2F4` p=1.4e-15、`TEAD1`、`E2F1`、`KLF5` —— 全是乳腺癌经典的增殖驱动 TF）；190 个 TF 活性组间差异（top `KDM5B` d=3.38、`FOXO1` d=−3.26、`PPARA`）。n=6 的 GSE64790 走 `ranked_fallback`，top `ESR1` p=5.1e-06，**活性组间 0 个显著**（每组 3 个样本，Wilcoxon 没有功效 —— 如实报 0，不制造显著性） |
+| `tf_regulon_enrichment.csv` + `tf_activity_by_sample.csv` + `tf_activity_group_test.csv` + `01-08-01-unit1-tf-regulon-enrichment.pdf` + `01-08-02-unit1-tf-activity-group-difference.pdf` + `tf_status.json` | **TF 调控（可选）**。调控子来自 `dorothea`（置信度 A/B/C，271 个 TF、13223 条关系）。两件事分开做：**调控子富集**用 Fisher 精确检验（背景集 = 检测到的基因，不依赖样本量）；**调控子活性**是靶基因 z-score 的 mor 加权均值，再做组间比较。实测 GSE42568：87 个 TF 富集 BH<0.05（top `E2F4` p=1.4e-15、`TEAD1`、`E2F1`、`KLF5` —— 全是乳腺癌经典的增殖驱动 TF）；190 个 TF 活性组间差异（top `KDM5B` d=3.38、`FOXO1` d=−3.26、`PPARA`）。n=6 的 GSE64790 走 `ranked_fallback`，top `ESR1` p=5.1e-06，**活性组间 0 个显著**（每组 3 个样本，Wilcoxon 没有功效 —— 如实报 0，不制造显著性） |
 | `state.json` | 每步执行状态 + 验收结果（唯一逐字节不可复现的产物：含耗时与时间戳） |
 
 > **可选步骤失败不会让 CI 变红。** 06/07/08 是 `required = FALSE`，实测第一次跑时
@@ -164,7 +164,7 @@ node tools/check_palette.mjs   # 从 common.R 解析实际色值重算，CI 里�
 > artifact 是 zip，PDF 在里面看不了，PNG 是为了打开就能看到。
 
 > **每张图还会多一份带版本号的副本**，形如 `PPI_network__2180651.png`，
-> 后缀是产出它的 commit 短 SHA。规范文件名（`PPI_network.png`）保留给验收和下游脚本；
+> 后缀是产出它的 commit 短 SHA。规范文件名（`01-05-01-unit1-ppi-network.png`）保留给验收和下游脚本；
 > 副本是为了解决"同名文件在不同 commit 上内容不同、光看名字分不出是哪一版"的问题 ——
 > 实测就是这么把两轮 CI 的图当成同一张的。
 > `results/state.json` 的 `build` 字段也记了 commit / run id / 分支，

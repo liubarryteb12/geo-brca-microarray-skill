@@ -126,7 +126,7 @@ function measure(png) {
 
 let files
 try {
-  // 排除带版本号的副本（`PPI_network__c370bd0.png`）—— 它们是同一张图的字节拷贝，
+  // 排除带版本号的副本（`01-05-01-unit1-ppi-network__c370bd0.png`）—— 它们是同一张图的字节拷贝，
   // 再查一遍纯属浪费，而且会让"检查了 N 个 PNG"这个数字翻倍、掩盖真实图数。
   files = readdirSync(dir)
     .filter(f => f.toLowerCase().endsWith('.png') && !/__[0-9a-f]{7}\.png$/i.test(f))
