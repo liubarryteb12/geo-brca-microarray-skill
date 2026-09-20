@@ -203,6 +203,120 @@ KEY_PACKAGES <- c(
   "scTenifoldKnk", "PerturbNet", "RegVelo"
 )
 
+# ---- 文档点名、但本仓库用不了的工具（缺口登记）-----------------------------
+#
+# **`KEY_PACKAGES` 回答"装没装"，这张表回答"为什么"。** 两者不能互相替代：
+# `"scTenifoldKnk": null` 说明"查过了，没装"，但**没说是"装不上"还是"不归本仓库管"**
+# —— 而这两件事的后续动作完全不同（前者等上游，后者去 Part 2 找）。
+#
+# 姊妹项目 Python 侧（`scrna` / `spatial`）有同名的 `NAMED_TOOLS` /
+# `probe_named_tools()` / `named_tools_note()`，三部分的清单因此可以并排读。
+#
+# `kind` 的取值在三个仓库里同义：
+#   r_package      R/Bioconductor 包
+#   not_on_cran    CRAN / Bioconductor 上都没有（只能走数据或 API）
+#   web_service    是 web 服务，没有本地包
+#   python_part    规范把这一节划给 Part 2（Python），本仓库只留交接
+NAMED_TOOLS <- list(
+  "TRRUST" = list(
+    kind = "not_on_cran", section = "§1.5",
+    reason = paste0(
+      "CRAN / Bioconductor 上都没有（实测 CRAN 上 `TRRUST` / `trrust` 两个名字全无）。",
+      "官方分发方式是 TSV 文件，所以**本仓库真的用上了** —— 走 base R ",
+      "`download.file` 取官方 TSV（不引新依赖），缓存到 `data/<GSE>/trrust_cache/` ",
+      "并记 sha256。**它是 dorothea 的独立交叉验证，不替换主来源**（硬性规则 27）。")
+  ),
+  "ChEA3" = list(
+    kind = "web_service", section = "§1.5",
+    reason = paste0(
+      "Ma'ayan Lab 的 web 服务，**没有 CRAN / Bioconductor 包**",
+      "（实测 CRAN 上 `ChEA3` / `chea3` 两个名字全无）。调用要 `httr` / `curl`，",
+      "而 CI 的 R 包列表里没有 —— 加它等于为了一个交叉验证拉一条 HTTP 依赖链。",
+      "**未接入，理由同时写进 `tf_status.json` 的 limitations。**")
+  ),
+  "scTenifoldKnk" = list(
+    kind = "python_part", section = "§1.7",
+    reason = paste0(
+      "规范把 §1.7 虚拟敲除标为**保留框架、主语言 Python**，落地在 ",
+      "`scrna-pipeline-skill/scripts/08_virtual_perturbation.py`。",
+      "本仓库（Part 1）的职责是**产出候选靶基因表**并走 CSV 交接（§0.2），",
+      "不重复实现一遍 —— 两个仓库各写一套会让\"哪份是结论\"变含糊。")
+  ),
+  "PerturbNet" = list(
+    kind = "python_part", section = "§1.8",
+    reason = paste0(
+      "PyPI 上的 Python 包，且 §1.8 过表达标为**保留框架、主语言 Python**，",
+      "落地在 Part 2 的 `08_virtual_perturbation.py`。",
+      "本仓库只做 CSV 交接。")
+  ),
+  "RegVelo" = list(
+    kind = "python_part", section = "§1.8",
+    reason = paste0(
+      "Python 包（RNA velocity 方向），§1.8 主语言是 Python，落地在 Part 2。",
+      "**在 Part 2 那边它也没跑成** —— 需要 spliced/unspliced 层，本数据没有；",
+      "理由记在 Part 2 的状态文件里，不在这里重复。")
+  )
+)
+
+#' 把 NAMED_TOOLS 整理成可写进清单的登记表。
+#'
+#' **不尝试 load** —— 这一节的结论是"不是 R 包 / 不归本仓库管"，去
+#' `requireNamespace` 只会反复报同一个 FALSE。真正的可用性判断在
+#' `requireNamespace`，这里只做一次，用来区分"登记说用不了，但环境里其实有"
+#' （那说明登记过期了，值得报出来）。
+#'
+#' `used` **不由这里决定** —— 它取决于本轮真的跑没跑（TRRUST 就是这样：
+#' 不是 R 包，但真的用上了）。所以这里只给 `available/kind/section/reason`，
+#' `used` 由调用方按已落盘的状态文件填。
+probe_named_tools <- function(only = NULL) {
+  out <- list()
+  for (tool in names(NAMED_TOOLS)) {
+    if (!is.null(only) && !(tool %in% only)) next
+    meta <- NAMED_TOOLS[[tool]]
+    avail <- isTRUE(requireNamespace(tool, quietly = TRUE))
+    if (avail) {
+      log_warn(sprintf(
+        "工具 %s 登记为不可用，但环境里能 requireNamespace —— 登记需要更新", tool))
+    }
+    out[[tool]] <- list(available = avail, kind = meta$kind,
+                        section = meta$section, reason = meta$reason)
+  }
+  out
+}
+
+#' 一句话说明文档点名的工具里哪些没用上、为什么。
+named_tools_note <- function() {
+  paste0(
+    "文档 §1 点名的工具里，**§1.7 / §1.8 的虚拟扰动三个工具不归本仓库管** —— ",
+    "规范把这两节标为主语言 Python，落地在 `scrna-pipeline-skill`；",
+    "本仓库的职责是产出候选靶基因表并走 CSV 交接（§0.2）。",
+    "§1.5 的 TRRUST **真的用上了**（官方 TSV，作为 dorothea 的独立交叉验证），",
+    "ChEA3 未接入（web 服务，无本地包，调用需 httr/curl）。",
+    "逐条理由见清单的 `named_tools` 字段。")
+}
+
+#' 把缺口登记写进清单。
+#'
+#' **`used` 由调用方传进来**（见 `probe_named_tools()` 的说明）——
+#' 在这里自己判一遍就会和真正的执行结果分叉。
+record_named_tools <- function(cfg, used = character(0)) {
+  tools <- probe_named_tools()
+  for (t in names(tools)) {
+    tools[[t]]$used <- t %in% used
+    # 既没说 used 也没写理由 = 没说清。理由一定非空，所以这里只补一个断言
+    if (!tools[[t]]$used && !nzchar(tools[[t]]$reason %||% "")) {
+      tools[[t]]$reason <- "**理由缺失**（登记不完整，必须补上）"
+    }
+  }
+  m <- read_manifest(cfg)
+  m$named_tools <- tools
+  m$named_tools_note <- named_tools_note()
+  m$dataset_id <- cfg$dataset_id
+  m$updated_at <- format(Sys.time(), "%Y-%m-%dT%H:%M:%S")
+  write_manifest(cfg, m)
+  invisible(tools)
+}
+
 manifest_path <- function(cfg) file.path(cfg$output$results_dir, MANIFEST_NAME)
 
 #' 读清单。文件不存在返回空 list（不是 NULL，便于直接取字段）

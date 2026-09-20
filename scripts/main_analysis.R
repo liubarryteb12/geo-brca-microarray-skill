@@ -277,6 +277,37 @@ record_geo_decisions <- function(cfg) {
       "实测踩过两次（07_grn 漏 import、timeROC 缺 Surv）。")
   )
 
+  # 7. 文档点名工具的缺口登记 —— "装不上"和"不归本仓库管"是两件事
+  #
+  # `KEY_PACKAGES` 已经记了"装没装"（未装的记 NA，硬性规则 26），
+  # 但**没记为什么**。而"CRAN 上根本没有这个包"和"规范把这一节划给了 Part 2"
+  # 的后续动作完全不同：前者等上游，后者去另一个仓库找。
+  #
+  # **`used` 从已落盘的状态文件里取，不在这里重新判** ——
+  # 判据是 `tf_status.json` 的 `trrust.status == "ok"`。
+  tr_used <- is.list(tr) && identical(g(tr, "status", ""), "ok")
+  nt <- record_named_tools(cfg, used = if (tr_used) "TRRUST" else character(0))
+  n_used <- sum(vapply(nt, function(x) isTRUE(x$used), logical(1)))
+  n_missing_reason <- sum(vapply(
+    nt, function(x) !isTRUE(x$used) && !nzchar(x$reason %||% ""), logical(1)))
+  record_decision(
+    cfg, "named_tools",
+    "文档 §1 点名的工具，哪些真的产出了结果？没用的为什么？",
+    sprintf("登记 %d 个；实际产出结果的是 %s",
+            length(nt),
+            if (n_used == 0L) "无" else
+              paste(names(nt)[vapply(nt, function(x) isTRUE(x$used), logical(1))],
+                    collapse = " / ")),
+    evidence = paste0(
+      "逐条理由写进清单的 `named_tools`（kind 取值三仓库同义：r_package / ",
+      "not_on_cran / web_service / python_part）。",
+      "**§1.7 / §1.8 的 scTenifoldKnk / PerturbNet / RegVelo 不是\"装不上\"，",
+      "是规范把这两节划给了 Part 2** —— 本仓库只做 CSV 交接；",
+      "§1.5 的 TRRUST 不是 R 包但**真的用上了**（官方 TSV，作为 dorothea 的交叉验证），",
+      "ChEA3 是 web 服务、无本地包，未接入。",
+      sprintf(" 本轮缺理由的登记：%d 个。", n_missing_reason))
+  )
+
   m <- read_manifest(cfg)
   log_info(sprintf("决策链已登记：%d 条（写入 %s）",
                    length(m$decisions %||% list()), MANIFEST_NAME))
@@ -471,6 +502,22 @@ check_acceptance <- function(cfg) {
            n <- targets$n_genes %||% 0
            k <- targets$n_with_logfc %||% 0
            n > 0 && k > 0
+         }),
+         required = FALSE),
+    # 点名工具的缺口登记：**每个没用上的都必须有理由**
+    #
+    # 判据是"每个不可用的都有原因"，**不是"全都不可用"** ——
+    # 将来某个工具能装了，这条应该自动变 PASS 而不是 FAIL
+    # （姊妹项目 Python 侧同一条，见 scrna AGENTS 规则 17）。
+    list(name = "§1 点名工具的缺口已登记（清单 named_tools，逐条理由）",
+         ok = local({
+           m <- read_manifest(cfg)
+           nt <- m$named_tools
+           if (!is.list(nt) || length(nt) == 0L) return(FALSE)
+           # 用了的（TRRUST）和没用但有理由的都算"说清了"
+           all(vapply(nt, function(x) {
+             isTRUE(x$used) || nzchar(x$reason %||% "")
+           }, logical(1)))
          }),
          required = FALSE),
     # 跨部分交接必须在清单里留痕（§0.2：转换前后、丢了什么字段）
