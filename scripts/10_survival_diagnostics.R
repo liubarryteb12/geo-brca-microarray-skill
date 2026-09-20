@@ -131,24 +131,44 @@ compute_time_roc <- function(df, label) {
   }
 
   auc <- as.numeric(res$AUC)
-  # inference 是 2 x n 矩阵：第 1 行标准误，第 2 行是……（不同版本不同）
-  # 所以**按名字取**，不按位置取 —— 位置在不同 timeROC 版本间变过。
+  # ---- 标准误：`res$inference` 是 **list**，不是 matrix --------------------
+  #
+  # 实测踩过（run 35483927979）：第一版按 matrix 取（`rownames == "SE"` /
+  # `inf[1, ]`），三个分支全不匹配，`se` 一直是 NULL → 所有 CI 报成 `[NA, NA]`，
+  # 而 AUC 本身是对的 —— **点估计看着正常，区间全丢**。
+  #
+  # 读 timeROC 0.4.1 源码（`R/timeROC_3.R` 末尾）确认结构：
+  #
+  #   inference <- list(mat_iid_rep_2 = mat_iid_rep,      # <-> AUC_2
+  #                     mat_iid_rep_1 = mat_iid_rep_star, # <-> AUC_1
+  #                     vect_sd_1     = vetc_sestar,      # <-> AUC_1 的 SE
+  #                     vect_sd_2     = vetc_se,          # <-> AUC_2 的 SE
+  #                     vect_iid_comp_time = ...)
+  #
+  # 无竞争风险时（本仓库 `cause = 1` 且只有一种事件）返回 `ipcwsurvivalROC`，
+  # 此时 `AUC = AUC_1` → **SE 取 `vect_sd_1`**。这不是猜的：包自己的
+  # `confint.ipcwsurvivalROC()` 第一行就是
+  # `se <- object$inference$vect_sd_1[!is.na(object$AUC)]`。
+  #
+  # **不用 `confint()` 而是自己算点估计区间**，因为它为了**同时置信带**
+  # 要跑 `n.sim = 2000` 次 `rnorm()` —— 那是随机过程，会引入一个新的
+  # 需要设种子的来源（AGENTS 规则 11）。点估计区间是闭式的，
+  # 用 `qnorm(0.975)` 算，这一步因此保持确定性。
   se <- NULL
-  if (!is.null(res$inference)) {
-    inf <- res$inference
-    if (is.matrix(inf) && "SE" %in% rownames(inf)) {
-      se <- as.numeric(inf["SE", ])
-    } else if (is.matrix(inf) && nrow(inf) >= 1L) {
-      se <- as.numeric(inf[1L, ])
-    } else if (is.numeric(inf)) {
-      se <- as.numeric(inf)
-    }
+  inf <- res$inference
+  if (is.list(inf) && !is.null(inf$vect_sd_1)) {
+    se <- as.numeric(inf$vect_sd_1)
+  } else if (is.matrix(inf) && "SE" %in% rownames(inf)) {
+    se <- as.numeric(inf["SE", ])
+  } else if (is.numeric(inf)) {
+    se <- as.numeric(inf)
   }
+  z <- stats::qnorm(0.975)
   for (i in seq_along(ph$horizons)) {
     lo <- hi <- NA_real_
     if (!is.null(se) && length(se) >= i && is.finite(se[[i]])) {
-      lo <- auc[[i]] - 1.96 * se[[i]]
-      hi <- auc[[i]] + 1.96 * se[[i]]
+      lo <- auc[[i]] - z * se[[i]]
+      hi <- auc[[i]] + z * se[[i]]
     }
     out$rows[[length(out$rows) + 1L]] <- list(
       set = label, horizon = ph$horizons[[i]], auc = auc[[i]],
@@ -543,6 +563,14 @@ run_10_survival_diagnostics <- function(cfg) {
   status$n_time_points <- nrow(roc_df)
   status$sets <- sets
   status$roc_notes <- roc_notes
+  # 区间是怎么算的，必须落盘 —— 否则读者无法判断它可不可比
+  status$ci_method <- paste0(
+    "pointwise 95% CI = AUC +/- qnorm(0.975) * SE，SE 取 ",
+    "timeROC 返回对象的 inference$vect_sd_1（无竞争风险时 AUC = AUC_1）。",
+    "未用 confint()：它的同时置信带要 2000 次 rnorm() 模拟，会引入随机性；",
+    "点估计区间是闭式的，用闭式可让这一步保持确定性。")
+  status$n_ci_finite <- if (is.null(roc_df)) 0L else
+    sum(is.finite(roc_df$ci_low) & is.finite(roc_df$ci_high))
   # 有队列失败时**不能报 ok** —— 部分失败也是失败，理由要带上错误原文
   status$roc_errors <- as.list(
     roc_notes[!vapply(roc_notes, function(x) !grepl("失败:", x), logical(1))])

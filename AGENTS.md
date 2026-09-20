@@ -410,6 +410,53 @@ timeROC 崩溃被记成"事件数不足"，验收照常 PASS。**这正是规则
 **推广：** 任何"因为不适用所以没做"的分支，都要先排除"其实是崩了"。
 写这类分支时问一句：**如果这一步的代码坏了，它会落到哪个状态？**
 
+### `timeROC` 的 `inference` 是 **list**，不是 matrix
+
+修好 `Surv` 之后（run 35483927979）AUC 算出来了，**但 5 个时间点的
+`95%CI` 全是 `[NA, NA]`** —— 而 `[FAIL] §1.6 时间依赖 AUC 带置信区间`
+把它抓住了。点估计全对、区间全丢，从数字上看很像"SE 太小"或"事件太少"。
+
+第一版按 matrix 取（`rownames == "SE"` / `inf[1, ]` / `is.numeric(inf)`），
+**三个分支全不匹配**。读 timeROC 0.4.1 源码（`R/timeROC_3.R` 末尾）确认：
+
+```r
+inference <- list(mat_iid_rep_2 = mat_iid_rep,       # <-> AUC_2
+                  mat_iid_rep_1 = mat_iid_rep_star,  # <-> AUC_1
+                  vect_sd_1     = vetc_sestar,       # <-> AUC_1 的 SE
+                  vect_sd_2     = vetc_se,           # <-> AUC_2 的 SE
+                  vect_iid_comp_time = ...)
+```
+
+无竞争风险时返回 `ipcwsurvivalROC`，此时 `AUC = AUC_1` → **SE 取
+`vect_sd_1`**。这不是猜的：包自己的 `confint.ipcwsurvivalROC()` 第一行就是
+`se <- object$inference$vect_sd_1[!is.na(object$AUC)]`。
+
+**读源码比猜结构便宜。** 一个"看起来对但取不到值"的字段访问不报错 ——
+它给 NA，而 NA 往下游走会变成"这个时间点算不出来"的样子。
+
+### 点估计区间自己算，不用 `confint()`
+
+`confint()` 为了**同时置信带**要跑 `n.sim = 2000` 次 `rnorm()` —— 那是随机
+过程，会引入一个新的需要设种子的来源（规则 11）。点估计区间是闭式的：
+
+```
+CI = AUC ± qnorm(0.975) · SE
+```
+
+用闭式可让这一步保持确定性，不新增 RNG 源。
+
+### 验收判据不能用"至少一个"绕过结构性缺失
+
+第一版写的是 `sum(is.finite(ci_low) & is.finite(ci_high)) > 0L`。
+那次确实 FAIL 了（5 行全 NA），**但只要有一行侥幸有值就会 PASS**。
+
+所有时间点来自**同一个估计量**（同一个 SE 向量），要么全有要么全无 ——
+所以"至少一个"这个判据在结构上就是错的。现在要求 `all(is.finite(...))`：
+**报了一个时间点的 AUC，就必须给出它的区间。**
+
+**推广：** 判据要匹配数据生成过程的**结构**。当某个量在结构上不可能部分
+存在时，"至少一个"就是给了自己一条永远走得到的后门。
+
 ## 代码约定
 
 - R 脚本结构：bootstrap 块 → 辅助函数 → `run_XX(cfg)` → `if (!GEO_ORCHESTRATED())` 自执行块。

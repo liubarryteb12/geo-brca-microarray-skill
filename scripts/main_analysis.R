@@ -360,8 +360,13 @@ check_acceptance <- function(cfg) {
            if (!file.exists(p)) return(FALSE)
            d <- utils::read.csv(p, stringsAsFactors = FALSE, check.names = FALSE)
            if (nrow(d) == 0L) return(FALSE)
-           # 允许个别点因 SE 缺失而没有区间，但不能整列全空
-           sum(is.finite(d$ci_low) & is.finite(d$ci_high)) > 0L
+           # **判据是"每一行都有区间"，不是"至少一行有"。**
+           # 第一版写的是 `sum(is.finite(...)) > 0L`，而实测（run 35483927979）
+           # 全部 5 行都是 NA —— 那次确实 FAIL 了，但只要有一行侥幸有值就会
+           # PASS。所有时间点来自同一个估计量（同一个 SE 向量），
+           # 要么全有要么全无，所以"至少一个"这个判据在结构上就是错的。
+           # 报了一个时间点的 AUC 就必须给出它的区间 —— 点估计单独看没有意义。
+           all(is.finite(d$ci_low) & is.finite(d$ci_high))
          }),
          required = FALSE),
     # 这一步的方法学限定必须写明（同 §1.6 的"内部诊断不是外部验证"）
