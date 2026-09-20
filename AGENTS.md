@@ -1,5 +1,12 @@
 # AGENTS.md — 仓库约定
 
+> **治理层（2026-09-20 起）**：本仓库是 `scientific_agent_skill` 工作区三仓库之一，
+> 受工作区治理层约束：一切产物只写工作区内；任务先登记在
+> `governance/02_TASKLIST.md`；推送前跑 `node governance/hooks/pre-push.mjs`；
+> checkpoint 台账见 `governance/04_CHECKPOINT_PLAN.md`；行为准则
+> `governance/01_SPEC_v1.0.md`（生信分析工作流 Agent 部署规范）。
+> 本文件与治理层冲突时按规范 §7.4 报告裁决；本文件规则继续约束本仓库内改动。
+
 本仓库是一个 **GEO 常规表达谱（bulk 芯片）分析流水线**，同时是一个 agent skill。
 疾病无关：`scripts/` 里没有一处依赖疾病或平台，换 `assets/config.<GSE>.yml` 就换分析
 （已验证的两个数据集恰好是乳腺癌 GSE64790 / GSE42568）。
