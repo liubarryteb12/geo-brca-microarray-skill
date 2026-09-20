@@ -221,6 +221,14 @@ jobs:
       - name: Verify figures are not blank
         run: node tools/check_figures.mjs "results/$DATASET"
 
+      # 图幅（毫米）是否符合栏宽约定（规则 25）。
+      # `check_figures.mjs` 只看"有没有墨"，看不出图**有多宽** ——
+      # 一张 370 mm 的图和一张 183 mm 的图在它眼里完全一样。
+      # 这里读 PDF 的 /MediaBox 换算成毫米，超出 W_DOUBLE 就红。
+      # 同样是**分析产出的门禁**，所以不加 if: always()。
+      - name: Verify figure widths fit a journal column
+        run: node tools/check_fig_sizes.mjs "results/$DATASET"
+
       # **给图加带版本号的副本。**
       #
       # 规范文件名（`PPI_network.png`）必须保留 —— `check_acceptance()`、README
