@@ -4,6 +4,11 @@
 > 当前 config 的 `dataset_id`。产物按数据集分目录，排查时先确认自己看的是哪个数据集 ——
 > 拿 GSE64790 的状态文件去解释 GSE42568 的报错是很容易犯的错。
 
+> **"每轮运行在什么条件下跑出来的"看 `run_manifest.json`**，
+> 结构见 [`module0.md`](module0.md)。这一层不产出生物学结论，
+> 它是所有结论可被质疑的前提 —— 排查"数值和上次不一样"时先看它的
+> `key_versions` 与 `seed`。
+
 ## 流水线在 00_validate_inputs.R 就停了
 
 这是**设计如此**，不是 bug。门禁按 `design_mode` 分两套：
@@ -91,6 +96,42 @@ node tools/check_sample_structure.mjs GSE64790 # 分组是否与批次效应混�
 - `clinical_table:` → SOFT 临床字段解析
 - `探针->基因映射长度 N != 探针数 M` → `map_features_to_symbols()`
   返回的是 **list**，要用 `$symbols` / `$mode`，不能当向量（踩过）
+
+## `survival_diagnostics` 的三种异常
+
+查 `results/<GSE>/survival_diagnostics_status.json` 的 `status`：
+
+| status | 含义 | 怎么办 |
+|---|---|---|
+| `ok` | 真跑了 | 看 `n_time_points` 与 `n_ci_finite`，两者应相等 |
+| `too_few_events` | 所有队列事件都不够（门槛 10） | **正常**。GSE64790 无随访数据走这里 |
+| `failed` / `partial_error` | **崩了** | `reason` 里有错误原文，见下面两条 |
+
+### `could not find function "Surv"`
+
+**timeROC 用了未声明的依赖。** 它的 `survival` 写在 **`Suggests`** 里，
+NAMESPACE 里没有任何 `importFrom(survival, ...)`，但内部按名字调用 `Surv`。
+
+本仓库一律 `pkg::fun()` 不 attach，所以必然失败。
+修法：调用期间临时挂载 `survival`（`10_survival_diagnostics.R` 里已做，
+先记 `%in% search()`、`on.exit` detach）。
+
+**推广：** 引入新 R 包前先看它 NAMESPACE 的 `importFrom` 覆盖没覆盖
+它自己用到的函数。只用 `Suggests` 声明的包会**静默失败**，
+而报错信息不会提到依赖声明。
+
+### `95%CI` 全是 `[NA, NA]` 而 AUC 正常
+
+**`timeROC` 的 `inference` 是 `list` 不是 matrix。** 无竞争风险时
+（`ipcwsurvivalROC`）`AUC = AUC_1`，SE 取 `inference$vect_sd_1`。
+依据是包自己的 `confint.ipcwsurvivalROC()` 第一行。
+
+按 matrix 取（`rownames == "SE"` 之类）**不报错，只是取不到值** ——
+给 NA，而 NA 往下游走就变成"这个时间点算不出来"的样子。
+
+验收项 `§1.6 时间依赖 AUC 带置信区间` 的判据是
+`all(is.finite(ci_low) & is.finite(ci_high))`。**不要改成"至少一个有限"**：
+所有时间点来自同一个 SE 向量，要么全有要么全无，"至少一个"是条后门。
 
 ## KEGG 没有结果
 
