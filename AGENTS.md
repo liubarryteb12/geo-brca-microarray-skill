@@ -586,9 +586,14 @@ gh run watch --repo liubarryteb12/geo-normal-pipeline-skill
 `geo_analysis.yml` 有 `paths:` 过滤（只跑 `scripts/` `tools/` `assets/`），
 **`*.md` 的改动不触发它** —— 所以文档里的死链接以前**没有任何门禁能挡住**。
 
-实测就踩到了：规则 29 让读者去跑 `_smoke_survival_diag.py`，而那个文件早删了；
-`assets/config.yml` 这个名字在 README 与 `EXPERIMENTAL_DESIGN.md` 里被引用了
+实测就踩到了：规则 29 让读者去跑 `_smoke_survival_diag.py`，而那个文件**已删**；
+`assets/config.yml`（当时的错名）在 README 与 `EXPERIMENTAL_DESIGN.md` 里被引用了
 **7 次**，而真实文件是 `assets/config.<GSE>.yml`。
+
+> **写这段的时候又踩了一次：** 上面这两个例子本身就是不存在的文件名，
+> 于是**记录这个检查的文档触发了这个检查**。这不是 bug ——
+> 读者确实会去找那个文件。举例时把话说全（"已删" / "当时的错名"），
+> 本来就是该做的事：不加限定，读者分不清你在说历史还是现状。
 
 现在 `tools/check_doc_refs.mjs` + `.github/workflows/docs_check.yml` 兜住这一类，
 **约 20 秒**、不装 R、不跑分析。两个逃生舱（指向已删文件 / 指向第三方源码）
