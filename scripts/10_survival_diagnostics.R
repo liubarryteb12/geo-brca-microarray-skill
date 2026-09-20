@@ -575,14 +575,23 @@ run_10_survival_diagnostics <- function(cfg) {
     cal_ok <- tryCatch({
       sets_u <- unique(cal_df$set)
       cols <- stats::setNames(pal_categorical(length(sets_u)), sets_u)
+      # **队列要能被认出来**（评审 3.8：训练队列只叫 "training"，读者不知道
+      # 是哪个队列）。主队列用 dataset_id 标注，其余保留原名。
+      set_lab <- stats::setNames(
+        vapply(sets_u, function(s) {
+          if (identical(s, "training")) sprintf("%s (training cohort)", cfg$dataset_id)
+          else s
+        }, character(1)), sets_u)
+      cal_df$set_lab <- factor(set_lab[as.character(cal_df$set)], levels = unname(set_lab))
       p <- ggplot2::ggplot(cal_df,
-          ggplot2::aes(x = predicted, y = observed, colour = set)) +
+          ggplot2::aes(x = predicted, y = observed, colour = set_lab)) +
         ggplot2::geom_abline(slope = 1, intercept = 0, linetype = "dashed",
                              colour = PAL$muted, linewidth = 0.35) +
         ggplot2::geom_line(linewidth = 0.6) +
         ggplot2::geom_point(ggplot2::aes(size = n)) +
-        ggplot2::scale_colour_manual(values = cols) +
-        ggplot2::scale_size_continuous(name = "n per group", range = c(1.2, 3.6)) +
+        ggplot2::scale_colour_manual(values = stats::setNames(unname(cols), unname(set_lab))) +
+        ggplot2::scale_size_continuous(name = "n per group", range = c(1.2, 3.6),
+                                       breaks = pretty(cal_df$n, n = 4)) +
         ggplot2::labs(
           x = "Mean predicted survival (Cox baseline)",
           y = "Observed survival (Kaplan-Meier)",
@@ -594,6 +603,10 @@ run_10_survival_diagnostics <- function(cfg) {
             "reported horizon, not the crude event proportion - censored patients ",
             "are not 'event-free'."), W_ONE_HALF)) +
         theme_paper() +
+        # **图例单列**（评审 3.8：n per group 的 2×3 网格让 30/50/70 一行、
+        # 40/60/80 一行，标签落在两行之间，读序有歧义）。
+        ggplot2::guides(colour = ggplot2::guide_legend(ncol = 1, order = 1),
+                        size = ggplot2::guide_legend(ncol = 1, order = 2)) +
         ggplot2::theme(legend.position = "bottom")
       save_pdf(file.path(fig, "01-10-02-unit1-calibration.pdf"), print(p),
                width = W_ONE_HALF, height = mm(80))

@@ -586,6 +586,13 @@ make_ora_dotplot <- function(df, cfg, title) {
   rownames(keep) <- NULL
 
   # 面板标题带条目数：读者一眼看出两边各有多少条，不会怀疑某边是空的
+  #
+  # **strip 文字被裁是"框不够宽"，不是"句子太长"。** 评审 3.3 实测
+  # GSE64790 右面板 "down in tumor" 渲染成 "lown in tumo"、
+  # "15 terms shown" 渲染成 "5 terms show" —— 两端各缺一个字符，
+  # 说明 strip 框略窄于文字外接宽度（frame 的 padding 从文字宽度里扣）。
+  # 所以修法是**给 strip 留内边距 + 字号略降**，而不是把句子折行
+  # （折行会引入第三行、把面板高度吃掉；画布高度是按条目数算的）。
   counts <- as.integer(table(factor(keep$direction, levels = c("up", "down"))))
   panel_lab <- sprintf("%s\n(%d terms shown)", dir_name[c("up", "down")], counts)
   keep$panel <- factor(panel_lab[match(keep$direction, c("up", "down"))],
@@ -619,7 +626,14 @@ make_ora_dotplot <- function(df, cfg, title) {
     theme_paper(9) +
     ggplot2::theme(
       axis.text.y = ggplot2::element_text(size = 7),
-      strip.text  = ggplot2::element_text(size = 9, face = "bold"),
+      # **strip 文字被裁的对策：字号降到 8 + 显式给文本框内边距。**
+      # 评审实测两端各缺一个字符（"down in tumor" -> "lown in tumo"），
+      # 是 frame 从文字宽度里扣 padding 造成的；`margin` 把内边距加回去，
+      # 框随文字变宽，不再切字。
+      strip.text  = ggplot2::element_text(
+        size = 8, face = "bold",
+        margin = ggplot2::margin(t = 2, r = 6, b = 2, l = 6)),
+      strip.background = ggplot2::element_rect(fill = "grey92", colour = NA),
       panel.spacing = ggplot2::unit(1.2, "lines"))
 }
 

@@ -115,15 +115,28 @@ run_02_qc_pca_correlation <- function(cfg) {
   # **两面板共 y 轴**（评审 3.8：free_y 下 before 刻度 0.4/0.2/0.0、
   # after 是 0.5/0.4/.../0.0，峰高不可比）。density 的 y 量纲本就一致，
   # 共轴后唯一损失是 after 面板下方留白 —— 可比性优先。
-  p_density <- ggplot(long, aes(x = expression, colour = group, linetype = group,
-                                group = sample)) +
-    geom_density(linewidth = 0.4, alpha = 0.85) +
+  #
+  # **绘制顺序按组样本数降序**（评审 3.8：after 面板里 normal（n=17）的
+  # 曲线被 tumor（n=104）完全盖住）。ggplot 按 data 行序绘制、后画的在上；
+  # 把**样本少的组排到后面**，它们的曲线就画在多数组的上层。104 vs 17
+  # 差 6 倍，仅靠顺序不足以完全分离 —— 所以同时给被盖住的危险组合
+  # （少样本组）更粗的线宽。
+  n_by_g <- table(group$group[match(long$sample, group$gsm)])
+  long$grp_ord <- factor(long$group, levels = names(sort(n_by_g, decreasing = TRUE)))
+  p_density <- ggplot(long[order(long$grp_ord), ],
+                      aes(x = expression, colour = grp_ord, linetype = grp_ord,
+                          group = sample)) +
+    geom_density(data = long[long$grp_ord != names(n_by_g)[which.min(n_by_g)], ],
+                 linewidth = 0.35, alpha = 0.85) +
+    geom_density(data = long[long$grp_ord == names(n_by_g)[which.min(n_by_g)], ],
+                 linewidth = 0.65, alpha = 0.95) +
     facet_wrap(~stage, ncol = 1, scales = "fixed") +
     scale_colour_condition(levels(groups), name = NULL) +
     scale_linetype_manual(values = c("solid", "dashed", "dotted", "dotdash")[seq_along(levels(groups))],
                           name = NULL) +
     labs(title = "Expression density before / after normalization",
-         subtitle = wrap_subtitle(sprintf("coloured and styled by group; one curve per sample; panels share the y axis (%s)",
+         subtitle = wrap_subtitle(sprintf(paste0("coloured and styled by group; one curve per sample; panels share the y axis. ",
+                                                 "Groups drawn smallest-last so minority curves stay on top (%s)."),
                                           cfg$dataset_id), fig_width = W_DOUBLE),
          x = "log2 expression", y = "density") +
     theme_paper(9)
