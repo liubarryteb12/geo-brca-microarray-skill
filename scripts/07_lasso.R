@@ -674,7 +674,7 @@ run_07_lasso <- function(cfg) {
   # **签名基因的训练集表达矩阵落盘**（供 10 的 risk-plot 层3 热图读取；
   # 10 不读表达矩阵本体，只读这张小表）。矩阵 = EPV 合规模型的基因 x 训练样本。
   if (!is.null(cap_info)) {
-    sig_in <- intersect(cap_info$genes, rownames(expr))
+    sig_in <- intersect(cap_genes, rownames(expr))
     if (length(sig_in) >= 1L) {
       utils::write.csv(expr[sig_in, common, drop = FALSE],
                        file.path(res, "signature_expr.csv"), row.names = TRUE)
