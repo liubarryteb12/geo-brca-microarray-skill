@@ -551,10 +551,9 @@ run_04b_enrichment <- function(cfg) {
     invisible(NULL)
   }
 
-  emit_ora(go_df, sprintf("GO %s ORA (up/down split)", cfg$enrichment$ont),
-           "GO", "go")
-  emit_ora(kegg_df, "KEGG ORA (up/down split)",
-           "KEGG", "kegg")
+  emit_ora(go_df, sprintf("GO %s ORA", cfg$enrichment$ont), "GO", "go")
+  emit_ora(kegg_df, "KEGG ORA", "KEGG", "kegg")
+
 
   # 排序指标与置换设置要记录 —— 可复现性清单要求
   status$gsea_ranking_metric <- "limma moderated t statistic (sign = direction)"
