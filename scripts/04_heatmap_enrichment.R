@@ -677,7 +677,7 @@ make_dotplot <- function(x, cfg, title) {
       "top %d terms, p.adjust < %g", n, cfg$enrichment$pvalue_cutoff), fig_width = W_DOUBLE)) +
     theme_bw(base_size = 9) +
     theme(axis.text.y = element_text(size = 7),
-          legend.position = "bottom", legend.direction = "horizontal")
+          legend.position = c(0.98, 0.98), legend.justification = c(1, 1), legend.direction = "vertical")
   p
 }
 

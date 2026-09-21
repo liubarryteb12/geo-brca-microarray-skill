@@ -582,7 +582,8 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
                                               hjust = 0, lineheight = 1.15,
                                               margin = ggplot2::margin(t = 4)),
         # 图例放底部横排：右侧图例直接吃掉图宽，而这张图本来就是方的
-        legend.position   = "bottom",
+        legend.position   = c(0.98, 0.98),
+        legend.justification = c(1, 1),
         legend.direction  = "horizontal",
         # **这张图不继承 theme_paper()（用的是 theme_void()），所以图例设置
         # 必须自己来一遍 —— 上面那条 legend.box = "vertical" 到不了这里。**
