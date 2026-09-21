@@ -794,6 +794,8 @@ run_10_survival_diagnostics <- function(cfg) {
       # ---- nomogram（rms::lrm 风格需 datadist；这里用 cph 主路径）----
       # 只用 risk + config 里的事件时间列做 3 年生存预测（时间点取中位随访）
       ddat <- data.frame(time = tr$time, event = tr$event, risk = tr$risk)
+      ddat <- ddat[is.finite(ddat$time) & is.finite(ddat$risk) & !is.na(ddat$event), , drop = FALSE]
+      ddat$event <- as.integer(ddat$event)
       dd <- rms::datadist(ddat); options(datadist = dd)
       on.exit(options(datadist = NULL), add = TRUE)
       surv_h <- cfg$survival
