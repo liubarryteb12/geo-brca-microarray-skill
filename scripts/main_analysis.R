@@ -623,7 +623,7 @@ check_acceptance <- function(cfg) {
            if (is.null(s)) return(FALSE)
            length(s$limitations %||% list()) >= 5L
          }),
-         required = FALSE)
+         required = FALSE),
     # ---- 差距清单补图验收（T-01 Phase C2）----
     list(name = "图质量·risk plot 三联已出（G4 组）",
          ok = local({
