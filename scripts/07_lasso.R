@@ -193,9 +193,9 @@ make_km_plot <- function(df, cutoff, title, cfg, time_unit = "days") {
       title = title,
       subtitle = wrap_subtitle(sprintf(
         paste0("median split at risk score = %.3f (cut-off fixed on the TRAINING set). ",
-               "log-rank p = %.3g. Censored observations are tick marks; ",
-               "shaded bands would imply a confidence interval the n does not support."),
-        cutoff, p_lr), fig_width = W_DOUBLE),
+        "log-rank p = %.3g. HR per +1 risk score = %.2f (95%%CI %.2f-%.2f). ",
+        "Censored observations are tick marks; "),
+        cutoff, p_lr, hr_est, hr_lo, hr_hi), fig_width = W_DOUBLE),
       # **x 轴必须带时间单位**（评审 3.6："time" 无单位 —— 训练队列是天、
       # 验证队列 GSE20685 是年，同一个数字差 365 倍）。
       x = sprintf("Time since diagnosis (%s)", time_unit),
@@ -670,6 +670,16 @@ run_07_lasso <- function(cfg) {
   }
 
   utils::write.csv(risk_df, file.path(res, "lasso_risk_scores.csv"), row.names = FALSE)
+
+  # **签名基因的训练集表达矩阵落盘**（供 10 的 risk-plot 层3 热图读取；
+  # 10 不读表达矩阵本体，只读这张小表）。矩阵 = EPV 合规模型的基因 x 训练样本。
+  if (!is.null(cap_info)) {
+    sig_in <- intersect(cap_info$genes, rownames(expr))
+    if (length(sig_in) >= 1L) {
+      utils::write.csv(expr[sig_in, common, drop = FALSE],
+                       file.path(res, "signature_expr.csv"), row.names = TRUE)
+    }
+  }
   utils::write.csv(data.frame(lambda = final_cv$lambda, cvm = final_cv$cvm,
                               cvsd = final_cv$cvsd, nzero = final_cv$nzero),
                    file.path(res, "lasso_cv_curve.csv"), row.names = FALSE)

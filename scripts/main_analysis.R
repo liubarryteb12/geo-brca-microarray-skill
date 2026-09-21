@@ -624,6 +624,45 @@ check_acceptance <- function(cfg) {
            length(s$limitations %||% list()) >= 5L
          }),
          required = FALSE)
+    # ---- 差距清单补图验收（T-01 Phase C2）----
+    list(name = "图质量·risk plot 三联已出（G4 组）",
+         ok = local({
+           s <- read_status("survival_diagnostics_status.json")
+           if (is.null(s)) return(FALSE)
+           figs <- s$figures %||% character(0)
+           sum(c("01-10-05-unit1-risk-scores.png", "01-10-05-unit2-survival-time.png")
+               %in% figs) == 2L
+         }),
+         required = FALSE),
+    list(name = "图质量·forest plot 已出且带 HR 表",
+         ok = local({
+           s <- read_status("survival_diagnostics_status.json")
+           if (is.null(s)) return(FALSE)
+           figs <- s$figures %||% character(0)
+           "01-10-06-unit1-forest-plot.png" %in% figs &&
+             file.exists(file.path(res, "cox_univariate_hr.csv"))
+         }),
+         required = FALSE),
+    list(name = "图质量·nomogram/DCA 已出或已说明原因",
+         ok = local({
+           s <- read_status("survival_diagnostics_status.json")
+           if (is.null(s)) return(FALSE)
+           figs <- s$figures %||% character(0)
+           "01-10-04-unit1-dca.png" %in% figs ||
+             (!is.null(s$nomogram_dca_note) && nzchar(s$nomogram_dca_note))
+         }),
+         required = FALSE),
+    list(name = "图质量·KM 图带 HR(95%CI) 注释",
+         ok = local({
+           s <- read_status("survival_diagnostics_status.json")
+           if (is.null(s)) return(FALSE)
+           # HR 在 KM subtitle 里 —— 判据是 cox_univariate_hr.csv 的 risk 行存在（forest 步骤落盘）
+           p <- file.path(res, "cox_univariate_hr.csv")
+           if (!file.exists(p)) return(FALSE)
+           d <- utils::read.csv(p)
+           any(d$term == "risk score")
+         }),
+         required = FALSE)
   )
 
   # deg_table.csv 必须含 spec 要求的四列

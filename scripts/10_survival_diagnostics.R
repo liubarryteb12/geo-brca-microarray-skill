@@ -1,4 +1,147 @@
 # ============================================================================
+
+  # ---- 8. forest plot（差距清单 #10，SRC-2 Fig5A/B 惯例）------------------
+  # 单因素 Cox（risk + 每个 EPV 签名基因逐个）HR(95%CI) 的左表右图合一。
+  # 数据：risk_df（risk 的 HR）+ signature_expr.csv（逐基因 HR）。
+  fr_ok <- FALSE
+  if (!is.null(risk_df) && nrow(risk_df) > 0L) {
+    fr_ok <- tryCatch({
+      tr <- risk_df[risk_df$set == "training", , drop = FALSE]
+      rows <- list()
+      # risk 分数自身
+      fit <- survival::coxph(survival::Surv(time, event) ~ risk, data = tr)
+      s <- summary(fit)
+      ci <- s$conf.int
+      rows[[length(rows) + 1L]] <- data.frame(
+        term = "risk score", hr = unname(ci[1, "exp(coef)"]),
+        lo = unname(ci[1, "lower .95"]), hi = unname(ci[1, "upper .95"]),
+        p = s$logtest["pvalue"], stringsAsFactors = FALSE)
+      # 逐基因（若有 signature_expr.csv）
+      sig_file <- file.path(res, "signature_expr.csv")
+      if (file.exists(sig_file)) {
+        m_raw <- utils::read.csv(sig_file, row.names = 1)
+        for (g in colnames(m_raw)) {
+          d2 <- data.frame(time = tr$time, event = tr$event,
+                           z = as.numeric(m_raw[, g])[match(tr$gsm, colnames(m_raw))])
+          d2 <- d2[is.finite(d2$z), , drop = FALSE]
+          if (nrow(d2) < 10L) next
+          fit_g <- survival::coxph(survival::Surv(time, event) ~ z, data = d2)
+          sg <- summary(fit_g)
+          cig <- sg$conf.int
+          pg <- tryCatch(sg$logtest["pvalue"], error = function(e) NA_real_)
+          rows[[length(rows) + 1L]] <- data.frame(
+            term = g, hr = unname(cig[1, "exp(coef)"]),
+            lo = unname(cig[1, "lower .95"]), hi = unname(cig[1, "upper .95"]),
+            p = pg, stringsAsFactors = FALSE)
+        }
+      }
+      fr <- do.call(rbind, rows)
+      utils::write.csv(fr, file.path(res, "cox_univariate_hr.csv"), row.names = FALSE)
+      fr$label <- sprintf("%s  HR=%.2f (%.2f-%.2f)", fr$term, fr$hr, fr$lo, fr$hi)
+      fr <- fr[order(fr$hr), , drop = FALSE]
+      fr$label <- factor(fr$label, levels = fr$label)
+      p_f <- ggplot2::ggplot(fr, ggplot2::aes(x = hr, y = label)) +
+        ggplot2::geom_point(size = 1.8, colour = PAL$primary) +
+        ggplot2::geom_errorbarh(ggplot2::aes(xmin = lo, xmax = hi),
+                                height = 0.2, colour = PAL$primary, linewidth = 0.4) +
+        ggplot2::geom_vline(xintercept = 1, linetype = "dashed",
+                            colour = PAL$muted, linewidth = 0.4) +
+        ggplot2::scale_x_log10() +
+        ggplot2::labs(title = "Univariate Cox per-gene forest (training)",
+                      subtitle = wrap_subtitle(paste0(
+                        "HR per +1 SD of expression (risk score row: per +1 risk). ",
+                        "Dashed line = HR 1 (no effect); x axis log scale. ",
+                        "Full table: cox_univariate_hr.csv"), W_DOUBLE),
+                      x = "HR (log scale)", y = NULL) +
+        theme_paper(9)
+      save_pdf(file.path(fig, "01-10-06-unit1-forest-plot.pdf"), print(p_f),
+               width = W_DOUBLE, height = mm(90))
+      TRUE
+    }, error = function(e) {
+      log_warn(paste("forest plot 失败:", conditionMessage(e)))
+      FALSE
+    })
+  }
+
+  # ---- 9. nomogram + DCA（差距清单 #7/#8，三篇文献的标配组合）------------
+  nm_ok <- FALSE
+  nm_note <- ""
+  if (!is.null(risk_df) && nrow(risk_df) > 0L) {
+    nm_ok <- tryCatch({
+      tr <- risk_df[risk_df$set == "training", , drop = FALSE]
+      # ---- nomogram（rms::lrm 风格需 datadist；这里用 cph 主路径）----
+      # 只用 risk + config 里的事件时间列做 3 年生存预测（时间点取中位随访）
+      ddat <- data.frame(time = tr$time, event = tr$event, risk = tr$risk)
+      dd <- rms::datadist(ddat); options(datadist = "dd")
+      on.exit(options(datadist = NULL), add = TRUE)
+      surv_h <- cfg$survival
+      # 3 年点：如果时间单位是年取 3，天取 1095
+      is_years <- grepl("year", surv_h$time_column, ignore.case = TRUE)
+      t_pred <- if (is_years) 3 else 1095
+      fit_n <- rms::cph(rms::Surv(time, event) ~ risk, data = ddat,
+                        surv = TRUE, x = TRUE, y = TRUE, time.inc = t_pred)
+      surv_prob <- rms::survest(fit_n, times = t_pred)
+      if (is.null(surv_prob)) {
+        nm_note <- "rms::survest 返回空 —— nomogram 跳过（surv=TRUE 但基线不可估）"
+        log_warn(nm_note)
+      } else {
+        nom <- rms::nomogram(fit_n, fun = function(x) surv_prob,
+                             funlabel = sprintf("%d-year survival probability", t_pred),
+                             fun.at = c(0.9, 0.7, 0.5, 0.3, 0.1))
+        # nomogram 是 base 图 —— 画进 pdf
+        pdf(file.path(fig, "01-10-03-unit1-nomogram.pdf"),
+            width = 8.5, height = 5.5)
+        plot(nom, xfrac = 0.35, cex.axis = 0.7, cex.var = 0.8)
+        dev.off()
+        png(file.path(fig, "01-10-03-unit1-nomogram.png"),
+            width = 8.5, height = 5.5, units = "in", res = 300)
+        plot(nom, xfrac = 0.35, cex.axis = 0.7, cex.var = 0.8)
+        dev.off()
+      }
+      # ---- DCA：手写净获益（不引 dcurves 新包）----
+      # 判据来自 vickers 2006：NB = TP/n - FP/n * (pt/(1-pt))，
+      # T=|risk 高于阈值| 的人数，TP = 其中发生事件的。
+      tr$grp <- tr$risk > stats::median(tr$risk)
+      pt_seq <- seq(0.05, 0.95, by = 0.05)
+      # 预测概率：用 cox 基线生存 + risk 的单调映射 —— 简化：直接用 risk 分数的秩/最大秩
+      # （"阈值决策"只依赖排序，秩 = risk 即可）
+      rr <- tr$risk
+      ev <- tr$event
+      n <- length(rr)
+      nb_risk <- sapply(pt_seq, function(pt) {
+        hi <- rr >= stats::quantile(rr, pt)
+        TP <- sum(hi & ev == 1); FP <- sum(hi & ev == 0)
+        TP / n - FP / n * (pt / (1 - pt))
+      })
+      nb_all <- sapply(pt_seq, function(pt) mean(ev == 1) - (1 - mean(ev == 1)) * (pt / (1 - pt)))
+      dca_df <- rbind(
+        data.frame(pt = pt_seq, nb = nb_risk, model = "risk score"),
+        data.frame(pt = pt_seq, nb = nb_all, model = "treat all"))
+      utils::write.csv(dca_df, file.path(res, "dca_net_benefit.csv"), row.names = FALSE)
+      p_d <- ggplot2::ggplot(dca_df, ggplot2::aes(x = pt, y = nb, colour = model)) +
+        ggplot2::geom_line(linewidth = 0.6) +
+        ggplot2::geom_hline(yintercept = 0, linetype = "dashed",
+                            colour = PAL$muted, linewidth = 0.4) +
+        ggplot2::labs(title = "Decision curve analysis (training)",
+                      subtitle = wrap_subtitle(paste0(
+                        "Net benefit = TP/n - FP/n * (pt/(1-pt)). ",
+                        "'treat all' = intervene on everyone. ",
+                        "Threshold probability is on the RISK-SCORE quantile scale ",
+                        "(not a calibrated probability) — curves show relative benefit ",
+                        "of using the risk score vs treating everyone."), W_ONE_HALF),
+                      x = "threshold probability (risk quantile)",
+                      y = "net benefit", colour = NULL) +
+        theme_paper(9) + ggplot2::theme(legend.position = "bottom")
+      save_pdf(file.path(fig, "01-10-04-unit1-dca.pdf"), print(p_d),
+               width = W_ONE_HALF, height = mm(72))
+      TRUE
+    }, error = function(e) {
+      nm_note <<- sprintf("nomogram/DCA 失败: %s", conditionMessage(e))
+      log_warn(nm_note)
+      FALSE
+    })
+  }
+# ============================================================================
 # 10_survival_diagnostics.R — 时间依赖 AUC 与校准（§1.6）
 #
 # ## 为什么单独一个脚本，而不是塞进 07_lasso.R
@@ -536,6 +679,12 @@ run_10_survival_diagnostics <- function(cfg) {
       log_warn("time_roc: 有队列的时间单位没能从 config 列名解析出来，面板标题只写队列名")
     }
 
+    # **图例标签内嵌均值 AUC**（差距清单 #4，SRC-3/4 双篇惯例）:
+    # 每个队列的平均 time-dependent AUC 跟在队列名后面，读者不用翻 CSV。
+    auc_mean <- tapply(roc_df$auc, roc_df$set, mean, na.rm = TRUE)
+    cols <- stats::setNames(
+      lapply(names(cols), function(s) cols[[s]]),
+      sprintf("%s (mean AUC = %.2f)", names(cols), auc_mean[names(cols)]))
     p <- ggplot2::ggplot(roc_df,
         ggplot2::aes(x = horizon, y = auc, colour = set)) +
       ggplot2::geom_hline(yintercept = 0.5, linetype = "dashed",
@@ -647,9 +796,85 @@ run_10_survival_diagnostics <- function(cfg) {
   status$rms_notes <- rms_notes
   status$n_calibration_rows <- if (is.null(cal_df)) 0L else nrow(cal_df)
   status$n_rms_rows <- length(rms_rows)
-  status$figures <- c(if (fig_ok) "01-10-01-unit1-time-roc.png", if (cal_ok) "01-10-02-unit1-calibration.png")
+  # ---- 7. 差距清单补图（P1-3 risk-plot / P1-4 forest / P2 nomogram+DCA）----
+  # 数据源：risk_df（已读 lasso_risk_scores.csv）+ lasso_status 的 EPV 模型系数。
+  # 图名走 G4 组（risk plot 三联）与 01-10 的 03/04 单元。
+  rp_ok <- FALSE
+  rp_notes <- list()
+  if (!is.null(risk_df) && nrow(risk_df) > 0L) {
+    rp_ok <- tryCatch({
+      # ---- G4: risk plot 三联（训练队列）----
+      tr <- risk_df[risk_df$set == "training", , drop = FALSE]
+      tr <- tr[order(tr$risk), , drop = FALSE]
+      cutoff_rp <- stats::median(tr$risk)
+      tr$grp <- ifelse(tr$risk > cutoff_rp, "high", "low")
+      # 层1: risk score 排序散点
+      p1 <- ggplot2::ggplot(tr, ggplot2::aes(x = seq_len(nrow(tr)), y = risk,
+                                             colour = grp)) +
+        ggplot2::geom_point(size = 0.8, alpha = 0.8) +
+        ggplot2::scale_colour_manual(values = c(low = PAL$down, high = PAL$up),
+                                     name = "risk group") +
+        ggplot2::geom_hline(yintercept = cutoff_rp, linetype = "dashed",
+                            colour = PAL$muted, linewidth = 0.4) +
+        ggplot2::labs(title = "Risk score (sorted)",
+                      x = NULL, y = "risk score") +
+        theme_paper(9) + ggplot2::theme(axis.text.x = ggplot2::element_blank(),
+                                        axis.ticks.x = ggplot2::element_blank())
+      save_pdf(file.path(fig, "01-10-05-unit1-risk-scores.pdf"), print(p1),
+               width = W_DOUBLE, height = mm(55))
+      # 层2: survival time 散点（y=time, 颜色=event）
+      p2 <- ggplot2::ggplot(tr, ggplot2::aes(x = seq_len(nrow(tr)), y = time,
+                                             colour = factor(event))) +
+        ggplot2::geom_point(size = 0.8, alpha = 0.8) +
+        ggplot2::scale_colour_manual(values = c("0" = PAL$down, "1" = PAL$up),
+                                     labels = c("0" = "censored", "1" = "event"),
+                                     name = "status") +
+        ggplot2::labs(title = "Survival time (sorted by risk)",
+                      x = "samples (sorted by risk)", y = sprintf("time (%s)",
+                      cfg$survival$time_column)) +
+        theme_paper(9)
+      save_pdf(file.path(fig, "01-10-05-unit2-survival-time.pdf"), print(p2),
+               width = W_DOUBLE, height = mm(55))
+      # 层3: 签名基因热图（读 07 落盘的 signature_expr.csv —— 10 不碰表达矩阵本体）
+      sig_file <- file.path(res, "signature_expr.csv")
+      if (file.exists(sig_file)) {
+        m_raw <- utils::read.csv(sig_file, row.names = 1)
+        common_gsm <- intersect(colnames(m_raw), tr$gsm)
+        if (ncol(m_raw) >= 2L && length(common_gsm) >= 2L) {
+          m <- t(scale(t(m_raw[, common_gsm, drop = FALSE])))
+          # 列按 risk 排序（与层1/层2 同序，三联对齐）
+          m <- m[, order(match(colnames(m), tr$gsm)), drop = FALSE]
+          ph <- pheatmap::pheatmap(m, cluster_rows = TRUE, cluster_cols = FALSE,
+                                   scale = "none", border_color = NA,
+                                   fontsize = 6, legend = TRUE, silent = TRUE)
+          save_pdf(file.path(fig, "01-10-05-unit3-signature-heatmap.pdf"),
+                   grid::grid.draw(ph$gtable), width = W_DOUBLE, height = mm(80))
+        } else {
+          rp_notes <- c(rp_notes, "signature_expr.csv 列不足 —— 层3 热图跳过")
+        }
+      } else {
+        rp_notes <- c(rp_notes, "signature_expr.csv 不存在 —— 层3 热图跳过")
+      }
+      TRUE
+    }, error = function(e) {
+      rp_notes <<- c(rp_notes, sprintf("risk plot 失败: %s", conditionMessage(e)))
+      FALSE
+    })
+  } else {
+    rp_notes <- c(rp_notes, "risk_df 为空 —— G4 组整体跳过")
+  }
+  status$figures <- c(
+    if (fig_ok) c("01-10-01-unit1-time-roc.png", "01-10-01-unit2-time-roc.png"),
+    if (cal_ok) "01-10-02-unit1-calibration.png",
+    if (rp_ok) c("01-10-05-unit1-risk-scores.png", "01-10-05-unit2-survival-time.png",
+                  "01-10-05-unit3-signature-heatmap.png"),
+    if (fr_ok) "01-10-06-unit1-forest-plot.png",
+    if (nm_ok) c("01-10-03-unit1-nomogram.png", "01-10-04-unit1-dca.png"))
+  status$risk_plot_notes <- rp_notes
+  status$nomogram_dca_note <- nm_note
   status$outputs <- c("time_roc.csv", if (!is.null(cal_df)) "calibration.csv",
-                      if (length(rms_rows) > 0L) "rms_validate.csv")
+                      if (length(rms_rows) > 0L) "rms_validate.csv",
+                      "cox_univariate_hr.csv", "dca_net_benefit.csv")
 
   write_json(file.path(res, "survival_diagnostics_status.json"), status)
   log_info(sprintf("完成: %d 个时间点, %d 行校准, %d 个队列的 rms 校正",
