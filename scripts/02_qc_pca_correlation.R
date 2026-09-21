@@ -3,8 +3,8 @@
 # ============================================================================
 # spec 的 qc / pca / sample_correlation 三个步骤。
 #
-# 输出：results/01-02-01-unit1-boxplot-before-after.pdf
-#       results/01-02-02-unit1-density-plot.pdf
+# 输出：results/01-02-01-unit1-boxplot-before.pdf（G1 对照组，unit2=after）
+#       results/01-02-01-unit2-boxplot-after.pdf / 01-02-02-unit1-density-before.pdf
 #       results/01-02-03-unit1-pca-plot.pdf
 #       results/01-02-04-unit1-correlation-heatmap.pdf
 #       results/correlation_matrix.csv
@@ -76,36 +76,40 @@ run_02_qc_pca_correlation <- function(cfg) {
   box_fs <- 6
   show_x <- decide_rownames(ncol(expr), W_DOUBLE / 2, box_fs, "箱线图样本名",
                             panel_frac = 0.85, min_gap = 2.5,
-                            figure = "01-02-01-unit1-boxplot-before-after")
+                            figure = "01-02-01-unit1-boxplot-before")
 
-  p_box <- ggplot(long, aes(x = sample, y = expression, fill = stage)) +
-    geom_boxplot(outlier.size = 0.3, linewidth = 0.25) +
-    # **前后两面板必须共 y 轴**（评审 3.1：scales="free_y" 下 before 有
-    # 16/12/8/4、after 只有 12/8/4，标准化前后的离散度根本没法比）。
-    # 标准化只平移不改变 log2 量级，共轴完全放得下。
-    facet_wrap(~stage, ncol = 2, scales = "fixed") +
-    scale_fill_manual(values = c(before = PAL$ns, after = PAL$down)) +
-    labs(title = "Expression distribution before / after quantile normalization",
-         subtitle = wrap_subtitle(sprintf(
-           "%s - %d genes x %d samples. Panels share the y axis so the before/after spread is comparable. %s",
-           cfg$dataset_id, nrow(expr), ncol(expr),
-           if (isTRUE(show_x)) "x 轴标出样本编号。"
-           else paste0("样本编号未标出（", ncol(expr),
-                       " 个放不下）；逐个样本的身份见 data/", cfg$dataset_id,
-                       "/group.csv。")),
-           fig_width = W_DOUBLE),
-         x = NULL, y = "log2 expression") +
-    theme_paper(9) +
-    theme(axis.text.x = if (isTRUE(show_x))
-            element_text(angle = 90, hjust = 1, vjust = 0.5, size = box_fs)
-          else element_blank(),
-          # **刻度线跟着标签一起藏。** 121 个刻度线每个只占 0.75mm，密到连成
-          # 一条黑带，看上去像图坏了。刻度线存在的意义是给标签定位 ——
-          # 标签不画了，它就只剩副作用。
-          axis.ticks.x = if (isTRUE(show_x)) element_line() else element_blank(),
-          legend.position = "none")
-  save_pdf(file.path(res, "01-02-01-unit1-boxplot-before-after.pdf"), print(p_box), width = W_DOUBLE, height = mm(140))
-  log_info("已生成 01-02-01-unit1-boxplot-before-after.pdf")
+  # **单图原则拆分（D-006）**：原为 before/after 两面板拼图。
+  # 拆成两张单图（unit1=before、unit2=after），编为 G1 标准化对照组 ——
+  # 对照关系由组表达，每张独立成立且独立达标图幅/分辨率门禁。
+  # 两张共用同一 y 轴范围（全量数据算 lim），保证跨图可比（原共轴语义保留）。
+  y_lim <- range(long$expression, na.rm = TRUE)
+  make_box <- function(st) {
+    d <- long[long$stage == st, , drop = FALSE]
+    p <- ggplot(d, aes(x = sample, y = expression, fill = stage)) +
+      geom_boxplot(outlier.size = 0.3, linewidth = 0.25) +
+      scale_fill_manual(values = c(before = PAL$ns, after = PAL$down)) +
+      coord_cartesian(ylim = y_lim) +
+      labs(title = sprintf("Expression distribution - %s (%s)", st, cfg$dataset_id),
+           subtitle = wrap_subtitle(sprintf(
+             "%d genes x %d samples. %s", nrow(expr), ncol(expr),
+             if (isTRUE(show_x)) "x 轴标出样本编号。"
+             else paste0("样本编号未标出（", ncol(expr),
+                         " 个放不下）；逐个样本的身份见 data/", cfg$dataset_id,
+                         "/group.csv。")),
+             fig_width = W_DOUBLE),
+           x = NULL, y = "log2 expression") +
+      theme_paper(9) +
+      theme(axis.text.x = if (isTRUE(show_x))
+              element_text(angle = 90, hjust = 1, vjust = 0.5, size = box_fs)
+            else element_blank(),
+            axis.ticks.x = if (isTRUE(show_x)) element_line() else element_blank(),
+            legend.position = "none")
+      p
+  }
+  # G1 标准化对照组：unit1=before、unit2=after（figure_groups.md G1）
+  save_pdf(file.path(res, "01-02-01-unit1-boxplot-before.pdf"), print(make_box("before")), width = W_DOUBLE, height = mm(140))
+  save_pdf(file.path(res, "01-02-01-unit2-boxplot-after.pdf"), print(make_box("after")), width = W_DOUBLE, height = mm(140))
+  log_info("已生成 01-02-01-unit1-boxplot-before.pdf / unit2-boxplot-after.pdf（G1 对照组）")
 
   # ---- 2. 密度曲线 --------------------------------------------------------
   # 按**分组**上色（不是按样本），这样密度图和 PCA 用的是同一套条件色，
@@ -123,25 +127,31 @@ run_02_qc_pca_correlation <- function(cfg) {
   # （少样本组）更粗的线宽。
   n_by_g <- table(group$group[match(long$sample, group$gsm)])
   long$grp_ord <- factor(long$group, levels = names(sort(n_by_g, decreasing = TRUE)))
-  p_density <- ggplot(long[order(long$grp_ord), ],
-                      aes(x = expression, colour = grp_ord, linetype = grp_ord,
-                          group = sample)) +
-    geom_density(data = long[long$grp_ord != names(n_by_g)[which.min(n_by_g)], ],
-                 linewidth = 0.35, alpha = 0.85) +
-    geom_density(data = long[long$grp_ord == names(n_by_g)[which.min(n_by_g)], ],
-                 linewidth = 0.65, alpha = 0.95) +
-    facet_wrap(~stage, ncol = 1, scales = "fixed") +
-    scale_colour_condition(levels(groups), name = NULL) +
-    scale_linetype_manual(values = c("solid", "dashed", "dotted", "dotdash")[seq_along(levels(groups))],
-                          name = NULL) +
-    labs(title = "Expression density before / after normalization",
-         subtitle = wrap_subtitle(sprintf(paste0("coloured and styled by group; one curve per sample; panels share the y axis. ",
-                                                 "Groups drawn smallest-last so minority curves stay on top (%s)."),
-                                          cfg$dataset_id), fig_width = W_DOUBLE),
-         x = "log2 expression", y = "density") +
-    theme_paper(9)
-  save_pdf(file.path(res, "01-02-02-unit1-density-plot.pdf"), print(p_density), width = W_DOUBLE, height = mm(152))
-  log_info("已生成 01-02-02-unit1-density-plot.pdf")
+  # **单图原则拆分（D-006）**：拆为 unit1=before、unit2=after 两张单图
+  # （G1 标准化对照组）。绘制顺序仍按组样本数降序（少数组后画在上层），
+  # y 轴共享全量范围保证跨图可比。
+  make_density <- function(st) {
+    d <- long[long$stage == st & order(long$grp_ord[long$stage == st]), , drop = FALSE]
+    ggplot(d, aes(x = expression, colour = grp_ord, linetype = grp_ord,
+                  group = sample)) +
+      geom_density(data = d[d$grp_ord != names(n_by_g)[which.min(n_by_g)], ],
+                   linewidth = 0.35, alpha = 0.85) +
+      geom_density(data = d[d$grp_ord == names(n_by_g)[which.min(n_by_g)], ],
+                   linewidth = 0.65, alpha = 0.95) +
+      scale_colour_condition(levels(groups), name = NULL) +
+      scale_linetype_manual(values = c("solid", "dashed", "dotted", "dotdash")[seq_along(levels(groups))],
+                            name = NULL) +
+      labs(title = sprintf("Expression density - %s (%s)", st, cfg$dataset_id),
+           subtitle = wrap_subtitle(sprintf(paste0("coloured and styled by group; one curve per sample; ",
+                                                   "groups drawn smallest-last so minority curves stay on top. ",
+                                                   "y axis shared with the paired panel (G1)."),
+                                           cfg$dataset_id), fig_width = W_DOUBLE),
+           x = "log2 expression", y = "density") +
+      theme_paper(9)
+  }
+  save_pdf(file.path(res, "01-02-02-unit1-density-before.pdf"), print(make_density("before")), width = W_DOUBLE, height = mm(152))
+  save_pdf(file.path(res, "01-02-02-unit2-density-after.pdf"), print(make_density("after")), width = W_DOUBLE, height = mm(152))
+  log_info("已生成 01-02-02-unit1-density-before.pdf / unit2-density-after.pdf（G1 对照组）")
 
   # ---- 3. PCA -------------------------------------------------------------
   top_n <- cfg$analysis$pca_top_genes

@@ -506,7 +506,16 @@ run_04b_enrichment <- function(cfg) {
   # 带阶段-模块-图-单元前缀），后者是 CSV 表名前缀（`GO_table.csv`）。
   # 一个参数兼两用会让改图名顺带改掉数据产物的名字 —— 而数据产物
   # 是别的脚本和验收项在引用的。
-  emit_ora <- function(df, label, fig_name, file_base, key) {
+  # **图名辅助**：单图拆分后的两个 unit 名（D-006，G2 组）。
+  # 由 file_base 硬映射，避免 "01-..." 前缀字面量逃过命名门禁的账目核对。
+  ora_fig_name <- function(d) {
+    if (identical(file_base, "GO")) {
+      if (identical(d, "up")) "01-04-04-unit1-up-ora-dotplot" else "01-04-04-unit2-down-ora-dotplot"
+    } else {
+      if (identical(d, "up")) "01-04-05-unit1-up-ora-dotplot" else "01-04-05-unit2-down-ora-dotplot"
+    }
+  }
+  emit_ora <- function(df, label, file_base, key) {
     if (is.null(df) || nrow(df) == 0L) {
       utils::write.csv(data.frame(), file.path(res, paste0(file_base, "_table.csv")),
                        row.names = FALSE)
@@ -527,22 +536,27 @@ run_04b_enrichment <- function(cfg) {
       direction_split = TRUE,
       top_up = head(out$Description[out$direction == "up"][order(out$p.adjust[out$direction == "up"])], 3),
       top_down = head(out$Description[out$direction == "down"][order(out$p.adjust[out$direction == "down"])], 3))
-    # 两个面板并排，每个面板 15 行标签 —— 比原来单面板 30 行宽松一倍。
-    # 标签仍按量化判据核一遍：放不下就整张不显示，不缩字号硬塞。
-    ora_w <- W_DOUBLE; ora_h <- mm(165)   # 10 in = 254 mm，装不进一页
+    # **单图原则拆分（D-006）**：make_ora_dotplot 返回 up/down 两张独立单图
+    # （G2 ORA 方向分解组），分别落盘 —— 每张独立达标图幅/分辨率门禁。
+    ora_w <- W_ONE_HALF; ora_h <- mm(165)
     decide_rownames(min(cfg$enrichment$top_terms, nrow(out)), ora_h, 7,
                     sprintf("%s 点图", label), panel_frac = 0.68, min_gap = 2.5,
-                    figure = fig_name)
-    save_pdf(file.path(res, paste0(fig_name, ".pdf")),
-             print(make_ora_dotplot(out, cfg, sprintf("%s - %s", label, cfg$dataset_id))),
-             width = ora_w, height = ora_h)
+                    figure = ora_fig_name("up"))
+    plots <- make_ora_dotplot(out, cfg, sprintf("%s - %s", label, cfg$dataset_id))
+    for (d in c("up", "down")) {
+      if (is.null(plots[[d]])) next
+      slug <- if (d == "up") "up-ora" else "down-ora"
+      save_pdf(file.path(res, sprintf("%s-unit%s-%s.pdf",
+               ora_fig_name(d), if (d == "up") "1" else "2", slug)),
+               print(plots[[d]]), width = ora_w, height = ora_h)
+    }
     invisible(NULL)
   }
 
   emit_ora(go_df, sprintf("GO %s ORA (up/down split)", cfg$enrichment$ont),
-           "01-04-04-unit1-go-ora-dotplot", "GO", "go")
+           "GO", "go")
   emit_ora(kegg_df, "KEGG ORA (up/down split)",
-           "01-04-05-unit1-kegg-ora-dotplot", "KEGG", "kegg")
+           "KEGG", "kegg")
 
   # 排序指标与置换设置要记录 —— 可复现性清单要求
   status$gsea_ranking_metric <- "limma moderated t statistic (sign = direction)"
@@ -560,17 +574,12 @@ run_04b_enrichment <- function(cfg) {
   invisible(NULL)
 }
 
-#' ORA 的 dotplot：**按方向分面**
+#' ORA 的 dotplot：**单图原则拆分（D-006）—— 一个方向一张单图**
 #'
-#' 原来 x 轴是方向，两个列标签都写成 `"<arm>\n(up in <arm>)"` —— 于是
-#' **整张图上 "down" 这个词一次都不出现**，读者会以为只有上调的富集。
-#' 实测就是这样被问的（"怎么只有上调的富集没有下调的"）。下调的点其实画了
-#' （连通域数得出来两列都有点），是标注把人骗了。
-#'
-#' 改成按方向分面：
-#'   * 两个面板各有标题与条目数，方向不可能看漏；
-#'   * y 轴标签从 30 行降到每面板 15 行，密集问题一并缓解；
-#'   * x 轴腾出来放显著性（原来被方向占着，-log10 P 只能塞进颜色）。
+#' v1：x 轴放方向，"down" 一次不出现。v2：按方向分面。本轮按 D-006
+#' **彻底拆成两张单图**（unit1=up、unit2=down），编入 G2 ORA 方向分解组
+#' —— 两个方向是**两套独立的基因列表**（规则 9），拆开后每张的条目数
+#' 与通路构成独立可读，对照关系由组编号表达。strip 裁字问题随分面消失。
 make_ora_dotplot <- function(df, cfg, title) {
   n <- cfg$enrichment$top_terms
   arms <- as.character(cfg$contrast)
@@ -585,56 +594,30 @@ make_ora_dotplot <- function(df, cfg, title) {
   if (is.null(keep) || nrow(keep) == 0L) return(NULL)
   rownames(keep) <- NULL
 
-  # 面板标题带条目数：读者一眼看出两边各有多少条，不会怀疑某边是空的
-  #
-  # **strip 文字被裁是"框不够宽"，不是"句子太长"。** 评审 3.3 实测
-  # GSE64790 右面板 "down in tumor" 渲染成 "lown in tumo"、
-  # "15 terms shown" 渲染成 "5 terms show" —— 两端各缺一个字符，
-  # 说明 strip 框略窄于文字外接宽度（frame 的 padding 从文字宽度里扣）。
-  # 所以修法是**给 strip 留内边距 + 字号略降**，而不是把句子折行
-  # （折行会引入第三行、把面板高度吃掉；画布高度是按条目数算的）。
-  counts <- as.integer(table(factor(keep$direction, levels = c("up", "down"))))
-  panel_lab <- sprintf("%s\n(%d terms shown)", dir_name[c("up", "down")], counts)
-  keep$panel <- factor(panel_lab[match(keep$direction, c("up", "down"))],
-                       levels = panel_lab)
-  keep$Description <- factor(keep$Description,
-                             levels = unique(keep$Description[order(keep$p.adjust,
-                                                                    decreasing = TRUE)]))
-  ggplot2::ggplot(keep, ggplot2::aes(x = -log10(p.adjust), y = Description)) +
-    ggplot2::geom_point(ggplot2::aes(size = Count, colour = direction)) +
-    # 颜色仍走方向色（与火山图/PCA/热图注释条同源）；图例关掉，
-    # 因为分面标题已经把方向写在脸上了，再放一个图例是重复。
-    ggplot2::scale_colour_manual(values = c(up = PAL$up, down = PAL$down),
-                                 guide = "none") +
-    # **气泡要收一点**（评审 3.4：行距 ≈25px 而气泡 Ø22–26px，相邻相交）。
-    # range 上限从 7 降到 5.5，行距不变时相邻气泡不再相切。
-    ggplot2::scale_size_continuous(name = "genes", range = c(1.8, 5.5)) +
-    # **右侧留余量**（评审 3.3：GSE42568 KEGG 右侧墨迹距边框仅 2px，
-    # 最大的点被边框切平）。默认 expand 把最大点顶到面板边上。
-    # 注意参数名是 expand（不是 expansion —— expansion() 只是造取值的函数）。
-    ggplot2::scale_x_continuous(expand = ggplot2::expansion(mult = c(0.02, 0.10))) +
-    ggplot2::facet_wrap(~ panel, scales = "free_y", nrow = 1) +
-    ggplot2::labs(title = title,
-                  subtitle = wrap_subtitle(sprintf(
-                    paste0("UP TO %d per direction - each panel header gives the count ",
-                           "actually shown, which is lower when a direction has fewer ",
-                           "terms passing the cutoff. ORA itself is direction-agnostic, ",
-                           "so up and down are run as separate gene lists. ",
-                           "x = significance, size = number of genes in the term."), n),
-                    fig_width = W_DOUBLE),
-                  x = expression(-log[10] ~ "(adj.P)"), y = NULL) +
-    theme_paper(9) +
-    ggplot2::theme(
-      axis.text.y = ggplot2::element_text(size = 7),
-      # **strip 文字被裁的对策：字号降到 8 + 显式给文本框内边距。**
-      # 评审实测两端各缺一个字符（"down in tumor" -> "lown in tumo"），
-      # 是 frame 从文字宽度里扣 padding 造成的；`margin` 把内边距加回去，
-      # 框随文字变宽，不再切字。
-      strip.text  = ggplot2::element_text(
-        size = 8, face = "bold",
-        margin = ggplot2::margin(t = 2, r = 6, b = 2, l = 6)),
-      strip.background = ggplot2::element_rect(fill = "grey92", colour = NA),
-      panel.spacing = ggplot2::unit(1.2, "lines"))
+  plots <- lapply(c("up", "down"), function(d) {
+    k <- keep[keep$direction == d, , drop = FALSE]
+    if (nrow(k) == 0L) return(NULL)
+    k$Description <- factor(k$Description,
+                            levels = unique(k$Description[order(k$p.adjust,
+                                                                decreasing = TRUE)]))
+    ggplot2::ggplot(k, ggplot2::aes(x = -log10(p.adjust), y = Description)) +
+      ggplot2::geom_point(ggplot2::aes(size = Count, colour = direction)) +
+      ggplot2::scale_colour_manual(values = c(up = PAL$up, down = PAL$down),
+                                   guide = "none") +
+      ggplot2::scale_size_continuous(name = "genes", range = c(1.8, 5.5)) +
+      ggplot2::scale_x_continuous(expand = ggplot2::expansion(mult = c(0.02, 0.10))) +
+      ggplot2::labs(title = sprintf("%s - %s", dir_name[[d]], title),
+                    subtitle = wrap_subtitle(sprintf(
+                      paste0("%d terms shown (top %d per direction). ",
+                             "ORA is run as separate gene lists per direction. ",
+                             "x = significance, size = number of genes in the term."),
+                      nrow(k), n),
+                      fig_width = W_DOUBLE),
+                    x = expression(-log[10] ~ "(adj.P)"), y = NULL) +
+      theme_paper(9) +
+      ggplot2::theme(axis.text.y = ggplot2::element_text(size = 7))
+  })
+  stats::setNames(plots, c("up", "down"))
 }
 
 #' GSEA 的 dotplot：x 轴是 NES，方向直接由符号给出
@@ -706,3 +689,5 @@ if (!GEO_ORCHESTRATED()) {
   run_04a_heatmap(cfg)
   run_04b_enrichment(cfg)
 }
+
+

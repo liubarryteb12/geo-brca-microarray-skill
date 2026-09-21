@@ -406,9 +406,9 @@ check_acceptance <- function(cfg) {
     # 这条检查一直只靠 `|| documented(...)` 通过。现在改成真实图名。
     # （改对只会把 FAIL 变成 PASS，不会新增失败：原来能过的仍然能过。）
     list(name = "GO 富集（结果或空原因）",
-         ok = has("01-04-04-unit1-go-ora-dotplot.pdf") || documented(enrich, "go"),   required = TRUE),
+         ok = (has("01-04-04-unit1-up-ora-dotplot.pdf") && has("01-04-04-unit2-down-ora-dotplot.pdf")) || documented(enrich, "go"), required = TRUE),
     list(name = "KEGG 富集（结果或空原因）",
-         ok = has("01-04-05-unit1-kegg-ora-dotplot.pdf") || documented(enrich, "kegg"), required = TRUE),
+         ok = (has("01-04-05-unit1-up-ora-dotplot.pdf") && has("01-04-05-unit2-down-ora-dotplot.pdf")) || documented(enrich, "kegg"), required = TRUE),
     # GSEA 是弱功效数据集的主力方法，但基因集数据库/网络问题可能让它拿不到结果，
     # 所以按可选步骤处理，只要有记录在案的状态即可。
     list(name = "preranked GSEA / GO（结果或原因）",
