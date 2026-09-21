@@ -512,8 +512,8 @@ tumor-vs-normal 的差异基因表里，**分不清多少来自恶性转化、�
 
 | 图 | 内容 | 判据 |
 | --- | --- | --- |
-| `01-02-01-unit1-boxplot-before-after.pdf` | 标准化前后各样本表达分布 | 标准化后中位数应齐平 |
-| `01-02-02-unit1-density-plot.pdf` | 标准化前后密度曲线 | 曲线应重合 |
+| `01-02-01-unit1-boxplot-before.pdf（+unit2-after，G1 组）` | 标准化前后各样本表达分布 | 标准化后中位数应齐平 |
+| `01-02-02-unit1-density-before.pdf（+unit2-after，G1 组）` | 标准化前后密度曲线 | 曲线应重合 |
 | `01-02-03-unit1-pca-plot.pdf` | PCA 散点（PC1/PC2），按分组着色 + 形状 | 记录 PC1/PC2 方差解释率；组内 95% 椭圆 |
 | `pca_ellipse.csv` | 椭圆的坐标（每组 120 个点 + 半径系数） | 椭圆跨度 / 数据跨度比值记进日志 |
 | `01-02-04-unit1-correlation-heatmap.pdf` | 样本间 Pearson 相关热图 | — |
@@ -881,8 +881,8 @@ PNG 由 `save_pdf()` 在 150 dpi 下渲染，PNG 失败只记 warning，不影�
 
 ```
 results/
-├── 01-02-01-unit1-boxplot-before-after.pdf/.png  QC：标准化前后箱线图
-├── 01-02-02-unit1-density-plot.pdf/.png          QC：密度曲线
+├── 01-02-01-unit1-boxplot-before.pdf（+unit2-after，G1 组）/.png  QC：标准化前后箱线图
+├── 01-02-02-unit1-density-before.pdf（+unit2-after，G1 组）/.png          QC：密度曲线
 ├── 01-02-03-unit1-pca-plot.pdf/.png              PCA（含方差解释率）
 ├── 01-02-04-unit1-correlation-heatmap.pdf/.png   样本相关性热图
 ├── correlation_matrix.csv         Pearson + Spearman 矩阵 + 离群标记
@@ -892,8 +892,8 @@ results/
 ├── 01-04-01-unit1-top50-heatmap.pdf/.png         top DEG 聚类热图（Z-score）
 ├── 01-04-02-unit1-gsea-go-dotplot.pdf/.png + GSEA_GO_table.csv     preranked GSEA / GO BP（主力）
 ├── 01-04-03-unit1-gsea-kegg-dotplot.pdf/.png + GSEA_KEGG_table.csv preranked GSEA / KEGG
-├── 01-04-04-unit1-go-ora-dotplot.pdf/.png + GO_table.csv       ORA GO BP（含 direction 列）
-├── 01-04-05-unit1-kegg-ora-dotplot.pdf/.png + KEGG_table.csv   ORA KEGG（含 direction 列）
+├── 01-04-04-unit1-up-ora-dotplot.pdf（+unit2-down，G2 组）/.png + GO_table.csv       ORA GO BP（含 direction 列）
+├── 01-04-05-unit1-up-ora-dotplot.pdf（+unit2-down，G2 组）/.png + KEGG_table.csv   ORA KEGG（含 direction 列）
 ├── 01-05-01-unit1-ppi-network.png + hub_genes.csv + ppi_edges.csv   STRING PPI 与 hub 基因
 ├── enrichment_status.json         富集模式（fdr / ranked_fallback）、GSEA 参数、去冗余阈值及原因
 ├── ppi_status.json                PPI 方法、节点边数及回退原因

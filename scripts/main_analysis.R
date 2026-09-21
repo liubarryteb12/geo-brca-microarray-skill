@@ -387,8 +387,10 @@ check_acceptance <- function(cfg) {
   }
 
   checks <- list(
-    chk("01-02-01-unit1-boxplot-before-after.pdf"),
-    chk("01-02-02-unit1-density-plot.pdf"),
+    chk("01-02-01-unit1-boxplot-before.pdf"),
+    chk("01-02-01-unit2-boxplot-after.pdf"),
+    chk("01-02-02-unit1-density-before.pdf"),
+    chk("01-02-02-unit2-density-after.pdf"),
     chk("01-02-03-unit1-pca-plot.pdf"),
     # 椭圆坐标落盘：从 PNG 反推"椭圆画没画、多大"是猜（实测 stat_ellipse 在 n=3 时
     # 静默产出空数据，图上只有点）。有这张表就能直接核对。

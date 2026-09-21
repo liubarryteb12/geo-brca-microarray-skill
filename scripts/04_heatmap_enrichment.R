@@ -23,8 +23,8 @@
 # 输出：results/01-04-01-unit1-top50-heatmap.pdf
 #       results/01-04-02-unit1-gsea-go-dotplot.pdf  / GSEA_GO_table.csv
 #       results/01-04-03-unit1-gsea-kegg-dotplot.pdf / GSEA_KEGG_table.csv
-#       results/01-04-04-unit1-go-ora-dotplot.pdf  / GO_table.csv      （含 direction 列）
-#       results/01-04-05-unit1-kegg-ora-dotplot.pdf / KEGG_table.csv   （含 direction 列）
+#       results/01-04-04-unit1-up-ora-dotplot.pdf（+unit2-down，G2 组）  / GO_table.csv      （含 direction 列）
+#       results/01-04-05-unit1-up-ora-dotplot.pdf（+unit2-down，G2 组） / KEGG_table.csv   （含 direction 列）
 #       results/enrichment_status.json
 # ============================================================================
 

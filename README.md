@@ -108,8 +108,8 @@ GSE64790 244s / GSE42568 400s，暖缓存整轮 6m10s / 8m49s。全冷缓存装�
 
 | 文件 | 内容 |
 | --- | --- |
-| `01-02-01-unit1-boxplot-before-after.pdf` / `.png` | 标准化前后表达分布箱线图 |
-| `01-02-02-unit1-density-plot.pdf` / `.png` | 标准化前后密度曲线 |
+| `01-02-01-unit1-boxplot-before.pdf（+unit2-after，G1 组）` / `.png` | 标准化前后表达分布箱线图 |
+| `01-02-02-unit1-density-before.pdf（+unit2-after，G1 组）` / `.png` | 标准化前后密度曲线 |
 | `01-02-03-unit1-pca-plot.pdf` / `.png` + `pca_ellipse.csv` | PCA 散点，分组用**颜色 + 形状**双重编码；组内 95% 正态椭圆（半径 2.45 SD，坐标落在 `pca_ellipse.csv` 里可核对） |
 | `01-02-04-unit1-correlation-heatmap.pdf` / `.png` | 样本间 Pearson 相关热图（序列色，相关性无负值故不用发散色） |
 | `correlation_matrix.csv` | Pearson + Spearman 矩阵 + 离群标记 |
@@ -120,8 +120,8 @@ GSE64790 244s / GSE42568 400s，暖缓存整轮 6m10s / 8m49s。全冷缓存装�
 | `01-03-02-unit1-pvalue-histogram.pdf` / `.png` | DE 后 QC：p 值分布（区分"功效不足"与"模型设定错"） |
 | `01-04-02-unit1-gsea-go-dotplot.pdf` / `.png` + `GSEA_GO_table.csv` | **preranked GSEA / GO BP（主力方法）** |
 | `01-04-03-unit1-gsea-kegg-dotplot.pdf` / `.png` + `GSEA_KEGG_table.csv` | preranked GSEA / KEGG |
-| `01-04-04-unit1-go-ora-dotplot.pdf` / `.png` + `GO_table.csv` | ORA GO BP。**按方向分面**（两个面板各有标题和条目数）—— 初版两个 x 轴标签都写成 "up in tumor"，整张图上 "down" 一次都没出现，而数据里下调比上调还多 |
-| `01-04-05-unit1-kegg-ora-dotplot.pdf` / `.png` + `KEGG_table.csv` | ORA KEGG，同样按方向分面 |
+| `01-04-04-unit1-up-ora-dotplot.pdf（+unit2-down，G2 组）` / `.png` + `GO_table.csv` | ORA GO BP。**按方向分面**（两个面板各有标题和条目数）—— 初版两个 x 轴标签都写成 "up in tumor"，整张图上 "down" 一次都没出现，而数据里下调比上调还多 |
+| `01-04-05-unit1-up-ora-dotplot.pdf（+unit2-down，G2 组）` / `.png` + `KEGG_table.csv` | ORA KEGG，同样按方向分面 |
 | `01-05-01-unit1-ppi-network.pdf` / `.png` + `hub_genes.csv` + `ppi_edges.csv` + `ppi_plot_layout.csv` + `PPI_network_caption.txt` | STRING PPI 网络与 hub 基因。**图做过可读性过滤，并按同心圆环排布**（最大连通分量 → degree 前 200 → 最强 450 条边 → 3 环，内圈 = hub 核心；最大 4 个 Louvain 模块上色）。完整网络见 `ppi_edges.csv`，每个节点的环号/半径/角度见 `ppi_plot_layout.csv`，图注七段式（方法/输入/展示范围/视觉编码/环/陷阱/文件）另存为可检索的 txt |
 | `wgcna_modules.csv` + `wgcna_module_sizes.csv` + `wgcna_soft_power.csv` + `wgcna_module_trait.csv` + `01-06-01-unit1-wgcna-scale-free-fit.pdf` + `01-06-02-unit1-wgcna-module-trait-heatmap.pdf` + `wgcna_status.json` | **WGCNA 共表达模块（可选，仅 `cohort`）**。只用肿瘤组（带上正常样本的话第一个模块必然是"肿瘤 vs 正常"轴，而 DEG 已经答过那件事）。软阈值取最小的 R²≥0.8 的 power，达不到就如实记录不假装通过；模块-性状做 **BH 校正**。实测 GSE42568：15 个模块（14 非 grey）、power=8（R²=0.858）、126 次检验中 30 个校正后显著 |
 | `lasso_coefficients.csv` + `lasso_coefficients_epv.csv` + `lasso_risk_scores.csv` + `lasso_stability.csv` + `lasso_selection_frequency.csv` + `lasso_cv_curve.csv` + `01-07-01-unit1-lasso-km-training.pdf`（有外部队列时另出 `01-07-01-unit2-lasso-km-validation.pdf`）+ `lasso_status.json` | **LASSO-Cox 预后签名（可选，需随访终点）**。终点由 config 显式指定（自动配对在字段名不规整时一定配错，而配错不报错）。报**三个** C-index：训练集 / 交叉验证 / 外部验证。实测 GSE42568：16 基因签名训练集 0.879、CV 0.793、**外部验证 0.672**；EPV 合规的 3 基因版本外部 0.642。重复 CV 选出 [16,3,3,22,3] → `signature_stable: false` |
