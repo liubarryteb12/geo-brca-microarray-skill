@@ -812,15 +812,25 @@ run_10_survival_diagnostics <- function(cfg) {
         nom <- rms::nomogram(fit_n, fun = function(x) surv_prob,
                              funlabel = sprintf("%d-year survival probability", t_pred),
                              fun.at = c(0.9, 0.7, 0.5, 0.3, 0.1))
-        # nomogram 是 base 图 —— 画进 pdf
-        pdf(file.path(fig, "01-10-03-unit1-nomogram.pdf"),
-            width = 8.5, height = 5.5)
-        plot(nom, xfrac = 0.35, cex.axis = 0.7, cex.var = 0.8)
-        dev.off()
-        png(file.path(fig, "01-10-03-unit1-nomogram.png"),
-            width = 8.5, height = 5.5, units = "in", res = 300)
-        plot(nom, xfrac = 0.35, cex.axis = 0.7, cex.var = 0.8)
-        dev.off()
+        # nomogram 的 base plot 在 rms 4.x 对单变量模型有 "x/y lengths differ"
+        # 的已知问题 —— 画图失败不影响 nomogram 对象；包独立 tryCatch，
+        # 失败时记原因，DCA 不受牵连。
+        plot_ok <- tryCatch({
+          pdf(file.path(fig, "01-10-03-unit1-nomogram.pdf"),
+              width = 8.5, height = 5.5)
+          plot(nom, xfrac = 0.35, cex.axis = 0.7, cex.var = 0.8)
+          dev.off()
+          png(file.path(fig, "01-10-03-unit1-nomogram.png"),
+              width = 8.5, height = 5.5, units = "in", res = 300)
+          plot(nom, xfrac = 0.35, cex.axis = 0.7, cex.var = 0.8)
+          dev.off()
+          TRUE
+        }, error = function(e) {
+          try(grDevices::dev.off(), silent = TRUE)
+          nm_note <<- sprintf("nomogram 绘制失败 (rms 兼容性): %s",
+                              conditionMessage(e))
+          FALSE
+        })
       }
       # ---- DCA：手写净获益（不引 dcurves 新包）----
       # 判据来自 vickers 2006：NB = TP/n - FP/n * (pt/(1-pt))，
@@ -871,7 +881,8 @@ run_10_survival_diagnostics <- function(cfg) {
     if (rp_ok) c("01-10-05-unit1-risk-scores.png", "01-10-05-unit2-survival-time.png",
                   "01-10-05-unit3-signature-heatmap.png"),
     if (fr_ok) "01-10-06-unit1-forest-plot.png",
-    if (nm_ok) c("01-10-03-unit1-nomogram.png", "01-10-04-unit1-dca.png"))
+    if (nm_ok && plot_ok) "01-10-03-unit1-nomogram.png",
+    if (nm_ok) "01-10-04-unit1-dca.png")
   status$risk_plot_notes <- rp_notes
   status$nomogram_dca_note <- nm_note
   status$outputs <- c("time_roc.csv", if (!is.null(cal_df)) "calibration.csv",
