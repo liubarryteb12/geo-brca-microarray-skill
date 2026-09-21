@@ -545,9 +545,7 @@ run_04b_enrichment <- function(cfg) {
     plots <- make_ora_dotplot(out, cfg, sprintf("%s - %s", label, cfg$dataset_id))
     for (d in c("up", "down")) {
       if (is.null(plots[[d]])) next
-      slug <- if (d == "up") "up-ora" else "down-ora"
-      save_pdf(file.path(res, sprintf("%s-unit%s-%s.pdf",
-               ora_fig_name(d), if (d == "up") "1" else "2", slug)),
+      save_pdf(file.path(res, paste0(ora_fig_name(d), ".pdf")),
                print(plots[[d]]), width = ora_w, height = ora_h)
     }
     invisible(NULL)
