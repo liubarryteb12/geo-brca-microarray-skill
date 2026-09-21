@@ -705,7 +705,8 @@ run_10_survival_diagnostics <- function(cfg) {
           m <- m[, order(match(colnames(m), tr$gsm)), drop = FALSE]
           ph <- pheatmap::pheatmap(m, cluster_rows = TRUE, cluster_cols = FALSE,
                                    scale = "none", border_color = NA,
-                                   fontsize = 6, legend = TRUE, silent = TRUE)
+                                   fontsize = 6, legend = TRUE, silent = TRUE,
+                                   labels_col = rep("", ncol(m)))  # 样本名在图上无意义（GSM 编号），与三联的隐藏 x 轴一致
           save_pdf(file.path(fig, "01-10-05-unit3-signature-heatmap.pdf"),
                    grid::grid.draw(ph$gtable), width = W_DOUBLE, height = mm(80))
         } else {
