@@ -506,16 +506,16 @@ run_04b_enrichment <- function(cfg) {
   # 带阶段-模块-图-单元前缀），后者是 CSV 表名前缀（`GO_table.csv`）。
   # 一个参数兼两用会让改图名顺带改掉数据产物的名字 —— 而数据产物
   # 是别的脚本和验收项在引用的。
-  # **图名辅助**：单图拆分后的两个 unit 名（D-006，G2 组）。
-  # 由 file_base 硬映射，避免 "01-..." 前缀字面量逃过命名门禁的账目核对。
-  ora_fig_name <- function(d) {
-    if (identical(file_base, "GO")) {
-      if (identical(d, "up")) "01-04-04-unit1-up-ora-dotplot" else "01-04-04-unit2-down-ora-dotplot"
-    } else {
-      if (identical(d, "up")) "01-04-05-unit1-up-ora-dotplot" else "01-04-05-unit2-down-ora-dotplot"
-    }
-  }
   emit_ora <- function(df, label, file_base, key) {
+    # **图名辅助**：单图拆分后的两个 unit 名（D-006，G2 组）。
+    # 由 file_base 硬映射，避免 "01-..." 前缀字面量逃过命名门禁的账目核对。
+    ora_fig_name <- function(d) {
+      if (identical(file_base, "GO")) {
+        if (identical(d, "up")) "01-04-04-unit1-up-ora-dotplot" else "01-04-04-unit2-down-ora-dotplot"
+      } else {
+        if (identical(d, "up")) "01-04-05-unit1-up-ora-dotplot" else "01-04-05-unit2-down-ora-dotplot"
+      }
+    }
     if (is.null(df) || nrow(df) == 0L) {
       utils::write.csv(data.frame(), file.path(res, paste0(file_base, "_table.csv")),
                        row.names = FALSE)
