@@ -284,26 +284,27 @@ run_06_wgcna <- function(cfg) {
     outlier_candidates = if (length(outl) > 0L)
       as.list(rownames(datExpr)[unique(outl)]) else list(),
     note = "候选 = 合并高度 > 1.5 x 中位合并高。是否剔除由人工复核节点 outlier_removal 决定，脚本不自动删。")
+  group_col <- factor(group$group[match(rownames(datExpr), group$gsm)],
+                      levels = unique(group$group))
   png(file.path(res, "01-06-03-unit1-sample-dendrogram.png"),
       width = W_DOUBLE, height = mm(80), units = "in", res = 300)
-  WGCNA::plotDendroAndColors(sample_tree,
-    group_col <- factor(group$group[match(rownames(datExpr), group$gsm)],
-                        levels = unique(group$group)),
-    "Group", dendroLabels = FALSE, hang = 0.03, addGuide = TRUE,
-    guideHang = 0.05, main = "Sample dendrogram (outlier check)",
-    cex.labels = 0.4)
+  WGCNA::plotDendroAndColors(sample_tree, group_col, "Group",
+                             dendroLabels = FALSE, hang = 0.03,
+                             addGuide = TRUE, guideHang = 0.05,
+                             main = "Sample dendrogram (outlier check)",
+                             cex.labels = 0.4)
   dev.off()
   pdf(file.path(res, "01-06-03-unit1-sample-dendrogram.pdf"),
       width = W_DOUBLE, height = mm(80))
-  WGCNA::plotDendroAndColors(sample_tree,
-    group_col, "Group", dendroLabels = FALSE, hang = 0.03,
-    addGuide = TRUE, guideHang = 0.05,
-    main = "Sample dendrogram (outlier check)", cex.labels = 0.4)
+  WGCNA::plotDendroAndColors(sample_tree, group_col, "Group",
+                             dendroLabels = FALSE, hang = 0.03,
+                             addGuide = TRUE, guideHang = 0.05,
+                             main = "Sample dendrogram (outlier check)",
+                             cex.labels = 0.4)
   dev.off()
   if (length(outl) > 0L) {
     log_warn(sprintf("WGCNA: %d 个离群候选样本（见 01-06-03-unit1-sample-dendrogram）—— 不自动剔除",
                      length(outl)))
-  }
   }
   status$n_samples <- nrow(datExpr)
   status$n_genes_input <- ncol(datExpr)
@@ -497,7 +498,7 @@ run_06_wgcna <- function(cfg) {
            width = W_DOUBLE, height = max(mm(81), 0.32 * length(unique(cor_df$module)) + 1.6))
   # ---- GS-MM 散点（每个 trait 一张，选 |cor| 最高的 module）--------------
   # trait 名是运行时数据（临床列名），图名走 DYNAMIC_FIG_BASES 声明式豁免
-  DYNAMIC_FIG_BASES = {"04": 8}
+  DYNAMIC_FIG_BASES_DECL = '04:8'  # 门禁声明：图号04下 8 张动态图（JS 门禁支持此形式）
   GSMM_BASE <- paste0(as.character(1), "-", "06-04-unit")
   if (length(bt$traits) > 0L && ncol(kme) > 0L) {
     for (t in colnames(bt$traits)) {
@@ -553,4 +554,5 @@ run_06_wgcna <- function(cfg) {
 if (!GEO_ORCHESTRATED()) {
   cfg <- load_config()
   run_06_wgcna(cfg)
+}
 }
