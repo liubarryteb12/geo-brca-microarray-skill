@@ -441,8 +441,7 @@ run_06_wgcna <- function(cfg) {
   kme <- stats::cor(datExpr, me, use = "pairwise.complete.obs")
   utils::write.csv(data.frame(gene = colnames(datExpr), kme, check.names = FALSE),
                    file.path(res, "wgcna_kme.csv"), row.names = FALSE)
-  hub_top <- lapply(colnames(kme), function(m) as.list(utils::head(
-    sort(kme[, m], decreasing = TRUE), 5L)))
+  hub_top <- lapply(colnames(kme), function(m) as.list(utils::head(sort(kme[, m], decreasing = TRUE), 5L)))
   names(hub_top) <- colnames(kme)
   status$kme_top5 <- hub_top
 
