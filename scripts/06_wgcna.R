@@ -269,6 +269,7 @@ run_06_wgcna <- function(cfg) {
       log_warn(sprintf("WGCNA: 剔除 %d 个坏样本", sum(!gsg$goodSamples)))
     }
     datExpr <- datExpr[gsg$goodSamples, gsg$goodGenes, drop = FALSE]
+  }
 
   # ---- 3b. 样本层次聚类树（传统 WGCNA 的离群检测，差距 PLAN-T-W1）----
   # 文献标准做法：对样本做 hclust(dist(cor(datExpr), method="average"))
@@ -544,5 +545,4 @@ run_06_wgcna <- function(cfg) {
 if (!GEO_ORCHESTRATED()) {
   cfg <- load_config()
   run_06_wgcna(cfg)
-}
 }
