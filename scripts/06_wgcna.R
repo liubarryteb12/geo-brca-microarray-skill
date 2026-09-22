@@ -270,41 +270,6 @@ run_06_wgcna <- function(cfg) {
     }
     datExpr <- datExpr[gsg$goodSamples, gsg$goodGenes, drop = FALSE]
 
-  # ---- 3b. 样本层次聚类树（传统 WGCNA 的离群检测，PLAN-T-W1）----
-  # 文献标准做法：hclust(1-cor, "average") 画树查离群样本。
-  # **只标记 + 记录，不自动剔除** —— 剔除与否是人工复核节点
-  # outlier_removal 的职责（规范 §8），脚本不替人做决定。
-  group_col <- factor(group$group[match(rownames(datExpr), group$gsm)],
-                      levels = unique(group$group))
-  sample_dist <- 1 - stats::cor(t(datExpr), use = "pairwise.complete.obs")
-  sample_tree <- stats::hclust(as.dist(sample_dist), method = "average")
-  merge_h <- sample_tree$height
-  outl <- which(merge_h > 1.5 * stats::median(merge_h))
-  status$sample_dendrogram <- list(
-    n_samples = nrow(datExpr),
-    tree_height_max = round(max(merge_h), 3),
-    outlier_candidates = as.list(rownames(datExpr)[unique(outl)]),
-    note = "候选 = 合并高度 > 1.5 x 中位合并高；是否剔除由人工复核节点 outlier_removal 决定")
-  png(file.path(res, "01-06-03-unit1-sample-dendrogram.png"),
-      width = W_DOUBLE, height = mm(80), units = "in", res = 300)
-  WGCNA::plotDendroAndColors(sample_tree, group_col, "Group",
-                             dendroLabels = FALSE, hang = 0.03,
-                             addGuide = TRUE, guideHang = 0.05,
-                             main = "Sample dendrogram (outlier check)",
-                             cex.labels = 0.4)
-  dev.off()
-  pdf(file.path(res, "01-06-03-unit1-sample-dendrogram.pdf"),
-      width = W_DOUBLE, height = mm(80))
-  WGCNA::plotDendroAndColors(sample_tree, group_col, "Group",
-                             dendroLabels = FALSE, hang = 0.03,
-                             addGuide = TRUE, guideHang = 0.05,
-                             main = "Sample dendrogram (outlier check)",
-                             cex.labels = 0.4)
-  dev.off()
-  if (length(outl) > 0L) log_warn(sprintf(
-    "WGCNA: %d 个离群候选样本（见 01-06-03-unit1-sample-dendrogram）—— 不自动剔除",
-    length(outl)))
-
   # ---- 3b. 样本层次聚类树（传统 WGCNA 的离群检测，差距 PLAN-T-W1）----
   # 文献标准做法：对样本做 hclust(dist(cor(datExpr), method="average"))
   # 画树并检查是否有树高显著偏离主体的离群样本。
@@ -479,24 +444,6 @@ run_06_wgcna <- function(cfg) {
   names(hub_top) <- colnames(kme)
   status$kme_top5 <- hub_top
 
-  # **kME 落盘**（PLAN-T-W1，文献标准）：kME = cor(gene, ME) 即
-  # module membership —— 每个基因在每个模块里的归属强度。
-  # hub 基因的排序依据就是它（文献定义），不落盘等于没算。
-  kme <- stats::cor(datExpr, me, use = "pairwise.complete.obs")
-  kme_df <- data.frame(gene = colnames(datExpr), kme, check.names = FALSE)
-  utils::write.csv(kme_df, file.path(res, "wgcna_kme.csv"), row.names = FALSE)
-  # 每模块 top5 kME（hub 候选）写进状态
-  hub_top <- lapply(colnames(kme), function(m) {
-    v <- sort(kme[, m], decreasing = TRUE)
-    as.list(utils::head(v, 5L))
-  })
-  names(hub_top) <- colnames(kme)
-  status$kme_top5 <- hub_top
-
-  # **GS-MM 散点**（PLAN-T-W1，文献核心工具）：每个 trait 选 |cor| 最高的
-  # module，画 GS(|cor(gene, trait)|) vs MM(kME)。高 GS 高 MM = hub 候选，
-  # 标基因名；Spearman rho 标在图上（文献判据：rho 高 = 模块与该性状
-  # 真的有信号，而不只是运气）。
   gsm_plots <- 0L
   # grey 模块是"未分配"，它的特征基因没有生物学含义，不参与关联
   me <- me[, colnames(me) != "ME0", drop = FALSE]
@@ -586,54 +533,6 @@ run_06_wgcna <- function(cfg) {
     save_pdf(file.path(res, paste0(GSMM_BASE, which(unique(cor_df$trait) == t),
                                    "-gs-mm-", t, ".pdf")),
              print(p_gsmm), width = W_ONE_HALF, height = mm(72))
-  }
-  # ---- GS-MM 散点（每个 trait 一张，选 |cor| 最高的 module）--------------
-  # trait 名是运行时数据（临床列名），图名走 DYNAMIC_FIG_BASES 声明式豁免
-  DYNAMIC_FIG_BASES_DECL = '04:8'  # 门禁声明：图号04下 8 张动态图（JS 门禁支持此形式）
-  GSMM_BASE <- paste0(as.character(1), "-", "06-04-unit")
-  if (length(bt$traits) > 0L && ncol(kme) > 0L) {
-    for (t in colnames(bt$traits)) {
-      sub <- cor_df[cor_df$trait == t & is.finite(cor_df$cor), , drop = FALSE]
-      if (nrow(sub) == 0L) next
-      best_m <- sub$module[which.max(abs(sub$cor))]
-      me_name <- paste0("ME", best_m)
-      if (!me_name %in% colnames(kme)) next
-      gs_v <- abs(stats::cor(datExpr, bt$traits[[t]],
-                             use = "pairwise.complete.obs"))[, 1L]
-      mm_v <- kme[, me_name]
-      rho <- suppressWarnings(stats::cor.test(gs_v, mm_v,
-                                    method = "spearman",
-                                    exact = FALSE)$estimate)
-      dd <- data.frame(gs = gs_v, mm = mm_v, gene = colnames(datExpr),
-                       stringsAsFactors = FALSE)
-      hub_lab <- dd[dd$gs > quantile(dd$gs, 0.98) &
-                    dd$mm > quantile(dd$mm, 0.98), , drop = FALSE]
-      p_gsmm <- ggplot2::ggplot(dd, ggplot2::aes(x = mm, y = gs)) +
-        ggplot2::geom_point(size = 0.8, alpha = 0.5,
-                            colour = PAL$primary) +
-        ggplot2::labs(
-          title = sprintf("GS vs MM - trait %s, module %s", t, best_m),
-          subtitle = wrap_subtitle(sprintf(paste0("GS = |cor(gene, trait)|, ",
-            "MM = kME (cor with module eigengene). Spearman rho = %.2f. ",
-            "Labelled points: top 2% of both = hub candidates. ",
-            "High rho means the module genuinely tracks this trait."),
-            as.numeric(rho)), fig_width = W_ONE_HALF),
-          x = sprintf("MM (kME, module %s)", best_m),
-          y = sprintf("GS (|cor| with %s)", t)) +
-        theme_paper(9)
-      if (nrow(hub_lab) > 0L) {
-        p_gsmm <- p_gsmm + ggrepel::geom_text_repel(
-          data = hub_lab, ggplot2::aes(label = gene),
-          size = 2.2, colour = PAL$ink, seed = 42,
-          min.segment.length = 0)
-      }
-      save_pdf(file.path(res, paste0(GSMM_BASE, which(unique(cor_df$trait) == t), "-gs-mm-", t, ".pdf")),
-               print(p_gsmm), width = W_ONE_HALF, height = mm(72))
-      gsm_plots <- gsm_plots + 1L
-    }
-    status$gsmm_plots <- gsm_plots
-    log_info(sprintf("WGCNA GS-MM 散点: %d 张（每 trait 一张，取 |cor| 最高 module）",
-                     gsm_plots))
   }
 
   write_json(file.path(res, "wgcna_status.json"), status)

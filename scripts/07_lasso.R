@@ -181,6 +181,14 @@ make_km_plot <- function(df, cutoff, title, cfg, time_unit = "days") {
   p_lr <- stats::pchisq(lr$chisq, df = length(lr$n) - 1L, lower.tail = FALSE)
   n_hi <- sum(df$stratum == "high risk"); n_lo <- sum(df$stratum == "low risk")
 
+  # **HR(95%CI) 进图**（差距清单 #1，SRC-3/4 双篇硬惯例）：
+  # 单因素 Cox（risk 连续变量）—— p 答"两组有没有差"，HR 答"每升 1 单位
+  # 风险分，死亡风险翻几倍"。数据零新增（同一 df）。
+  hr_fit <- survival::coxph(survival::Surv(time, event) ~ risk, data = df)
+  hr_sum <- summary(hr_fit)$conf.int
+  hr_est <- unname(hr_sum[1, "exp(coef)"])
+  hr_lo  <- unname(hr_sum[1, "lower .95"])
+  hr_hi  <- unname(hr_sum[1, "upper .95"])
   p <- ggplot2::ggplot(steps, ggplot2::aes(x = time, y = surv, colour = stratum)) +
     ggplot2::geom_step(linewidth = 0.5) +
     ggplot2::scale_colour_manual(
