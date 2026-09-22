@@ -449,7 +449,6 @@ run_06_wgcna <- function(cfg) {
 
   me <- WGCNA::moduleEigengenes(datExpr, colors = module_label)$eigengenes
 
-  log_info("[WGCNA-哨兵] 模块识别完成，进入 kME 段")
   # **kME 落盘**（PLAN-T-W1，文献标准）：kME = cor(gene, ME) 即
   # module membership，hub 基因的排序依据；不落盘等于没算。
   kme <- stats::cor(datExpr, me, use = "pairwise.complete.obs")
@@ -458,7 +457,6 @@ run_06_wgcna <- function(cfg) {
   hub_top <- lapply(colnames(kme), function(m) as.list(utils::head(sort(kme[, m], decreasing = TRUE), 5L)))
   names(hub_top) <- colnames(kme)
   status$kme_top5 <- hub_top
-  log_info("[WGCNA-哨兵] kME 段完成")
 
   gsm_plots <- 0L
   # grey 模块是"未分配"，它的特征基因没有生物学含义，不参与关联
@@ -508,7 +506,6 @@ run_06_wgcna <- function(cfg) {
            print(make_module_trait_plot(cor_df, cfg)),
            width = W_DOUBLE, height = max(mm(81), 0.32 * length(unique(cor_df$module)) + 1.6))
 
-  log_info("[WGCNA-哨兵] 进入 GS-MM 段")
   # ---- GS-MM 散点（PLAN-T-W1，文献核心工具）----
   # 整段包 tryCatch：这一段有独立的失败模式，不能让它拖垮前面的产物。
   # 错误详情进 status$gsmm_error（可见、可查），不当"没做"处理。
@@ -518,9 +515,6 @@ run_06_wgcna <- function(cfg) {
   DYNAMIC_FIG_BASES_DECL = '04:8'
   GSMM_BASE <- paste0(as.character(1), "-06-04-unit")
   for (t in colnames(bt$traits)) {
-    log_info(sprintf("[WGCNA-GSMM] trait=%s dim(datExpr)=%dx%d len(trait)=%d",
-                     t, nrow(datExpr), ncol(datExpr),
-                     if (is.null(bt$traits[[t]])) -1L else length(bt$traits[[t]])))
     sub <- cor_df[cor_df$trait == t & is.finite(cor_df$cor), , drop = FALSE]
     if (nrow(sub) == 0L) next
     best_m <- sub$module[which.max(abs(sub$cor))]
@@ -559,7 +553,10 @@ run_06_wgcna <- function(cfg) {
   }  # 闭 for
   NULL
   }, error = function(e) sprintf("%s: %s", paste(class(e), collapse = "/"), conditionMessage(e)))
-  if (!is.null(status$gsmm_error)) log_warn(sprintf("[WGCNA] GS-MM 段失败（其余产物不受影响）: %s", status$gsmm_error))
+  if (!is.null(status$gsmm_error)) {
+    status$gsmm_status <- "not_available"
+    log_warn(sprintf("[WGCNA] GS-MM 散点未出（其余产物不受影响）: %s", status$gsmm_error))
+  }
 
   write_json(file.path(res, "wgcna_status.json"), status)
   log_info(paste0("已生成 wgcna_modules.csv / wgcna_module_trait.csv / wgcna_module_sizes.csv / ",
