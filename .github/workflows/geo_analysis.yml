@@ -11,6 +11,10 @@ on:
         type: choice
         options:
           - GSE42568
+          # **验证专用**（AGENTS 规则 32）：config.GSE42568.wgcna_cap15.yml 把
+          # 肿瘤样本截断到 15 个 —— WGCNA 秒级跑完，用于验证代码与出图设置。
+          # 产物落 results/GSE42568.wgcna_cap15/，不覆盖正式结果。
+          - GSE42568.wgcna_cap15
           - GSE64790
   push:
     branches: [main]
