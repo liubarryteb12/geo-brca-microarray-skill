@@ -449,6 +449,7 @@ run_06_wgcna <- function(cfg) {
 
   me <- WGCNA::moduleEigengenes(datExpr, colors = module_label)$eigengenes
 
+  log_info("[WGCNA-哨兵] 模块识别完成，进入 kME 段")
   # **kME 落盘**（PLAN-T-W1，文献标准）：kME = cor(gene, ME) 即
   # module membership，hub 基因的排序依据；不落盘等于没算。
   kme <- stats::cor(datExpr, me, use = "pairwise.complete.obs")
@@ -457,6 +458,7 @@ run_06_wgcna <- function(cfg) {
   hub_top <- lapply(colnames(kme), function(m) as.list(utils::head(sort(kme[, m], decreasing = TRUE), 5L)))
   names(hub_top) <- colnames(kme)
   status$kme_top5 <- hub_top
+  log_info("[WGCNA-哨兵] kME 段完成")
 
   gsm_plots <- 0L
   # grey 模块是"未分配"，它的特征基因没有生物学含义，不参与关联
@@ -506,6 +508,7 @@ run_06_wgcna <- function(cfg) {
            print(make_module_trait_plot(cor_df, cfg)),
            width = W_DOUBLE, height = max(mm(81), 0.32 * length(unique(cor_df$module)) + 1.6))
 
+  log_info("[WGCNA-哨兵] 进入 GS-MM 段")
   # ---- GS-MM 散点（PLAN-T-W1，文献核心工具）----
   # 每个 trait 选 |cor| 最高的 module，画 GS vs MM 散点，
   # hub 候选（top2% both）标基因名；Spearman rho 标在图上。
