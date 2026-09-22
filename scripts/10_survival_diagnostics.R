@@ -538,12 +538,13 @@ run_10_survival_diagnostics <- function(cfg) {
       log_warn("time_roc: 有队列的时间单位没能从 config 列名解析出来，面板标题只写队列名")
     }
 
-    # **图例标签内嵌均值 AUC**（差距清单 #4，SRC-3/4 双篇惯例）:
-    # 每个队列的平均 time-dependent AUC 跟在队列名后面，读者不用翻 CSV。
+    # **图例标签内嵌均值 AUC**（差距清单 #4，SRC-3/4 双篇惯例）：
+    # **labels 参数改显示名，values 的名字不能动** —— values 的名字必须与
+    # 数据里的 set 值精确匹配，改名会让 ggplot 找不到映射、整图退成灰色
+    # （实测 35670560466）。
     auc_mean <- tapply(roc_df$auc, roc_df$set, mean, na.rm = TRUE)
-    cols <- stats::setNames(
-      lapply(names(cols), function(s) cols[[s]]),
-      sprintf("%s (mean AUC = %.2f)", names(cols), auc_mean[names(cols)]))
+    auc_lab <- stats::setNames(
+      sprintf("%s (mean AUC = %.2f)", names(auc_mean), auc_mean), names(auc_mean))
     p <- ggplot2::ggplot(roc_df,
         ggplot2::aes(x = horizon, y = auc, colour = set)) +
       ggplot2::geom_hline(yintercept = 0.5, linetype = "dashed",
@@ -552,7 +553,7 @@ run_10_survival_diagnostics <- function(cfg) {
       ggplot2::geom_point(size = 1.6) +
       ggplot2::geom_errorbar(ggplot2::aes(ymin = ci_low, ymax = ci_high),
                              width = 0, linewidth = 0.35) +
-      ggplot2::scale_colour_manual(values = cols) +
+      ggplot2::scale_colour_manual(values = cols, labels = auc_lab) +
       # free_x：每个队列一根自己的 x 轴，天和年因此永远不会落在同一尺度上
       ggplot2::facet_wrap(~ panel, scales = "free_x") +
       ggplot2::labs(
