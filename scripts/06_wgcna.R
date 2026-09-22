@@ -556,6 +556,7 @@ run_06_wgcna <- function(cfg) {
   }  # 闭 for
   NULL
   }, error = function(e) sprintf("%s: %s", paste(class(e), collapse = "/"), conditionMessage(e)))
+  if (!is.null(status$gsmm_error)) log_warn(sprintf("[WGCNA] GS-MM 段失败（其余产物不受影响）: %s", status$gsmm_error))
 
   write_json(file.path(res, "wgcna_status.json"), status)
   log_info(paste0("已生成 wgcna_modules.csv / wgcna_module_trait.csv / wgcna_module_sizes.csv / ",
