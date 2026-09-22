@@ -518,6 +518,9 @@ run_06_wgcna <- function(cfg) {
   DYNAMIC_FIG_BASES_DECL = '04:8'
   GSMM_BASE <- paste0(as.character(1), "-06-04-unit")
   for (t in colnames(bt$traits)) {
+    log_info(sprintf("[WGCNA-GSMM] trait=%s dim(datExpr)=%dx%d len(trait)=%d",
+                     t, nrow(datExpr), ncol(datExpr),
+                     if (is.null(bt$traits[[t]])) -1L else length(bt$traits[[t]])))
     sub <- cor_df[cor_df$trait == t & is.finite(cor_df$cor), , drop = FALSE]
     if (nrow(sub) == 0L) next
     best_m <- sub$module[which.max(abs(sub$cor))]
