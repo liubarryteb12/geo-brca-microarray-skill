@@ -569,7 +569,7 @@ run_10_survival_diagnostics <- function(cfg) {
           "Horizons with fewer than ", MIN_EVENTS_AT_HORIZON,
           " events remaining are not shown."), W_DOUBLE)) +
       theme_paper() +
-      ggplot2::theme(legend.position = c(0.98, 0.98), legend.justification = c(1, 1), legend.text = ggplot2::element_text(size = 7), legend.key.size = ggplot2::unit(0.6, "lines"))
+      ggplot2::theme(legend.position = "top", legend.justification = c(1, 0.5), legend.text = ggplot2::element_text(size = 7), legend.key.size = ggplot2::unit(0.6, "lines"))
     save_pdf(file.path(fig, "01-10-01-unit1-time-roc.pdf"), print(p),
              width = W_DOUBLE, height = mm(80))
     TRUE
@@ -875,7 +875,7 @@ run_10_survival_diagnostics <- function(cfg) {
                         "of using the risk score vs treating everyone."), W_ONE_HALF),
                       x = "threshold probability (risk quantile)",
                       y = "net benefit", colour = NULL) +
-        theme_paper(9) + ggplot2::theme(legend.position = c(0.98, 0.98), legend.justification = c(1, 1), legend.text = ggplot2::element_text(size = 7), legend.key.size = ggplot2::unit(0.6, "lines"))
+        theme_paper(9) + ggplot2::theme(legend.position = "top", legend.justification = c(1, 0.5), legend.text = ggplot2::element_text(size = 7), legend.key.size = ggplot2::unit(0.6, "lines"))
       save_pdf(file.path(fig, "01-10-04-unit1-dca.pdf"), print(p_d),
                width = W_ONE_HALF, height = mm(72))
       TRUE
