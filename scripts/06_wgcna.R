@@ -529,8 +529,8 @@ run_06_wgcna <- function(cfg) {
     gs_v <- abs(stats::cor(datExpr, bt$traits[[t]],
                            use = "pairwise.complete.obs"))[, 1L]
     mm_v <- kme[, me_name]
-    rho <- suppressWarnings(stats::cor.test(gs_v, mm_v, method = "spearman",
-                                            exact = FALSE)$estimate)
+    rho <- suppressWarnings(stats::cor.test(gs_v, mm_v,
+                                            )$estimate)
     dd <- data.frame(gs = gs_v, mm = mm_v, gene = colnames(datExpr),
                      stringsAsFactors = FALSE)
     hub_lab <- dd[dd$gs > quantile(dd$gs, 0.98) &
@@ -550,7 +550,7 @@ run_06_wgcna <- function(cfg) {
     if (nrow(hub_lab) > 0L) {
       p_gsmm <- p_gsmm + ggrepel::geom_text_repel(
         data = hub_lab, ggplot2::aes(label = gene),
-        size = 2.2, colour = PAL$ink, seed = 42,
+        size = 2.2, colour = PAL$ink,
         min.segment.length = 0)
     }
     save_pdf(file.path(res, paste0(GSMM_BASE, which(unique(cor_df$trait) == t),
