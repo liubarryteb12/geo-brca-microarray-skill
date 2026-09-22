@@ -862,7 +862,7 @@ theme_paper <- function(base_size = 10) {
       legend.box        = "vertical",
       legend.title      = ggplot2::element_text(size = base_size - 1),
       legend.text       = ggplot2::element_text(size = base_size - 1.5),
-      legend.key.size   = ggplot2::unit(0.9, "lines"),
+  legend.key.size   = ggplot2::unit(0.7, "lines"),   # 右上角图例空间有限，键略缩
       legend.margin     = ggplot2::margin(1, 1, 1, 1),
       legend.box.spacing = ggplot2::unit(3, "pt"),
       legend.box.margin  = ggplot2::margin(0, 0, 0, 0)

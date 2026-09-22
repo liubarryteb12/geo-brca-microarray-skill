@@ -591,9 +591,9 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
         # 两行，而 ggplot 在横向图例折行时会**重复图例标题** —— 图上因此出现
         # 两个 "degree"，看着像两个独立图例。竖排后 degree 独占一行、放得下。
         legend.box        = "vertical",
-        legend.title      = ggplot2::element_text(size = 9),
-        legend.text       = ggplot2::element_text(size = 8.5),
-        legend.key.size   = ggplot2::unit(1.1, "lines"),
+        legend.title      = ggplot2::element_text(size = 8),
+        legend.text       = ggplot2::element_text(size = 7),
+        legend.key.size   = ggplot2::unit(0.7, "lines"),
         legend.box.spacing = ggplot2::unit(3, "pt"),
         plot.margin = ggplot2::margin(6, 6, 4, 6))
 
