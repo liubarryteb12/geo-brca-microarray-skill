@@ -288,8 +288,9 @@ run_06_wgcna <- function(cfg) {
     outlier_candidates = if (length(outl) > 0L)
       as.list(rownames(datExpr)[unique(outl)]) else list(),
     note = "候选 = 合并高度 > 1.5 x 中位合并高。是否剔除由人工复核节点 outlier_removal 决定，脚本不自动删。")
-  group_col <- factor(group$group[match(rownames(datExpr), group$gsm)],
-                      levels = unique(group$group))
+  grp_lv <- unique(group$group)
+  grp_pal <- stats::setNames(c(PAL$up, PAL$down, PAL$primary, PAL$muted), grp_lv)
+  group_col <- unname(grp_pal[group$group[match(rownames(datExpr), group$gsm)]])
   png(file.path(res, "01-06-03-unit1-sample-dendrogram.png"),
       width = W_DOUBLE, height = mm(80), units = "in", res = 300)
   WGCNA::plotDendroAndColors(sample_tree, group_col, "Group (colours = group)",
