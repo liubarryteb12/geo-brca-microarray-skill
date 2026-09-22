@@ -292,7 +292,7 @@ run_06_wgcna <- function(cfg) {
                       levels = unique(group$group))
   png(file.path(res, "01-06-03-unit1-sample-dendrogram.png"),
       width = W_DOUBLE, height = mm(80), units = "in", res = 300)
-  WGCNA::plotDendroAndColors(sample_tree, group_col, "Group",
+  WGCNA::plotDendroAndColors(sample_tree, group_col, "Group (colours = group)",
                              dendroLabels = FALSE, hang = 0.03,
                              addGuide = TRUE, guideHang = 0.05,
                              main = "Sample dendrogram (outlier check)",
@@ -300,7 +300,7 @@ run_06_wgcna <- function(cfg) {
   dev.off()
   pdf(file.path(res, "01-06-03-unit1-sample-dendrogram.pdf"),
       width = W_DOUBLE, height = mm(80))
-  WGCNA::plotDendroAndColors(sample_tree, group_col, "Group",
+  WGCNA::plotDendroAndColors(sample_tree, group_col, "Group (colours = group)",
                              dendroLabels = FALSE, hang = 0.03,
                              addGuide = TRUE, guideHang = 0.05,
                              main = "Sample dendrogram (outlier check)",
