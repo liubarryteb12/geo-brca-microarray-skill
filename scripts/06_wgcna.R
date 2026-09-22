@@ -510,6 +510,9 @@ run_06_wgcna <- function(cfg) {
 
   log_info("[WGCNA-哨兵] 进入 GS-MM 段")
   # ---- GS-MM 散点（PLAN-T-W1，文献核心工具）----
+  # 整段包 tryCatch：这一段有独立的失败模式，不能让它拖垮前面的产物。
+  # 错误详情进 status$gsmm_error（可见、可查），不当"没做"处理。
+  status$gsmm_error <- tryCatch({ NULL
   # 每个 trait 选 |cor| 最高的 module，画 GS vs MM 散点，
   # hub 候选（top2% both）标基因名；Spearman rho 标在图上。
   DYNAMIC_FIG_BASES_DECL = '04:8'
@@ -550,7 +553,9 @@ run_06_wgcna <- function(cfg) {
     save_pdf(file.path(res, paste0(GSMM_BASE, which(unique(cor_df$trait) == t),
                                    "-gs-mm-", t, ".pdf")),
              print(p_gsmm), width = W_ONE_HALF, height = mm(72))
-  }
+  }  # 闭 for
+  NULL
+  }, error = function(e) sprintf("%s: %s", paste(class(e), collapse = "/"), conditionMessage(e)))
 
   write_json(file.path(res, "wgcna_status.json"), status)
   log_info(paste0("已生成 wgcna_modules.csv / wgcna_module_trait.csv / wgcna_module_sizes.csv / ",
