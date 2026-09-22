@@ -227,6 +227,19 @@ run_06_wgcna <- function(cfg) {
   tumor_arm <- cfg$contrast[1L]
   keep <- group$gsm[group$group == tumor_arm]
   keep <- intersect(keep, colnames(expr))
+  # **验证专用：样本截断开关**（PLAN-T-W1 L2，用户指示用小样本快速验证代码）。
+  # 设了 `wgcna_sample_cap` 时只取前 N 个肿瘤样本 —— 让 WGCNA 在 12-20 样本上
+  # 跑完（pickSoftThreshold + blockwiseModules 从分钟级降到秒级），
+  # 目的是**验证代码与出图设置**，不是产出结论。全样本跑时不设这个字段。
+  # 截断是显式的、进状态文件的 —— 不能悄悄少跑样本。
+  cap <- cfg$analysis$wgcna_sample_cap
+  if (!is.null(cap) && is.numeric(cap) && length(keep) > cap) {
+    keep <- keep[seq_len(as.integer(cap))]
+    status$sample_cap <- as.integer(cap)
+    status$sample_cap_note <- paste0("验证模式：样本截断到 ", cap,
+      " 个（wgcna_sample_cap），用于快速验证代码与出图，结果不可当结论")
+    log_warn(status$sample_cap_note)
+  }
   if (length(keep) < WGCNA_MIN_SAMPLES) {
     status$status <- "not_applicable"
     status$reason <- sprintf("组 %s 只有 %d 个样本（< %d）", tumor_arm, length(keep), WGCNA_MIN_SAMPLES)

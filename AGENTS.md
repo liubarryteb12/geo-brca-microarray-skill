@@ -718,3 +718,31 @@ GSE64790 244s / GSE42568 400s，暖缓存整轮 6m10s / 8m49s。
 
   **每加一处例外都要问：这是"包内部按名字找东西"吗？** 是，才允许。
   只是"写全名太麻烦"不是理由。
+
+## 31. 图例一律图框外右上角（用户约定，2026-09-21）
+
+**图例不能画在图框（panel）里面。** 框内图例会压住数据点，读者分不清哪块是
+数据、哪块是说明；一律移到**图框外、右上角**。
+
+- **ggplot（R）**：`legend.position` 只有 `"top"` / `"bottom"` / `"left"` /
+  `"right"` 四个**框外**取值；传坐标 `c(x, y)` 是**框内**（实测 v1 用
+  `c(0.98, 0.98)` 就是框内，被判不合格）。框外右上 =
+  `legend.position = "top"` + `legend.justification = c(1, 0.5)`（顶部右对齐）。
+- **matplotlib（Python）**：`loc="outside upper right"` **只对 `fig.legend()`
+  有效** —— 传给 `ax.legend()` 直接报
+  `ValueError: 'outside' option ... only works for figure legends`（实测
+  spatial run 35749568552 因此崩了整个 job，scrna 因此段错误）。
+  所以所有 axes 级图例必须改成 `fig.legend(...)`；constrained layout 会
+  自动为框外图例让出空间。
+
+> 改完要亲读：图例在框外不代表它没被裁掉 —— 画布高度不够时框外图例仍会
+> 顶出画布（`savefig.bbox: standard` 下静默裁），见规则 13 / 17 的同类问题。
+
+## 32. `wgcna_sample_cap` 是验证开关，不是分析参数
+
+`06_wgcna.R` 读 `cfg$analysis$wgcna_sample_cap`：设了就把肿瘤样本截断到前 N 个
+（N 取 12-20 即可让 WGCNA 在秒级跑完），目的是**验证代码与出图设置**。
+截断时 `wgcna_status.json` 会写 `sample_cap` 与 `sample_cap_note`，
+日志也会 WARN —— **它是显式的，不会悄悄少跑样本**。
+
+正式出结论的配置**不要设**这个字段（设了会污染结果而不报错）。

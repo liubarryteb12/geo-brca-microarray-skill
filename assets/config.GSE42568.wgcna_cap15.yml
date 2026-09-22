@@ -1,0 +1,145 @@
+# ============================================================================
+# GEO 乳腺癌芯片数据挖掘 — 分析配置（GSE42568，队列级）
+# ============================================================================
+# 一个数据集一个配置文件。产物落在 results/GSE42568/ 与 data/GSE42568/。
+#
+# 本文件是 GSE64790 的**放大版**：同一个对比（tumor vs normal）、同一个物种、
+# 同样是芯片，只是样本量从 6 变成 121。用途是把 GSE64790 上"信号存在但功效不足"
+# 的假设，放到有功效的队列上验证。
+# ============================================================================
+
+# ---- 设计模式 --------------------------------------------------------------
+# 121 个样本，远超 small_sample 的上限 10，必须用 cohort。
+# 门禁要求：总样本 >= 15（WGCNA 通行下限），每组 >= 10。
+design_mode: cohort
+
+# ---- 数据源 ----------------------------------------------------------------
+# GSE42568: 人源乳腺癌 Affymetrix HG-U133 Plus 2.0 芯片，121 例
+#           （104 例癌 + 17 例正常乳腺），GPL570。PubMed 23740839。
+#
+# 实测的完整 characteristics（`node tools/check_clinical_endpoints.mjs GSE42568`）：
+#   tissue                        breast cancer×104  normal breast×17
+#   overall survival event        0×69   1×35   NA×17     <- 35 个死亡事件
+#   overall survival time_days    103 种取值
+#   relapse free survival event   0×56   1×48   NA×17     <- 48 个复发事件
+#   relapse free survival time    100 种取值
+#   er_status / grade / lymph node status / age / size
+#
+# **17 例正常样本的全部临床字段都是 NA**，这是分组后做临床分析时要过滤掉的。
+dataset_id: GSE42568
+platform_id: GPL570            # 可留空，由 GEOquery 自动识别
+
+# ---- 分组 ------------------------------------------------------------------
+# characteristics_ch1 的实际取值（实测）：
+#   癌:   "tissue: breast cancer"
+#   正常: "tissue: normal breast"
+#
+# 匹配的是**全部 characteristics 拼起来的字符串**，所以模式要能唯一定位。
+# 这里用短模式即可：其余字段（age / er_status / grade / 淋巴结 / 生存）
+# 的取值里都不含 "breast cancer" 或 "normal breast"。
+# 若将来报「分组歧义」，说明有新字段撞上了，那时再收紧成 "tissue: breast cancer"。
+group_field: characteristics_ch1
+
+group_values:
+  tumor:  ["breast cancer"]
+  normal: ["normal breast"]
+
+contrast: ["tumor", "normal"]
+
+# ---- 配对 ------------------------------------------------------------------
+# **不配对。** 17 例正常样本与 104 例癌不是同一批患者，而且正常样本的
+# 全部临床字段（年龄、分期、生存）都是 NA —— 没有任何可用于配对的依据。
+# 按规则 4，配对关系必须显式声明且拿得出依据，不能靠猜。
+paired: false
+
+# ---- 阈值 ------------------------------------------------------------------
+thresholds:
+  adj_p: 0.05
+  # 队列级数据用通行的 2 倍差异阈值。
+  #
+  # **这和 GSE64790 的 0.5 不是"同一个参数取不同值"，而是不同的判据。**
+  # GSE64790 把阈值降到 0.5 是为了让火山图上的名义显著层有意义（那里
+  # 最小 adj.P = 0.394，全基因组 BH 校正下没有任何基因能通过）；
+  # 这里 n=121，功效足够，没有理由放宽倍数要求。
+  log2fc: 1.0
+  string_score: 400
+  outlier_cor: 0.8
+
+# ---- 分析选项 --------------------------------------------------------------
+analysis:
+  seed: 20260919               # 不可删，理由见 config.GSE64790.yml
+  top_heatmap_genes: 50
+  impute_k: 10
+  # ---- 尺度与标准化 --------------------------------------------------------
+  # log2: auto —— 从 series matrix 检测尺度；判定为线性时做 log2(x+1)。
+  #   尺度判错是**静默失败**：limma 假定 log 尺度，线性数据喂进去不报错，
+  #   只让所有 logFC 变成"强度比的对数"，结果看着正常而数字全偏。
+  #   可选 auto / always / never。除非确知数据集被误判，不要改成 always/never。
+  log2: auto
+  # normalization: 从 series matrix 出发（非原始 CEL/IDAT），
+  #   所以 RMA/neqc 没有输入可跑 —— 这一点在 clean_stats.json 里写明了。
+  #   quantile 默认够用；vsn 适合跨平台合并或强度范围差异大的场景。
+  #   可选 quantile / vsn / none。
+  normalization: quantile
+  pca_top_genes: 2000
+  hub_gene_count: 10
+  ppi_plot_max_nodes: 200
+  ppi_plot_max_edges: 450
+  ppi_plot_rings: 3
+  ppi_plot_modules: 4
+  # 降级路径。队列级数据**正常情况下不应该走到这里** ——
+  # 如果 enrichment_status.json 出现 deg_mode=ranked_fallback，
+  # 说明 DEG 结果异常（而不只是功效不足），要先查 01-03-02-unit1-pvalue-histogram。
+  ranked_fallback_genes: 500
+  gsea_min_set: 15
+  gsea_max_set: 500
+  # ---- WGCNA ----
+  # 只喂高变基因：WGCNA 是全基因两两相关，全基因组跑既慢又没有额外信息，
+  # 低变基因的相关基本是噪声，还会把软阈值拟合带偏。5000 是通行的起点。
+  wgcna_top_genes: 2000
+  wgcna_min_module_size: 30
+  # **验证专用**：截断肿瘤样本数，让 WGCNA 在 12-20 样本上快速跑完
+  # （只验证代码与出图设置，结果不可当结论）。正式跑请删掉这一行。
+  wgcna_sample_cap: 15
+
+# ---- 随访终点（LASSO-Cox 用）-----------------------------------------------
+# **列名必须显式写。** 自动按关键词配对 time/event 列在字段名不规整时
+# 会静默配错，而配错不会报错，只会算出一个错的 C-index。
+# 实测 GSE20685 的字段是 `event_death` 和 `follow_up_duration (years)` ——
+# 名字里没有任何共同词，靠关键词一定配不上。
+#
+# GSE42568 实测：`overall survival event` 0×69 / 1×35 / NA×17（17 例正常样本
+# 全部临床字段为 NA，所以实际可用 104 例），`overall survival time_days` 103 种取值。
+# **35 个事件 -> EPV>=10 意味着签名最多 3 个基因。**
+survival:
+  enabled: true
+  time_column: "overall survival time_days"
+  event_column: "overall survival event"
+  event_value: ["1"]
+  # 少于 20 个事件直接不做 —— 这时 Cox 的系数估计没有意义，
+  # 与其产出一个看着像结果的表，不如留下一句"事件不够"。
+  min_events: 20
+  cv_folds: 10
+  cv_repeats: 5
+  # 外部队列。GSE20685 同平台（GPL570）、327 例、83 个死亡事件，
+  # 是这套签名唯一能拿到的独立验证。
+  validation_dataset: GSE20685
+  validation_platform_id: GPL570
+  # 验证队列的终点列名与主队列不同，必须分别写
+  validation_time_column: "follow_up_duration (years)"
+  validation_event_column: "event_death"
+  validation_event_value: ["1"]
+
+enrichment:
+  universe: detected
+  p_adjust: BH
+  pvalue_cutoff: 0.05
+  qvalue_cutoff: 0.2
+  top_terms: 15
+  ont: BP
+  kegg_organism: hsa
+  redundancy_jaccard: 0.5
+
+# ---- 输出 ------------------------------------------------------------------
+# 留空即由 dataset_id 派生为 results/GSE42568 与 data/GSE42568。
+output: {}
