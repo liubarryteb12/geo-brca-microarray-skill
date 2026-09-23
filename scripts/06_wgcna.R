@@ -662,7 +662,13 @@ run_06_wgcna <- function(cfg) {
       status$module_go_hint <- paste0("top 模块基因表已落盘 wgcna_top_module_genes.csv；",
                                       "模块级 GO 富集属 04 的职责（富集基建在那里）")
     }
-  }, error = function(e) log_warn(sprintf("图13 模块热图失败: %s", conditionMessage(e))))
+  }, error = function(e) {
+    # 图13 失败要**记录原因**（不是静默跳过）：验证子集（15 样本）下 top 模块
+    # 基因可能零方差 → z-score 后无可画内容；全样本运行时通常不复现。
+    status$fig13_status <- "not_available"
+    status$fig13_reason <- conditionMessage(e)
+    log_warn(sprintf("图13 模块热图未出（原因已记入 status）: %s", conditionMessage(e)))
+  })
   log_info(sprintf("[WGCNA] GS-MM 循环结束: gsmm_plots=%d, gsmm_error=%s",
                    gsmm_plots, if (is.null(status$gsmm_error)) "none" else status$gsmm_error))
   NULL
