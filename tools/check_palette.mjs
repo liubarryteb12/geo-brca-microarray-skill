@@ -16,7 +16,7 @@
  *
  * 用法：node tools/check_palette.mjs
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -110,6 +110,38 @@ const SEMANTIC = {
   ns: grab("ns"),
   ink: grab("ink"),
 };
+
+// ---- **PAL 键存在性检查** ----------------------------------------------------
+// 实测踩过：代码里写了 `PAL$primary`，而 common.R 的 PAL 里**没有这个键** ——
+// R 的 `$` 取不存在的键给 NULL，`c(PAL$up, PAL$primary, ...)` 于是比名字向量
+// 少一个元素，报 `'names' attribute [4] must be the same length as the vector [3]`，
+// **整图甚至整步失败**，而报错信息完全不提"这个键不存在"。
+// 所以：把 PAL 里定义的键名解析出来，再扫全仓库脚本用到的 `PAL$xxx`，
+// 有未定义的键就判红。
+const palBlock = src.match(/PAL\s*<-\s*list\(([\s\S]*?)\n\)/);
+if (!palBlock) throw new Error("common.R 里找不到 PAL 的定义块");
+const definedKeys = new Set(
+  [...palBlock[1].matchAll(/^\s*([A-Za-z_][A-Za-z0-9_.]*)\s*=/gm)].map((m) => m[1])
+);
+const usedKeys = new Map();
+const scriptsDir = join(here, "..", "scripts");
+for (const f of readdirSync(scriptsDir)) {
+  if (!f.endsWith(".R")) continue;
+  const body = readFileSync(join(scriptsDir, f), "utf8");
+  for (const m of body.matchAll(/PAL\$([A-Za-z_][A-Za-z0-9_.]*)/g)) {
+    if (!usedKeys.has(m[1])) usedKeys.set(m[1], f);
+  }
+}
+const missingKeys = [...usedKeys.entries()].filter(([k]) => !definedKeys.has(k));
+if (missingKeys.length) {
+  for (const [k, f] of missingKeys) {
+    problems.push(
+      `PAL 里没有键 "${k}"（${f} 用到）—— R 的 $ 取不到会给 NULL，` +
+      `在 c(...) 里被静默丢掉，随后报 names 长度不匹配，报错信息不会提这个键`);
+  }
+} else {
+  console.log(`PAL 键全部有定义（${usedKeys.size} 个被引用 / ${definedKeys.size} 个已定义）`);
+}
 
 // 分类色板与序列色板是向量/函数体，单独抓
 const catMatch = src.match(/base\s*<-\s*c\(([^)]*#[0-9A-Fa-f]{6}[^)]*)\)/);

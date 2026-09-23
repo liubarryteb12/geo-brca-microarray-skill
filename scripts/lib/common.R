@@ -561,6 +561,11 @@ PAL <- list(
   up       = "#B2182B",   # ColorBrewer RdBu 红端     h=22.4  白底 6.6:1
   down     = "#2166AC",   # ColorBrewer RdBu 蓝端     h=252.4 白底 6.4:1
   ns       = "#BDBDBD",   # 不显著（中性灰，不承载色相语义）
+  # **primary 必须存在**（与 scrna/spatial 的 Python 侧同名同值）：
+  # 实测多处代码写 PAL$primary，而 R 侧原先没有这个键 —— NULL 被 c() 丢掉后
+  # 颜色数比名字数少一个，报 `'names' attribute [N] must be the same length...`，
+  # 整图/整步失败。值取 Okabe-Ito 蓝（与 Python 侧一致）。
+  primary  = "#0072B2",
   mid      = "#F7F7F7",   # 发散色中点（RdBu 的中性色）
   ink      = "#1A1A1A",   # 文字 / 参考线（白底 17.4:1）
   muted    = "#666666",   # 副标题 / 次要说明
