@@ -632,7 +632,10 @@ run_06_wgcna <- function(cfg) {
       m_raw <- datExpr[, genes_m, drop = FALSE]
       keep_v <- apply(m_raw, 2L, stats::var) > 0
       # datExpr 是 样本x基因：scale() 按列=每个基因跨样本 z-score；t() 转成 基因x样本
-      m_expr <- t(scale(m_raw[, keep_v, drop = FALSE]))
+'      m_expr <- t(scale(m_raw[, keep_v, drop = FALSE]))
+      keep_finite <- apply(is.finite(m_expr), 1L, all)
+      m_expr <- m_expr[keep_finite, , drop = FALSE]
+      if (nrow(m_expr) < 2L) stop("过滤后剩余行不足")'
       # 行名换基因名；样本列按 ME 排序（结构可见）
       mm_vals <- kme[rownames(m_expr), top_m]
       ord <- order(ifelse(is.na(mm_vals), -Inf, mm_vals))
