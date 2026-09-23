@@ -499,22 +499,31 @@ run_06_wgcna <- function(cfg) {
   tryCatch({
     me_h <- 1 - stats::cor(me, use = "pairwise.complete.obs")
     me_tree <- stats::hclust(as.dist(me_h), method = "average")
-    par_old <- par(no.readonly = TRUE)
     png(file.path(res, paste0(as.character(1), "-06-06-unit1-eigengene-dendro.png")),
-        width = W_ONE_HALF, height = mm(72), units = "in", res = 300)
-    layout(matrix(c(1, 2), 2, 1), heights = c(0.4, 0.6))
-    par(mar = c(3.5, 4, 2, 0.5))   # 72mm 双面板装不下默认 margin（实测 figure margins too large）
+        width = W_ONE_HALF, height = mm(64), units = "in", res = 300)
+    par(mar = c(4, 4, 2, 0.5))
     plot(me_tree, main = "Module eigengene dendrogram", xlab = "",
          sub = "height = 1 - cor; dashed = mergeCutHeight 0.25")
     graphics::abline(h = 0.25, col = PAL$up, lty = "dashed")
-    im_ok <- requireNamespace("pheatmap", quietly = TRUE)
-    if (im_ok) {
-      pheatmap::pheatmap(stats::cor(me, use = "pairwise.complete.obs"),
-                         cluster_rows = me_tree, cluster_cols = me_tree,
-                         main = "Module eigengene correlations", silent = TRUE)
-    }
     dev.off()
-    par(par_old)
+    pdf(file.path(res, paste0(as.character(1), "-06-06-unit1-eigengene-dendro.pdf")),
+        width = W_ONE_HALF, height = mm(64))
+    par(mar = c(4, 4, 2, 0.5))
+    plot(me_tree, main = "Module eigengene dendrogram", xlab = "",
+         sub = "height = 1 - cor; dashed = mergeCutHeight 0.25")
+    graphics::abline(h = 0.25, col = PAL$up, lty = "dashed")
+    dev.off()
+    # eigengene 相关性热图（独立单图，符合单图原则——原 layout 双面板在 72mm 放不下）
+    if (requireNamespace("pheatmap", quietly = TRUE)) {
+      ph7 <- pheatmap::pheatmap(stats::cor(me, use = "pairwise.complete.obs"),
+                                silent = TRUE,
+                                main = "Module eigengene correlations")
+      if (!is.null(ph7) && !is.null(ph7$gtable)) {
+        save_pdf(file.path(res, paste0(as.character(1), "-06-06-unit2-eigengene-corr.pdf")),
+                 grid::grid.draw(ph7$gtable), width = W_ONE_HALF, height = mm(64))
+      }
+    }
+    log_info("WGCNA: eigengene 树 + 相关性热图已生成（图7，拆两张单图）")
     pdf(file.path(res, paste0(as.character(1), "-06-06-unit1-eigengene-dendro.pdf")),
         width = W_ONE_HALF, height = mm(72))
     layout(matrix(c(1, 2), 2, 1), heights = c(0.4, 0.6))
