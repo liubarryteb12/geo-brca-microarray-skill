@@ -158,6 +158,51 @@ function checkImplicitConcat(source, file) {
 const definedFunctions = new Set()
 const calledFunctions = new Set()
 
+// ---- 检查 A：基础绘图函数不得写成 stats::（错误台账 E-03）------------------
+// 实测踩过两次：`stats::abline` / `stats::axis` —— 它们都在 **graphics** 命名空间。
+// 本仓库禁止 library()，每个函数都要写全名，所以写错命名空间会直接报
+// "'X' is not an exported object from 'namespace:stats'"，而那个报错
+// 不会提示"应该换成 graphics"。
+const GRAPHICS_FNS = new Set([
+  'plot', 'image', 'axis', 'abline', 'mtext', 'par', 'layout', 'legend',
+  'text', 'title', 'lines', 'points', 'box', 'grid', 'rect', 'polygon',
+  'hist', 'barplot', 'pie', 'contour', 'persp', 'pairs', 'matplot',
+])
+const STATS_WRONGLY = /stats::([A-Za-z_.][A-Za-z0-9_.]*)/g
+
+// ---- 检查 B：sprintf 格式串里的裸 %（错误台账 E-02）------------------------
+// 实测：`sprintf("... top 2% of both ...", rho)` 报 `too few arguments` ——
+// 文本里的 `% o` 被当成八进制转换符 `%o`，多吃一个参数。烧了 6 轮 CI 才定位。
+//
+// **判据要窄，否则误报淹没真信号**（第一版按"总 % 数 > 合法转换符数"判，
+// 对跨行拼接的格式串误报 12 处 —— 那些 % 分布在多个字符串里，各自合法）。
+// 真正危险的只有一种模式：**一个字符串字面量内部**，`%` 后面紧跟
+// 空格 + 字母（`% o` / `% a`）或紧跟字母但不是合法转换符 —— 那才是被误读的转换符。
+// 合法的 `%%`、`%d`、`%.2f`、`%s`、`%5.1f` 等一律不报。
+// 真正危险的**只有一种**模式：`%` 后面紧跟**空格**、再跟字母（`% o` / `% a`）。
+// R 把 `%` 后的空格当 flags、把那个字母当转换符（`o`=八进制、`a`/`e`/`f`/`g`=浮点…），
+// 于是多吃一个参数。而 `%-52s`、`%5.1f%%`、`%H:%M:%S`、`%.1f%%` 这些
+// **各自合法**（`%%` 是转义、`%H` 在 strftime 里不是 sprintf 格式串）。
+// 第一版判据太宽 → 误报 18 处，把真信号淹没；收窄到"空格 + 字母"后只剩真问题。
+const BAD_PERCENT = /(?<!%)% +[a-zA-Z]/g   // 负向后视：%% 是转义，不算裸 %
+function checkSprintfPercent(source, file) {
+  const lines = source.split(/\r?\n/)
+  lines.forEach((line, i) => {
+    if (!/sprintf\s*\(/.test(line)) return
+    if (/^\s*#/.test(line)) return
+    for (const m of line.matchAll(/"((?:[^"\\]|\\.)*)"/g)) {
+      const lit = m[1]
+      if (!lit.includes('%')) continue
+      BAD_PERCENT.lastIndex = 0
+      if (BAD_PERCENT.test(lit)) {
+        problems.push(
+          `${file}:${i + 1} sprintf 格式串里有裸 %（"${lit.slice(0, 40)}..."）—— ` +
+          `文本里的 % 必须写 %%，否则 R 当成转换符多吃参数，报 too few arguments`);
+      }
+    }
+  })
+}
+
 for (const file of files) {
   const rel = relative(root, file).split('\\').join('/')
   const source = readFileSync(file, 'utf8')
@@ -165,6 +210,16 @@ for (const file of files) {
   checkBalance(code, rel)
   // **必须在原始 source 上查**，不能用 stripLiterals 的结果（见函数注释）
   checkImplicitConcat(source, rel)
+  checkSprintfPercent(source, rel)
+
+  // stats:: 误用检查（在剥掉注释与字符串的 code 上查，避免注释里的例子误报）
+  for (const m of code.matchAll(STATS_WRONGLY)) {
+    if (GRAPHICS_FNS.has(m[1])) {
+      problems.push(
+        `${rel}: stats::${m[1]} 不存在 —— 基础绘图函数在 graphics 命名空间，` +
+        `写 stats:: 会报 "not an exported object from 'namespace:stats'"`);
+    }
+  }
 
   for (const m of code.matchAll(/(?:^|\n)\s*([A-Za-z_.][A-Za-z0-9_.]*)\s*<-\s*function/g)) {
     definedFunctions.add(m[1])
