@@ -625,23 +625,18 @@ run_06_wgcna <- function(cfg) {
   # **图13：最相关模块的基因表达热图**（WGCNA 清单图13）：
   # 取 |cor| 最高的模块-性状对的模块，行 z-score、列=肿瘤样本。
   tryCatch({
-    log_info("[FIG13-A] tryCatch entered")
     top_row <- cor_df[order(-abs(cor_df$cor)), ][1L, ]
     top_m <- paste0("ME", top_row$module)
-    log_info(sprintf("[FIG13-B] top module=%s nrow(cor_df)=%d", top_row$module, nrow(cor_df)))
     if (top_m %in% colnames(kme)) {
       genes_m <- mod_df$gene[mod_df$module_num == as.character(top_row$module)]
       m_raw <- datExpr[, genes_m, drop = FALSE]
       keep_v <- apply(m_raw, 2L, stats::var) > 0
-      m_expr <- t(scale(t(m_raw[, keep_v, drop = FALSE])))
+      # datExpr 是 样本x基因：scale() 按列=每个基因跨样本 z-score；t() 转成 基因x样本
+      m_expr <- t(scale(m_raw[, keep_v, drop = FALSE]))
       # 行名换基因名；样本列按 ME 排序（结构可见）
-    log_info(sprintf("[FIG13-C] nrow(m_expr)=%d top_m=%s in-cols=%s",
-                       nrow(m_expr), top_m, top_m %in% colnames(kme)))
       mm_vals <- kme[rownames(m_expr), top_m]
       ord <- order(ifelse(is.na(mm_vals), -Inf, mm_vals))
       m_expr <- m_expr[ord, , drop = FALSE]
-      log_info(sprintf("[FIG13] dim=%dx%d top_m=%s genes_m=%d",
-                       nrow(m_expr), ncol(m_expr), top_m, length(genes_m)))
       ph13 <- pheatmap::pheatmap(m_expr, cluster_rows = FALSE, cluster_cols = FALSE,
                                  scale = "none", border_color = NA, fontsize = 5,
                                  labels_col = rep("", ncol(m_expr)), silent = TRUE,
