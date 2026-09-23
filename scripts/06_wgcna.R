@@ -503,6 +503,7 @@ run_06_wgcna <- function(cfg) {
     png(file.path(res, paste0(as.character(1), "-06-06-unit1-eigengene-dendro.png")),
         width = W_ONE_HALF, height = mm(72), units = "in", res = 300)
     layout(matrix(c(1, 2), 2, 1), heights = c(0.4, 0.6))
+    par(mar = c(3.5, 4, 2, 0.5))   # 72mm 双面板装不下默认 margin（实测 figure margins too large）
     plot(me_tree, main = "Module eigengene dendrogram", xlab = "",
          sub = "height = 1 - cor; dashed = mergeCutHeight 0.25")
     stats::abline(h = 0.25, col = PAL$up, lty = "dashed")
@@ -634,13 +635,7 @@ run_06_wgcna <- function(cfg) {
       m_expr <- t(scale(m_raw[, keep_v, drop = FALSE]))
       keep_finite <- apply(is.finite(m_expr), 1L, all)
       m_expr <- m_expr[keep_finite, , drop = FALSE]
-      if (nrow(m_expr) < 2L) {
-        status$fig13_status <- "not_available"
-        status$fig13_reason <- paste0("top 模块基因在本验证样本子集中方差为 0，",
-                                      "z-score 后无可画内容（15 样本同质性高）。",
-                                      "全样本运行时不复现。")
-        log_warn("图13：模块基因在本验证子集中零方差 —— 跳过（全样本运行不受影响）")
-      } else {
+      if (nrow(m_expr) < 2L) stop("过滤后剩余行不足")
       # 行名换基因名；样本列按 ME 排序（结构可见）
       mm_vals <- kme[rownames(m_expr), top_m]
       ord <- order(ifelse(is.na(mm_vals), -Inf, mm_vals))
@@ -663,8 +658,7 @@ run_06_wgcna <- function(cfg) {
                                                   labels = rownames(m_expr),
                                                   at = seq_len(nrow(m_expr)))
       dev.off()
-'      log_info("WGCNA: 图13 模块表达热图已生成")
-      }'
+      log_info("WGCNA: 图13 模块表达热图已生成")
       # 图15 的输入：top 模块基因落盘（GO 富集在 04 里统一做，那里有 clusterProfiler）
       utils::write.csv(data.frame(gene = genes_m, module = top_row$module,
                                   trait = top_row$trait, cor = top_row$cor),
