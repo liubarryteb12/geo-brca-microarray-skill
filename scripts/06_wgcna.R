@@ -383,24 +383,33 @@ run_06_wgcna <- function(cfg) {
                                                      unname(grp_pal[grp_lv])), collapse = "; ")),
                   unlist(trait_legend))
   draw_sample_dendro <- function() {
-    # plotDendroAndColors 没有 marAll 参数（那是 plotEigengeneNetworks 的）；
-    # 边距走 par(mar=) —— 左边留 7 行给行名、下边留 5 行给颜色图例文字。
-    graphics::par(mar = c(5, 7, 3, 1))
+    # **颜色图例放在图的最下方，用 layout 单独给一块区域** ——
+    # 实测 v1：用 mtext 写在行名同一侧，9 行图例文字与 9 个行名**完全重叠**，
+    # 两边都读不了。正确做法是 layout 上下分区：上面画树、下面留给图例。
+    n_leg <- length(legend_txt)
+    graphics::layout(matrix(c(1, 2), 2, 1), heights = c(0.78, 0.22))
+    # 上区：树 + 性状条（左边留宽给行名，下边不留）
+    graphics::par(mai = c(0.08, 1.5, 0.5, 0.15))
     WGCNA::plotDendroAndColors(sample_tree, color_mat, groupLabels = group_labels_row,
                                dendroLabels = FALSE, hang = 0.03,
                                addGuide = TRUE, guideHang = 0.05,
                                main = "Sample dendrogram with trait annotation (outlier check)",
                                cex.labels = 0.4)
-    # 颜色图例：写在图下方（每行一条），说明每个颜色代表什么
-    graphics::mtext(paste(legend_txt, collapse = "\n"), side = 1, line = 2.4,
-                    adj = 0, cex = 0.45, col = PAL$ink)
+    # 下区：纯文字图例（无坐标轴），逐行写，不再与行名抢位置
+    graphics::par(mai = c(0.02, 1.5, 0.02, 0.15))
+    graphics::plot.new()
+    graphics::plot.window(xlim = c(0, 1), ylim = c(0, n_leg))
+    for (k in seq_along(legend_txt)) {
+      graphics::text(0, n_leg - k + 0.5, legend_txt[k],
+                     adj = c(0, 0.5), cex = 0.5, col = PAL$ink)
+    }
   }
   png(file.path(res, "01-06-03-unit1-sample-dendrogram.png"),
-      width = W_DOUBLE, height = mm(96), units = "in", res = 300)
+      width = W_DOUBLE, height = mm(120), units = "in", res = 300)
   draw_sample_dendro()
   dev.off()
   pdf(file.path(res, "01-06-03-unit1-sample-dendrogram.pdf"),
-      width = W_DOUBLE, height = mm(96))
+      width = W_DOUBLE, height = mm(120))
   draw_sample_dendro()
   dev.off()
   status$sample_dendrogram$trait_rows <- group_labels_row
@@ -689,7 +698,7 @@ run_06_wgcna <- function(cfg) {
     # 避免密集区堆叠。
     hub_lab <- dd[dd$gs > quantile(dd$gs, 0.99) &
                   dd$mm > quantile(dd$mm, 0.99), , drop = FALSE]
-    hub_lab <- utils::head(hub_lab[order(-hub_lab$mm), , drop = FALSE], 8L)
+    hub_lab <- utils::head(hub_lab[order(-hub_lab$mm), , drop = FALSE], 5L)
     # **点要按 MM/GS 高低着色 + 加阈值线**（用户反馈：GS-MM 图缺散点颜色和阈值线）。
     # 文献判据（WGCNA 清单图8）：MM > 0.8 且 GS > 0.2 的右上角是 hub 候选区 ——
     # 两条阈值线把这个区域显式框出来，读者不用自己估。
@@ -726,10 +735,17 @@ run_06_wgcna <- function(cfg) {
         y = sprintf("GS (|cor| with %s)", t)) +
       theme_paper(9)
     if (nrow(hub_lab) > 0L) {
+      # **ggrepel 必须显式给 seed**（AGENTS 规则 11：`seed` 默认是 NA 不是 NULL，
+      # 不给则每次排布不同 → 图不可复现）。同时收紧排斥参数：
+      # 右上角 hub 区点很密，`force` 默认 1 不够，实测标签会叠在一起。
       p_gsmm <- p_gsmm + ggrepel::geom_text_repel(
         data = hub_lab, ggplot2::aes(label = gene),
         size = 2.2, colour = PAL$ink,
-        min.segment.length = 0)
+        seed = 42,
+        max.overlaps = Inf,
+        force = 3, force_pull = 0.5,
+        box.padding = 0.35, point.padding = 0.25,
+        min.segment.length = 0, segment.size = 0.2)
     }
     save_pdf(file.path(res, paste0(GSMM_BASE, which(unique(cor_df$trait) == t),
                                    "-gs-mm-", t, ".pdf")),
