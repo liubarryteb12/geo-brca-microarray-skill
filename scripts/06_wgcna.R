@@ -654,7 +654,7 @@ run_06_wgcna <- function(cfg) {
             ylab = "", axes = FALSE,
             main = sprintf("Module %s expression (top trait: %s, r=%.2f)",
                            top_row$module, top_row$trait, as.numeric(top_row$cor)))
-      stats::axis(1, labels = FALSE); stats::axis(2, las = 2, cex.axis = 0.35,
+      graphics::axis(1, labels = FALSE); graphics::axis(2, las = 2, cex.axis = 0.35,
                                                   labels = rownames(m_expr),
                                                   at = seq_len(nrow(m_expr)))
       dev.off()
