@@ -515,20 +515,26 @@ run_06_wgcna <- function(cfg) {
   DYNAMIC_FIG_BASES_DECL = '04:8'
   GSMM_BASE <- paste0(as.character(1), "-06-04-unit")
   for (t in colnames(bt$traits)) {
+    log_info("[GSMM-1] sub ok")
     sub <- cor_df[cor_df$trait == t & is.finite(cor_df$cor), , drop = FALSE]
+    log_info("[GSMM-2] best_m ok")
     if (nrow(sub) == 0L) next
     best_m <- sub$module[which.max(abs(sub$cor))]
     me_name <- paste0("ME", best_m)
     if (!me_name %in% colnames(kme)) next
     gs_v <- abs(stats::cor(datExpr, bt$traits[[t]],
                            use = "pairwise.complete.obs"))[, 1L]
+    log_info("[GSMM-3] gs_v ok")
     mm_v <- kme[, me_name]
+    log_info("[GSMM-4] mm_v ok")
     rho <- suppressWarnings(stats::cor.test(gs_v, mm_v,
                                             )$estimate)
+    log_info("[GSMM-5] rho ok")
     dd <- data.frame(gs = gs_v, mm = mm_v, gene = colnames(datExpr),
                      stringsAsFactors = FALSE)
     hub_lab <- dd[dd$gs > quantile(dd$gs, 0.98) &
                   dd$mm > quantile(dd$mm, 0.98), , drop = FALSE]
+    log_info("[GSMM-6] hub_lab ok")
     p_gsmm <- ggplot2::ggplot(dd, ggplot2::aes(x = mm, y = gs)) +
       ggplot2::geom_point(size = 0.8, alpha = 0.5, colour = PAL$primary) +
       ggplot2::labs(
@@ -541,12 +547,14 @@ run_06_wgcna <- function(cfg) {
         x = sprintf("MM (kME, module %s)", best_m),
         y = sprintf("GS (|cor| with %s)", t)) +
       theme_paper(9)
+    log_info("[GSMM-7] ggplot ok")
     if (nrow(hub_lab) > 0L) {
       p_gsmm <- p_gsmm + ggrepel::geom_text_repel(
         data = hub_lab, ggplot2::aes(label = gene),
         size = 2.2, colour = PAL$ink,
         min.segment.length = 0)
     }
+    log_info("[GSMM-8] repel ok")
     save_pdf(file.path(res, paste0(GSMM_BASE, which(unique(cor_df$trait) == t),
                                    "-gs-mm-", t, ".pdf")),
              print(p_gsmm), width = W_ONE_HALF, height = mm(72))

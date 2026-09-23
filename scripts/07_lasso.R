@@ -209,7 +209,7 @@ make_km_plot <- function(df, cutoff, title, cfg, time_unit = "days") {
       x = sprintf("Time since diagnosis (%s)", time_unit),
       y = "survival probability") +
     theme_paper(10) +
-    ggplot2::theme(legend.position = "top", legend.justification = c(1, 0.5), legend.text = ggplot2::element_text(size = 7), legend.key.size = ggplot2::unit(0.6, "lines"))
+    ggplot2::theme(legend.position = "right", legend.text = ggplot2::element_text(size = 7), legend.key.size = ggplot2::unit(0.6, "lines"))
   if (nrow(cens) > 0L) {
     p <- p + ggplot2::geom_point(data = cens, shape = 124, size = 1.6,
                                  colour = PAL$ink, show.legend = FALSE)

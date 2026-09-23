@@ -848,8 +848,8 @@ theme_paper <- function(base_size = 10) {
       plot.subtitle    = ggplot2::element_text(colour = PAL$muted, size = base_size - 1.5),
       plot.margin      = ggplot2::margin(5, 6, 4, 5),
       # 底部横排图例：省宽度
-  legend.position   = "top",                    # 框外顶部（用户约定：图例外置右上）
-  legend.justification = c(1, 0.5),             # 顶部右对齐
+  legend.position   = "right",                  # 框外右侧（用户约定 v2：不挤压主图）
+  legend.justification = c(0.5, 0.5),
       legend.direction  = "horizontal",
       # **多个图例要竖着摞，不能并排。**
       # `legend.direction` 管的是一个图例内部（键横排），`legend.box` 管的是
