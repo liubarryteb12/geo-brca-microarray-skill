@@ -302,7 +302,12 @@ run_06_wgcna <- function(cfg) {
       as.list(rownames(datExpr)[unique(outl)]) else list(),
     note = "候选 = 合并高度 > 1.5 x 中位合并高。是否剔除由人工复核节点 outlier_removal 决定，脚本不自动删。")
   grp_lv <- unique(group$group)
-  grp_pal <- stats::setNames(c(PAL$up, PAL$down, PAL$primary, PAL$muted), grp_lv)
+  # **颜色数必须等于水平数**（实测：WGCNA 只用肿瘤组时 grp_lv 只有 1 个水平，
+  # 而 setNames(c(4 个颜色), 1 个名字) 报
+  # "'names' attribute [2] must be the same length as the vector [1]" —— 整步崩）。
+  # 按水平数取前 N 个颜色，多余的颜色不参与。
+  grp_cols <- c(PAL$up, PAL$down, PAL$primary, PAL$muted)[seq_along(grp_lv)]
+  grp_pal <- stats::setNames(grp_cols, grp_lv)
   group_col <- unname(grp_pal[group$group[match(rownames(datExpr), group$gsm)]])
 
   # **性状注释条**（WGCNA 清单图1：树 + 性状热图是**同一个功能单元**，
