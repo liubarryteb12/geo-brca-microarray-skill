@@ -628,7 +628,7 @@ run_06_wgcna <- function(cfg) {
     top_row <- cor_df[order(-abs(cor_df$cor)), ][1L, ]
     top_m <- paste0("ME", top_row$module)
     if (top_m %in% colnames(kme)) {
-      genes_m <- mod_df$gene[mod_df$module == top_row$module]
+      genes_m <- mod_df$gene[mod_df$module_num == as.character(top_row$module)]
       m_raw <- datExpr[, genes_m, drop = FALSE]
       keep_v <- apply(m_raw, 2L, stats::var) > 0
       m_expr <- t(scale(t(m_raw[, keep_v, drop = FALSE])))
