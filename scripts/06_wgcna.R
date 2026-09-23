@@ -301,14 +301,19 @@ run_06_wgcna <- function(cfg) {
     outlier_candidates = if (length(outl) > 0L)
       as.list(rownames(datExpr)[unique(outl)]) else list(),
     note = "候选 = 合并高度 > 1.5 x 中位合并高。是否剔除由人工复核节点 outlier_removal 决定，脚本不自动删。")
-  grp_lv <- unique(group$group)
-  # **颜色数必须等于水平数**（实测：WGCNA 只用肿瘤组时 grp_lv 只有 1 个水平，
-  # 而 setNames(c(4 个颜色), 1 个名字) 报
+  # **颜色数必须等于水平数**（实测：WGCNA 只用肿瘤组时只有 1 个水平，
+  # 而 setNames(4 个颜色, 1 个名字) 报
   # "'names' attribute [2] must be the same length as the vector [1]" —— 整步崩）。
-  # 按水平数取前 N 个颜色，多余的颜色不参与。
-  grp_cols <- c(PAL$up, PAL$down, PAL$primary, PAL$muted)[seq_along(grp_lv)]
+  # **样本树整段包 tryCatch**（AGENTS 规则 14：出图错误不得逃逸到
+  # 方法级）。性状注释/图例失败时退回只画分组条 —— WGCNA 核心产物不受影响。
+  tryCatch({
+  # `group$group` 可能是 factor，先转 character 再取水平，避免 factor 索引的意外行为。
+  grp_chr <- as.character(group$group)
+  grp_lv <- unique(grp_chr)
+  grp_all_cols <- c(PAL$up, PAL$down, PAL$primary, PAL$muted)
+  grp_cols <- grp_all_cols[seq_len(length(grp_lv))]
   grp_pal <- stats::setNames(grp_cols, grp_lv)
-  group_col <- unname(grp_pal[group$group[match(rownames(datExpr), group$gsm)]])
+  group_col <- unname(grp_pal[grp_chr[match(rownames(datExpr), group$gsm)]])
 
   # **性状注释条**（WGCNA 清单图1：树 + 性状热图是**同一个功能单元**，
   # 必须画在一起 —— 否则无法把树的分支和性状对应起来）。
@@ -326,18 +331,27 @@ run_06_wgcna <- function(cfg) {
         v <- clin_use[[cn]][idx]
         if (all(is.na(v))) next
         num <- suppressWarnings(as.numeric(v))
+        # **每一行注释条必须与样本数等长**（否则 cbind 到 color_mat 时长度不匹配，
+        # plotDendroAndColors 内部报 names/length 类错误 —— 实测整步崩）。
+        # 任一步产生长度不符就跳过该性状，并记日志。
         if (!anyNA(num) && length(unique(num)) > 2L) {
           # 连续性状：4 分位分箱 → 白到红的连续色阶
-          br <- stats::quantile(num, probs = seq(0, 1, 0.25), na.rm = TRUE)
-          bin <- cut(num, breaks = unique(br), include.lowest = TRUE, labels = FALSE)
-          cols <- colorRampPalette(c("white", PAL$up))(max(bin, na.rm = TRUE))[bin]
+          br <- unique(stats::quantile(num, probs = seq(0, 1, 0.25), na.rm = TRUE))
+          if (length(br) < 2L) next          # 分位数全同 → 无法分箱
+          bin <- cut(num, breaks = br, include.lowest = TRUE, labels = FALSE)
+          nb <- max(bin, na.rm = TRUE)
+          if (!is.finite(nb) || nb < 1L) next
+          cols <- colorRampPalette(c("white", PAL$up))(nb)[bin]
+          if (length(cols) != length(v)) next
           trait_rows[[cn]] <- cols
           trait_legend[[cn]] <- sprintf("continuous: white->red over %.1f-%.1f (quartile bins)",
                                         min(num, na.rm = TRUE), max(num, na.rm = TRUE))
         } else if (length(unique(stats::na.omit(v))) == 2L) {
           lv <- sort(unique(stats::na.omit(v)))
-          m <- stats::setNames(c(PAL$muted, PAL$primary), lv)
-          trait_rows[[cn]] <- unname(m[as.character(v)])
+          m <- stats::setNames(c(PAL$muted, PAL$primary)[seq_along(lv)], lv)
+          cols <- unname(m[as.character(v)])
+          if (length(cols) != length(v)) next
+          trait_rows[[cn]] <- cols
           trait_legend[[cn]] <- sprintf("%s=%s, %s=%s", lv[1], PAL$muted, lv[2], PAL$primary)
         }
       }
@@ -346,9 +360,22 @@ run_06_wgcna <- function(cfg) {
   # 分组始终作为第一行（最要紧的注释）
   color_mat <- cbind(Group = group_col)
   if (length(trait_rows) > 0L) {
-    tr <- do.call(cbind, trait_rows)
-    rownames(tr) <- NULL
-    color_mat <- cbind(color_mat, tr)
+    # **性状注释条必须与样本数等长、且列名齐全** —— 长度/名字不匹配时
+    # plotDendroAndColors 会报 "'names' attribute [N] must be the same length..."
+    # 而那是**绘图参数问题**，不该拖垮整个 WGCNA 步骤（AGENTS 规则 14：
+    # 出图代码的错误不得逃逸到方法级）。逐列校验，坏的列丢掉并记录。
+    ok_cols <- vapply(trait_rows, function(x) length(x) == nrow(datExpr), logical(1))
+    if (any(!ok_cols)) {
+      log_warn(sprintf("样本树: 丢掉 %d 个长度不符的性状注释行: %s",
+                       sum(!ok_cols), paste(names(trait_rows)[!ok_cols], collapse = ", ")))
+      trait_rows <- trait_rows[ok_cols]
+      trait_legend <- trait_legend[ok_cols]
+    }
+    if (length(trait_rows) > 0L) {
+      tr <- do.call(cbind, trait_rows)
+      colnames(tr) <- names(trait_rows)   # do.call(cbind) 会丢列名，必须补回
+      color_mat <- cbind(color_mat, tr)
+    }
   }
   group_labels_row <- c("Group", names(trait_rows))
   # 图例文字（画在图下方，用 base legend —— plotDendroAndColors 自己不带图例）
@@ -378,6 +405,10 @@ run_06_wgcna <- function(cfg) {
   dev.off()
   status$sample_dendrogram$trait_rows <- group_labels_row
   status$sample_dendrogram$color_legend <- as.list(legend_txt)
+  }, error = function(e) {
+    status$sample_dendrogram$figure_error <- conditionMessage(e)
+    log_warn(sprintf("样本树出图失败（原因已记入 status）: %s", conditionMessage(e)))
+  })
   if (length(outl) > 0L) {
     log_warn(sprintf("WGCNA: %d 个离群候选样本（见 01-06-03-unit1-sample-dendrogram）—— 不自动剔除",
                      length(outl)))
