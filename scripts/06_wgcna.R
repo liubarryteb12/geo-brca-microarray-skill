@@ -637,13 +637,24 @@ run_06_wgcna <- function(cfg) {
       mm_vals <- kme[rownames(m_expr), top_m]
       ord <- order(ifelse(is.na(mm_vals), -Inf, mm_vals))
       m_expr <- m_expr[ord, , drop = FALSE]
-      ph13 <- pheatmap::pheatmap(m_expr, cluster_rows = FALSE, cluster_cols = FALSE,
-                                 scale = "none", border_color = NA, fontsize = 5,
-                                 labels_col = rep("", ncol(m_expr)), silent = TRUE,
-                                 main = sprintf("Module %s expression (top trait: %s, r=%.2f)",
-                                                top_row$module, top_row$trait, top_row$cor))
-      save_pdf(file.path(res, paste0(as.character(1), "-06-07-unit1-module-heatmap.pdf")),
-               grid::grid.draw(ph13$gtable), width = W_DOUBLE, height = mm(120))
+      # base R image()：pheatmap 在此数据形状下有内部错误（from must be finite），
+      # 改用零依赖绘制 —— 红蓝发散色、样本列按 ME 排序、无行列树（结构由 CSV 供）。
+      brk <- seq(-3, 3, length.out = 101)
+      pal <- colorRampPalette(c(PAL$down, "white", PAL$up))(100)
+      png(file.path(res, paste0(as.character(1), "-06-07-unit1-module-heatmap.png")),
+          width = W_DOUBLE, height = mm(110), units = "in", res = 300)
+      par(mar = c(2, 8, 3, 1))
+      image(x = seq_len(ncol(m_expr)), y = seq_len(nrow(m_expr)),
+            z = t(as.matrix(m_expr)), useRaster = TRUE,
+            col = pal, breaks = brk,
+            xlab = "Tumour samples (ordered by module eigengene)",
+            ylab = "", axes = FALSE,
+            main = sprintf("Module %s expression (top trait: %s, r=%.2f)",
+                           top_row$module, top_row$trait, as.numeric(top_row$cor)))
+      stats::axis(1, labels = FALSE); stats::axis(2, las = 2, cex.axis = 0.35,
+                                                  labels = rownames(m_expr),
+                                                  at = seq_len(nrow(m_expr)))
+      dev.off()
       log_info("WGCNA: 图13 模块表达热图已生成")
       # 图15 的输入：top 模块基因落盘（GO 富集在 04 里统一做，那里有 clusterProfiler）
       utils::write.csv(data.frame(gene = genes_m, module = top_row$module,
