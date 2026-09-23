@@ -815,51 +815,42 @@ run_06_wgcna <- function(cfg) {
       # **行名放不放得下是算出来的**（AGENTS 规则 21）：模块基因常有几百个，
       # 硬标会溢出图框。走 label_budget()/fits_labels() —— 放不下就整张不标，
       # 基因身份由 wgcna_top_module_genes.csv 提供（同一显示顺序）。
-      brk <- seq(-3, 3, length.out = 101)
-      pal <- colorRampPalette(c(PAL$down, "white", PAL$up))(100)
+      # **用 ggplot 画**（实测 base R 的 image + layout/par(fig) 在 200mm 画布上
+      # 反复报 figure margins too large —— 烧了 4 轮 CI 仍未解）。
+      # ggplot 的 geom_tile 走与其它图完全相同的渲染路径，边距由 theme 管，
+      # 不会碰 base R 的 mai/mar 预算问题。行名放不下时走 fits_labels 整张不标。
       n_row <- nrow(m_expr)
-      # **图幅随行数走**（用户反馈"图幅不适配"）：382 基因塞进 110 mm 会糊成一片。
-      # 每行至少 0.30 mm、上限 200 mm（超过说明该模块基因太多，该看 CSV 而非热图）。
       fig13_h <- min(mm(200), max(mm(110), n_row * 0.30))
       row_lab_ok <- fits_labels(n_row, height_in = fig13_h, fontsize = 4,
                                 panel_frac = 0.72, min_gap = 0.6)
-      # **色标用 layout 单独开一栏**（不是 add=TRUE 叠画）—— 叠画会因超出 xlim
-      # 被静默裁掉（实测 v3：色标整条不见）。layout 是可靠的定宽做法。
-      png(file.path(res, paste0("0", as.character(1), "-06-07-unit1-module-heatmap.png")),
-          width = W_DOUBLE, height = fig13_h, units = "in", res = 300)
-      # **用 par(fig=) 手工分区，不用 layout** —— 实测 v4/v5/v6：
-      # `layout(widths=c(1, 0.06))` 在 183 mm 宽下给色标栏仅 ~10 mm，
-      # 减去色标自身的边距后**剩负数** → `figure margins too large`（报错在 dev.off 前，
-      # 整图失败）。`par(fig=)` 用**画布比例**直接指定两个面板的矩形，
-      # 色标栏固定占右侧 3.5%（约 6.4 mm），主栏占左侧 96%，边距用 mai（绝对英寸）。
-      op <- par(no.readonly = TRUE)
-      on.exit(par(op), add = TRUE)
-      par(fig = c(0.005, 0.955, 0.005, 0.945),
-          mai = c(0.55, if (row_lab_ok) 1.15 else 0.25, 0.35, 0.05))
-      image(x = seq_len(ncol(m_expr)), y = seq_len(n_row),
-            z = t(as.matrix(m_expr)), useRaster = TRUE,
-            col = pal, breaks = brk,
-            xlab = "Tumour samples (ordered by module eigengene)",
-            ylab = "", axes = FALSE,
-            main = sprintf("Module %s expression (top trait: %s, r=%.2f, n=%d genes)",
-                           top_row$module, top_row$trait, as.numeric(top_row$cor), n_row))
-      graphics::axis(1, labels = FALSE)
-      if (row_lab_ok) {
-        graphics::axis(2, las = 2, cex.axis = 0.3, labels = rownames(m_expr),
-                       at = seq_len(n_row))
-      } else {
-        log_info(sprintf("图13: %d 行放不下行名（预算不足）—— 整张不标，基因身份见 CSV", n_row))
-      }
-      # 第二栏：色标（右侧 3.5% 宽，与主图同高，刻度在右侧）
-      par(fig = c(0.962, 0.978, 0.005, 0.945), mai = c(0.55, 0.02, 0.35, 0.30),
-          new = TRUE)
-      image(x = 1, y = seq(-3, 3, length.out = 100),
-            z = matrix(seq(-3, 3, length.out = 100), ncol = 1),
-            col = pal, breaks = brk, axes = FALSE, xlab = "", ylab = "")
-      graphics::axis(4, at = seq(-3, 3, by = 1), las = 1, cex.axis = 0.55)
-      graphics::mtext("z-scored expression", side = 4, line = 2.0, cex = 0.55)
-      dev.off()
-      log_info("WGCNA: 图13 模块表达热图已生成")
+      df13 <- data.frame(
+        gene = rep(rownames(m_expr), times = ncol(m_expr)),
+        sample = rep(seq_len(ncol(m_expr)), each = n_row),
+        z = as.vector(m_expr),
+        stringsAsFactors = FALSE)
+      df13$gene <- factor(df13$gene, levels = rev(rownames(m_expr)))
+      p13 <- ggplot2::ggplot(df13, ggplot2::aes(x = sample, y = gene, fill = z)) +
+        ggplot2::geom_tile() +
+        ggplot2::scale_fill_gradientn(colours = pal_diverging(100),
+                                      limits = c(-3, 3), name = "z-scored\nexpression") +
+        ggplot2::labs(
+          title = sprintf("Module %s expression (top trait: %s, r=%.2f, n=%d genes)",
+                          top_row$module, top_row$trait,
+                          as.numeric(top_row$cor), n_row),
+          subtitle = wrap_subtitle(paste0(
+            "Rows = module genes ordered by kME (top = highest). ",
+            "Columns = tumour samples ordered by module eigengene. ",
+            "z-scored per gene across samples."), fig_width = W_DOUBLE),
+          x = "Tumour samples (ordered by module eigengene)", y = NULL) +
+        theme_paper(9) +
+        ggplot2::theme(
+          panel.grid = ggplot2::element_blank(),
+          axis.text.y = if (row_lab_ok) ggplot2::element_text(size = 3) else ggplot2::element_blank(),
+          axis.ticks.y = ggplot2::element_blank(),
+          legend.position = "right")
+      save_pdf(file.path(res, paste0("0", as.character(1), "-06-07-unit1-module-heatmap.pdf")),
+               print(p13), width = W_DOUBLE, height = fig13_h)
+      log_info("WGCNA: 图13 模块表达热图已生成（ggplot 版）")
       # 图15 的输入：top 模块基因落盘（GO 富集在 04 里统一做，那里有 clusterProfiler）
       utils::write.csv(data.frame(gene = genes_m, module = top_row$module,
                                   trait = top_row$trait, cor = top_row$cor),
