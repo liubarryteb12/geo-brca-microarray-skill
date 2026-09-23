@@ -506,7 +506,7 @@ run_06_wgcna <- function(cfg) {
     par(mar = c(3.5, 4, 2, 0.5))   # 72mm 双面板装不下默认 margin（实测 figure margins too large）
     plot(me_tree, main = "Module eigengene dendrogram", xlab = "",
          sub = "height = 1 - cor; dashed = mergeCutHeight 0.25")
-    stats::abline(h = 0.25, col = PAL$up, lty = "dashed")
+    graphics::abline(h = 0.25, col = PAL$up, lty = "dashed")
     im_ok <- requireNamespace("pheatmap", quietly = TRUE)
     if (im_ok) {
       pheatmap::pheatmap(stats::cor(me, use = "pairwise.complete.obs"),
@@ -519,7 +519,7 @@ run_06_wgcna <- function(cfg) {
         width = W_ONE_HALF, height = mm(72))
     layout(matrix(c(1, 2), 2, 1), heights = c(0.4, 0.6))
     plot(me_tree, main = "Module eigengene dendrogram", xlab = "", sub = "")
-    stats::abline(h = 0.25, col = PAL$up, lty = "dashed")
+    graphics::abline(h = 0.25, col = PAL$up, lty = "dashed")
     if (im_ok) {
       pheatmap::pheatmap(stats::cor(me, use = "pairwise.complete.obs"),
                          cluster_rows = me_tree, cluster_cols = me_tree,
