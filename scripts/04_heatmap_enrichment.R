@@ -612,7 +612,11 @@ make_ora_dotplot <- function(df, cfg, title) {
                       fig_width = W_DOUBLE),
                     x = expression(-log[10] ~ "(adj.P)"), y = NULL) +
       theme_paper(9) +
-      ggplot2::theme(axis.text.y = ggplot2::element_text(size = 7))
+      # 图例一律框外右侧、纵向（用户约定 v2）
+      ggplot2::theme(axis.text.y = ggplot2::element_text(size = 7),
+                     legend.direction = "vertical", legend.box = "vertical",
+                     legend.text = ggplot2::element_text(size = 7),
+                     legend.key.size = ggplot2::unit(0.55, "lines"))
   })
   stats::setNames(plots, c("up", "down"))
 }
@@ -649,7 +653,14 @@ make_gsea_dotplot <- function(df, cfg, title) {
                     arms[1L], arms[2L], arms[1L]), fig_width = W_DOUBLE),
                   x = "NES (normalized enrichment score)", y = NULL) +
     theme_paper(9) +
-    ggplot2::theme(axis.text.y = ggplot2::element_text(size = 7))
+    # **两个图例（色标 + set size）必须纵向堆叠、且单个图例内元素竖排**
+    # （用户反馈：不同图例横向放置、同一图例内元素也应竖排）。
+    # `legend.direction` 管单个图例内部（色标的刻度竖排）、
+    # `legend.box` 管多个图例之间（两个图例块竖摞）。
+    ggplot2::theme(axis.text.y = ggplot2::element_text(size = 7),
+                   legend.direction = "vertical", legend.box = "vertical",
+                   legend.text = ggplot2::element_text(size = 7),
+                   legend.key.size = ggplot2::unit(0.55, "lines"))
 }
 
 #' 无显著基因时统一写空结果

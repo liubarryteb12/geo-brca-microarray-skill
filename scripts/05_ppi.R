@@ -584,7 +584,7 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
         # 图例放底部横排：右侧图例直接吃掉图宽，而这张图本来就是方的
         legend.position   = "right",
         legend.justification = c(1, 0.5),
-        legend.direction  = "horizontal",
+        legend.direction  = "vertical",
         # **这张图不继承 theme_paper()（用的是 theme_void()），所以图例设置
         # 必须自己来一遍 —— 上面那条 legend.box = "vertical" 到不了这里。**
         # 实测漏了这一处：degree（6 个断点）与 module 并排后，degree 被迫折成

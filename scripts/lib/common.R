@@ -847,18 +847,19 @@ theme_paper <- function(base_size = 10) {
       plot.title       = ggplot2::element_text(face = "bold", size = base_size + 1),
       plot.subtitle    = ggplot2::element_text(colour = PAL$muted, size = base_size - 1.5),
       plot.margin      = ggplot2::margin(5, 6, 4, 5),
-      # 底部横排图例：省宽度
-  legend.position   = "right",                  # 框外右侧（用户约定 v2：不挤压主图）
-  legend.justification = c(0.5, 0.5),
-      legend.direction  = "horizontal",
-      # **多个图例要竖着摞，不能并排。**
-      # `legend.direction` 管的是一个图例内部（键横排），`legend.box` 管的是
-      # **多个图例之间**。原来是 "horizontal" —— 多个图例的宽度**相加**。
-      # 实测 01-03-01-unit1-volcano-plot（colour + alpha 两个图例）：并排后总宽超出 183 mm，
-      # 两端被静默裁掉 —— 左端只剩 "…nificant"，右端
-      # "nominal P < 0.05, NOT FDR-significant (1873)" 的计数整段消失。
+      # **图例一律框外右侧、纵向排列**（用户约定 v2，2026-09-23）。
+      legend.position   = "right",                  # 框外右侧（不挤压主图）
+      legend.justification = c(0.5, 0.5),
+      # **同一个图例内部的键要竖着排**（不是横排）。
+      # 实测反馈：`horizontal` 让一个图例的键横着铺开（volcano 的 direction 图例
+      # 三个键横排、GSEA dotplot 的色标与 size 横排），既挤主图又难读。
+      # 竖排之后图例块宽度 = 最宽的一个键，不再随键数增长。
+      legend.direction  = "vertical",
+      # **多个图例之间也要竖着摞**（`legend.box` 管图例之间，`legend.direction`
+      # 管单个图例内部 —— 两个都要设成纵向）。
+      # 实测 01-03-01-unit1-volcano-plot（colour + alpha 两个图例）：并排后总宽超出
+      # 183 mm，两端被静默裁掉 —— 左端只剩 "…nificant"，右端计数整段消失。
       # ggplot 裁图例**不报警**，图上只表现为"这个图例好像短了一截"。
-      # 竖排之后图例块的宽度 = 最宽的那一个图例，不再随图例个数增长。
       legend.box        = "vertical",
       legend.title      = ggplot2::element_text(size = base_size - 1),
       legend.text       = ggplot2::element_text(size = base_size - 1.5),

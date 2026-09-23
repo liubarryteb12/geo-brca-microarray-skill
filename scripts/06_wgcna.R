@@ -304,22 +304,75 @@ run_06_wgcna <- function(cfg) {
   grp_lv <- unique(group$group)
   grp_pal <- stats::setNames(c(PAL$up, PAL$down, PAL$primary, PAL$muted), grp_lv)
   group_col <- unname(grp_pal[group$group[match(rownames(datExpr), group$gsm)]])
+
+  # **性状注释条**（WGCNA 清单图1：树 + 性状热图是**同一个功能单元**，
+  # 必须画在一起 —— 否则无法把树的分支和性状对应起来）。
+  # 分类性状：每个水平一个颜色；连续性状：分位数分箱后走连续色阶。
+  # 颜色映射**必须给图例**（用户反馈：分组无颜色区分 —— 光有颜色条、没有
+  # 说明哪个颜色是哪组，读者无从判断）。
+  trait_rows <- list()
+  trait_legend <- list()
+  clin_use <- clinical
+  if (!is.null(clin_use) && nrow(clin_use) > 0L) {
+    gsm_col <- intersect(c("gsm", "sample", "Sample"), colnames(clin_use))[1L]
+    if (!is.na(gsm_col)) {
+      idx <- match(rownames(datExpr), clin_use[[gsm_col]])
+      for (cn in setdiff(colnames(clin_use), gsm_col)) {
+        v <- clin_use[[cn]][idx]
+        if (all(is.na(v))) next
+        num <- suppressWarnings(as.numeric(v))
+        if (!anyNA(num) && length(unique(num)) > 2L) {
+          # 连续性状：4 分位分箱 → 白到红的连续色阶
+          br <- stats::quantile(num, probs = seq(0, 1, 0.25), na.rm = TRUE)
+          bin <- cut(num, breaks = unique(br), include.lowest = TRUE, labels = FALSE)
+          cols <- colorRampPalette(c("white", PAL$up))(max(bin, na.rm = TRUE))[bin]
+          trait_rows[[cn]] <- cols
+          trait_legend[[cn]] <- sprintf("continuous: white->red over %.1f-%.1f (quartile bins)",
+                                        min(num, na.rm = TRUE), max(num, na.rm = TRUE))
+        } else if (length(unique(stats::na.omit(v))) == 2L) {
+          lv <- sort(unique(stats::na.omit(v)))
+          m <- stats::setNames(c(PAL$muted, PAL$primary), lv)
+          trait_rows[[cn]] <- unname(m[as.character(v)])
+          trait_legend[[cn]] <- sprintf("%s=%s, %s=%s", lv[1], PAL$muted, lv[2], PAL$primary)
+        }
+      }
+    }
+  }
+  # 分组始终作为第一行（最要紧的注释）
+  color_mat <- cbind(Group = group_col)
+  if (length(trait_rows) > 0L) {
+    tr <- do.call(cbind, trait_rows)
+    rownames(tr) <- NULL
+    color_mat <- cbind(color_mat, tr)
+  }
+  group_labels_row <- c("Group", names(trait_rows))
+  # 图例文字（画在图下方，用 base legend —— plotDendroAndColors 自己不带图例）
+  legend_txt <- c(sprintf("Group: %s", paste(sprintf("%s=%s", grp_lv,
+                                                     unname(grp_pal[grp_lv])), collapse = "; ")),
+                  unlist(trait_legend))
+  draw_sample_dendro <- function() {
+    # plotDendroAndColors 没有 marAll 参数（那是 plotEigengeneNetworks 的）；
+    # 边距走 par(mar=) —— 左边留 7 行给行名、下边留 5 行给颜色图例文字。
+    graphics::par(mar = c(5, 7, 3, 1))
+    WGCNA::plotDendroAndColors(sample_tree, color_mat, groupLabels = group_labels_row,
+                               dendroLabels = FALSE, hang = 0.03,
+                               addGuide = TRUE, guideHang = 0.05,
+                               main = "Sample dendrogram with trait annotation (outlier check)",
+                               cex.labels = 0.4)
+    # 颜色图例：写在图下方（每行一条），说明每个颜色代表什么
+    graphics::mtext(paste(legend_txt, collapse = "\n"), side = 1, line = 2.4,
+                    adj = 0, cex = 0.45, col = PAL$ink)
+  }
   png(file.path(res, "01-06-03-unit1-sample-dendrogram.png"),
-      width = W_DOUBLE, height = mm(80), units = "in", res = 300)
-  WGCNA::plotDendroAndColors(sample_tree, group_col, "Group (colours = group)",
-                             dendroLabels = FALSE, hang = 0.03,
-                             addGuide = TRUE, guideHang = 0.05,
-                             main = "Sample dendrogram (outlier check)",
-                             cex.labels = 0.4)
+      width = W_DOUBLE, height = mm(96), units = "in", res = 300)
+  draw_sample_dendro()
   dev.off()
   pdf(file.path(res, "01-06-03-unit1-sample-dendrogram.pdf"),
-      width = W_DOUBLE, height = mm(80))
-  WGCNA::plotDendroAndColors(sample_tree, group_col, "Group (colours = group)",
-                             dendroLabels = FALSE, hang = 0.03,
-                             addGuide = TRUE, guideHang = 0.05,
-                             main = "Sample dendrogram (outlier check)",
-                             cex.labels = 0.4)
+      width = W_DOUBLE, height = mm(96))
+  draw_sample_dendro()
   dev.off()
+  status$sample_dendrogram$trait_rows <- group_labels_row
+  status$sample_dendrogram$color_legend <- as.list(legend_txt)
   if (length(outl) > 0L) {
     log_warn(sprintf("WGCNA: %d 个离群候选样本（见 01-06-03-unit1-sample-dendrogram）—— 不自动剔除",
                      length(outl)))
@@ -581,7 +634,7 @@ run_06_wgcna <- function(cfg) {
   status$gsmm_error <- tryCatch({ NULL
   # 每个 trait 选 |cor| 最高的 module，画 GS vs MM 散点，
   # hub 候选（top2% both）标基因名；Spearman rho 标在图上。
-  DYNAMIC_FIG_BASES_DECL = '04:8'
+  DYNAMIC_FIG_BASES_DECL = '04:12'
   GSMM_BASE <- paste0("0", as.character(1), "-06-04-unit")
   for (t in colnames(bt$traits)) {
     sub <- cor_df[cor_df$trait == t & is.finite(cor_df$cor), , drop = FALSE]
@@ -592,21 +645,39 @@ run_06_wgcna <- function(cfg) {
     gs_v <- abs(stats::cor(datExpr, bt$traits[[t]],
                            use = "pairwise.complete.obs"))[, 1L]
     mm_v <- kme[, me_name]
-    rho <- suppressWarnings(stats::cor.test(gs_v, mm_v,
-                                            )$estimate)
+    rho <- suppressWarnings(stats::cor.test(gs_v, mm_v, method = "spearman")$estimate)
     dd <- data.frame(gs = gs_v, mm = mm_v, gene = colnames(datExpr),
                      stringsAsFactors = FALSE)
-    hub_lab <- dd[dd$gs > quantile(dd$gs, 0.98) &
-                  dd$mm > quantile(dd$mm, 0.98), , drop = FALSE]
-    p_gsmm <- ggplot2::ggplot(dd, ggplot2::aes(x = mm, y = gs)) +
-      ggplot2::geom_point(size = 0.8, alpha = 0.5, colour = PAL$primary) +
+    # **标签数量按图幅算**（用户反馈"标签重合"）：top 2% of both 在 2000 基因时
+    # 可能取到十几个点。取 top 1% 且上限 8 个，按 MM 降序（最靠右的先标），
+    # 避免密集区堆叠。
+    hub_lab <- dd[dd$gs > quantile(dd$gs, 0.99) &
+                  dd$mm > quantile(dd$mm, 0.99), , drop = FALSE]
+    hub_lab <- utils::head(hub_lab[order(-hub_lab$mm), , drop = FALSE], 8L)
+    # **点要按 MM/GS 高低着色 + 加阈值线**（用户反馈：GS-MM 图缺散点颜色和阈值线）。
+    # 文献判据（WGCNA 清单图8）：MM > 0.8 且 GS > 0.2 的右上角是 hub 候选区 ——
+    # 两条阈值线把这个区域显式框出来，读者不用自己估。
+    MM_CUT <- 0.8; GS_CUT <- 0.2
+    dd$zone <- ifelse(dd$mm > MM_CUT & dd$gs > GS_CUT, "hub candidate (MM>0.8 & GS>0.2)",
+               ifelse(dd$mm > MM_CUT, "high MM only",
+               ifelse(dd$gs > GS_CUT, "high GS only", "neither")))
+    p_gsmm <- ggplot2::ggplot(dd, ggplot2::aes(x = mm, y = gs, colour = zone)) +
+      ggplot2::geom_hline(yintercept = GS_CUT, linetype = "dashed",
+                          colour = PAL$muted, linewidth = 0.3) +
+      ggplot2::geom_vline(xintercept = MM_CUT, linetype = "dashed",
+                          colour = PAL$muted, linewidth = 0.3) +
+      ggplot2::geom_point(size = 0.8, alpha = 0.55) +
+      ggplot2::scale_colour_manual(values = stats::setNames(
+        c(PAL$up, PAL$primary, PAL$down, PAL$muted),
+        c("hub candidate (MM>0.8 & GS>0.2)", "high MM only",
+          "high GS only", "neither")), name = NULL) +
       ggplot2::labs(
         title = sprintf("GS vs MM - trait %s, module %s", t, best_m),
         subtitle = wrap_subtitle(sprintf(paste0(
           "GS = |cor(gene, trait)|, MM = kME. Spearman rho = %.2f. ",
-          "Labelled: top 2%% of both = hub candidates.",
-          " High rho = module genuinely tracks this trait."),
-          as.numeric(rho)), fig_width = W_ONE_HALF),
+          "Dashed lines = MM %.1f / GS %.1f; upper-right = hub candidates. ",
+          "Labelled points = top 2%% of both."),
+          as.numeric(rho), MM_CUT, GS_CUT), fig_width = W_ONE_HALF),
         x = sprintf("MM (kME, module %s)", best_m),
         y = sprintf("GS (|cor| with %s)", t)) +
       theme_paper(9)
@@ -618,9 +689,63 @@ run_06_wgcna <- function(cfg) {
     }
     save_pdf(file.path(res, paste0(GSMM_BASE, which(unique(cor_df$trait) == t),
                                    "-gs-mm-", t, ".pdf")),
-             print(p_gsmm), width = W_ONE_HALF, height = mm(72))
+             print(p_gsmm), width = W_ONE_HALF, height = mm(78))
     gsmm_plots <- gsmm_plots + 1L
   }  # 闭 for
+  DYNAMIC_FIG_BASES_DECL = '08:12'
+  MS_BASE <- paste0("0", as.character(1), "-06-08-unit")
+
+  # **图8b：Module significance（MS）柱状图**（用户反馈"缺 MS-GS 图"）：
+  # MS = 模块内全部基因 |GS| 的均值 —— 回答"哪个模块对该性状整体最重要"。
+  # 与 GS-MM 散点的区别：散点看**单个基因**，MS 看**整个模块**。
+  # 每个性状一张单图（性状的尺度不同，不能共用一张图的 y 轴）。
+  tryCatch({
+    ms_rows <- list()
+    for (t in colnames(bt$traits)) {
+      gs_t <- abs(stats::cor(datExpr, bt$traits[[t]],
+                             use = "pairwise.complete.obs"))[, 1L]
+      for (mn in unique(mod_df$module_num)) {
+        g_m <- mod_df$gene[mod_df$module_num == mn]
+        if (length(g_m) < 3L) next
+        ms_rows[[length(ms_rows) + 1L]] <- data.frame(
+          trait = t, module = mn, MS = mean(gs_t[g_m], na.rm = TRUE),
+          n_genes = length(g_m), stringsAsFactors = FALSE)
+      }
+    }
+    if (length(ms_rows) > 0L) {
+      ms_df <- do.call(rbind, ms_rows)
+      utils::write.csv(ms_df, file.path(res, "wgcna_module_significance.csv"),
+                       row.names = FALSE)
+      for (t in unique(ms_df$trait)) {
+        d1 <- ms_df[ms_df$trait == t, , drop = FALSE]
+        d1 <- d1[order(-d1$MS), , drop = FALSE]
+        d1$module <- factor(d1$module, levels = d1$module)
+        p_ms <- ggplot2::ggplot(d1, ggplot2::aes(x = module, y = MS, fill = MS)) +
+          ggplot2::geom_col(width = 0.7) +
+          ggplot2::scale_fill_gradient(low = "white", high = PAL$up, name = "MS") +
+          ggplot2::labs(
+            title = sprintf("Module significance for trait %s", t),
+            subtitle = wrap_subtitle(paste0(
+              "MS = mean |cor(gene, trait)| over all genes in the module. ",
+              "Modules ordered by MS; bar label = n genes. ",
+              "MS answers module-level importance, GS-MM scatter answers per-gene."),
+              fig_width = W_ONE_HALF),
+            x = "module (WGCNA colour label)", y = "module significance (mean |GS|)") +
+          ggplot2::geom_text(ggplot2::aes(label = n_genes), vjust = -0.4,
+                             size = 2.0, colour = PAL$ink) +
+          theme_paper(9)
+        save_pdf(file.path(res, paste0(MS_BASE, which(unique(ms_df$trait) == t),
+                                       "-ms-", t, ".pdf")),
+                 print(p_ms), width = W_ONE_HALF, height = mm(72))
+      }
+      status$ms_plots <- length(unique(ms_df$trait))
+      log_info(sprintf("WGCNA: MS 柱状图 %d 张（每性状一张）", status$ms_plots))
+    }
+  }, error = function(e) {
+    status$ms_status <- "not_available"
+    status$ms_reason <- conditionMessage(e)
+    log_warn(sprintf("MS 柱状图未出: %s", conditionMessage(e)))
+  })
 
   # **图13：最相关模块的基因表达热图**（WGCNA 清单图13）：
   # 取 |cor| 最高的模块-性状对的模块，行 z-score、列=肿瘤样本。
@@ -649,12 +774,15 @@ run_06_wgcna <- function(cfg) {
       brk <- seq(-3, 3, length.out = 101)
       pal <- colorRampPalette(c(PAL$down, "white", PAL$up))(100)
       n_row <- nrow(m_expr)
-      row_lab_ok <- fits_labels(n_row, height_in = mm(110) / 25.4, fontsize = 4,
+      # **图幅随行数走**（用户反馈"图幅不适配"）：382 基因塞进 110 mm 会糊成一片。
+      # 每行至少 0.30 mm、上限 200 mm（超过说明该模块基因太多，该看 CSV 而非热图）。
+      fig13_h <- min(mm(200), max(mm(110), n_row * 0.30))
+      row_lab_ok <- fits_labels(n_row, height_in = fig13_h, fontsize = 4,
                                 panel_frac = 0.72, min_gap = 0.6)
       # **色标用 layout 单独开一栏**（不是 add=TRUE 叠画）—— 叠画会因超出 xlim
       # 被静默裁掉（实测 v3：色标整条不见）。layout 是可靠的定宽做法。
       png(file.path(res, paste0("0", as.character(1), "-06-07-unit1-module-heatmap.png")),
-          width = W_DOUBLE, height = mm(110), units = "in", res = 300)
+          width = W_DOUBLE, height = fig13_h, units = "in", res = 300)
       layout(matrix(c(1, 2), 1, 2), widths = c(1, 0.045))
       par(mar = c(4.5, if (row_lab_ok) 7 else 1.5, 3.5, 1))
       image(x = seq_len(ncol(m_expr)), y = seq_len(n_row),

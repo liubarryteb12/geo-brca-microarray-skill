@@ -235,9 +235,12 @@ run_03_deg <- function(cfg) {
       name = "direction") +
     scale_alpha_manual(
       values = c(fdr = 0.95, nominal = 0.40, ns = 0.25),
-      labels = c(fdr = sprintf("FDR < %g (%d)", padj_cut, n_fdr),
-                 nominal = sprintf("nominal P < 0.05, NOT FDR-significant (%d)", n_nominal),
-                 ns = "nominal P >= 0.05"),
+      # **图例标签要短**（用户反馈"图例挤压主图"）：原标签
+      # "nominal P < 0.05, NOT FDR-significant (1873)" 在右侧占了近 1/3 画布宽，
+      # 主图被挤扁。计数保留（信息量在），措辞压到最短。
+      labels = c(fdr = sprintf("FDR < %g (n=%d)", padj_cut, n_fdr),
+                 nominal = sprintf("nominal only (n=%d)", n_nominal),
+                 ns = sprintf("P >= 0.05 (n=%d)", sum(tt$tier == "ns"))),
       name = "significance") +
     scale_size_manual(values = c(fdr = 1.9, nominal = 1.1, ns = 0.6), guide = "none") +
     geom_vline(xintercept = c(-lfc_cut, lfc_cut), linetype = "dashed",
@@ -255,6 +258,12 @@ run_03_deg <- function(cfg) {
          y = "-log10 raw P value",
          colour = NULL, alpha = NULL) +
     theme_paper(10) +
+    # **图例一律框外右侧、纵向**（用户约定 v2）：legend.direction 管单个图例内部
+    # （键竖排）、legend.box 管多个图例之间（图例块竖摞）—— 两个都要设。
+    # 字号再压一档，避免标签宽度把主图挤扁。
+    ggplot2::theme(legend.direction = "vertical", legend.box = "vertical",
+                   legend.text = ggplot2::element_text(size = 7),
+                   legend.key.size = ggplot2::unit(0.55, "lines")) +
     guides(colour = guide_legend(order = 1, override.aes = list(alpha = 1, size = 2.2)),
            alpha = guide_legend(order = 2, override.aes = list(colour = PAL$ink, size = 2.2)))
 

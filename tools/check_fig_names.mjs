@@ -208,11 +208,30 @@ for (const f of scripts) {
 
   // **账目对齐**：字面量数不能少于出图调用数。
   // 少了就说明有调用用了拼出来的名字，而那个名字没被任何检查看过。
+  // **声明式动态名豁免**（与 scrna/spatial 门禁同逻辑）：脚本可写
+  // DYNAMIC_FIG_BASES_DECL = '<figNo>:<count>' 声明某图号下有 N 张运行时命名的单图。
+  // R 侧用字符串形式（R 没有 JS 对象字面量），所以解析写法与 Python 侧不同。
+  let dynTotal = 0;
+  const dynDecl = src.match(/DYNAMIC_FIG_BASES_DECL\s*=\s*'([^']*)'/g) || [];
+  for (const d of dynDecl) {
+    const m = d.match(/'([^']*)'/);
+    if (!m) continue;
+    for (const part of m[1].split(',')) {
+      const kv = part.split(':');
+      if (kv.length === 2 && /^\d{2}$/.test(kv[0].trim())) dynTotal += Number(kv[1].trim());
+    }
+  }
   if (lits.length < calls.length) {
-    problems.push(
-      `${f}: ${calls.length} 处出图调用，但只有 ${lits.length} 个合规图名字面量 —— ` +
-        `有调用用的是拼出来的名字，静态检查看不见它`
-    );
+    const deficit = calls.length - lits.length;
+    if (deficit > dynTotal) {
+      problems.push(
+        `${f}: ${calls.length} 处出图调用，但只有 ${lits.length} 个合规图名字面量 —— ` +
+          `有调用用的是拼出来的名字，静态检查看不见它` +
+          (dynTotal ? `（动态豁免声明了 ${dynTotal} 张，差 ${deficit - dynTotal} 张没声明）` : "")
+      );
+    } else if (deficit > 0) {
+      notes.push(`${f}: ${deficit} 个动态图名（DYNAMIC_FIG_BASES_DECL 声明豁免）`);
+    }
   }
   for (const c of calls) {
     if (!c.name) {
