@@ -445,6 +445,10 @@ run_06_wgcna <- function(cfg) {
                        module_label = module_label,
                        module = mod_names,
                        stringsAsFactors = FALSE)
+  # **module_num 是图13 的匹配键**：cor_df$module 是数字标签（sub("^ME","",m)），
+  # 而 mod_df$module 是颜色名（labels2colors）—— 两者永不相等。少这一列会让
+  # genes_m 取到空向量（实测：图13 反复报"过滤后剩余行不足"的真因）。
+  mod_df$module_num <- as.character(module_label)
   mod_df <- mod_df[order(mod_df$module_label, mod_df$gene), , drop = FALSE]
   utils::write.csv(mod_df, file.path(res, "wgcna_modules.csv"), row.names = FALSE)
 
