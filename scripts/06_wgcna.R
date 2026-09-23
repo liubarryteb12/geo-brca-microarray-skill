@@ -694,19 +694,27 @@ run_06_wgcna <- function(cfg) {
     # 文献判据（WGCNA 清单图8）：MM > 0.8 且 GS > 0.2 的右上角是 hub 候选区 ——
     # 两条阈值线把这个区域显式框出来，读者不用自己估。
     MM_CUT <- 0.8; GS_CUT <- 0.2
-    dd$zone <- ifelse(dd$mm > MM_CUT & dd$gs > GS_CUT, "hub candidate (MM>0.8 & GS>0.2)",
+    dd$zone <- ifelse(dd$mm > MM_CUT & dd$gs > GS_CUT, "hub candidate",
                ifelse(dd$mm > MM_CUT, "high MM only",
                ifelse(dd$gs > GS_CUT, "high GS only", "neither")))
+    # **配色映射要按"实际出现的 zone"给**（实测：固定给 4 个名、而数据里只有
+    # 3 类时 ggplot 报 `'names' attribute [4] must be the same length as the
+    # vector [3]` —— 整图失败）。用 factor + levels 显式锁定 4 类，再按 levels 配色。
+    zone_lv <- c("hub candidate", "high MM only", "high GS only", "neither")
+    dd$zone <- factor(dd$zone, levels = zone_lv)
+    zone_cols <- stats::setNames(c(PAL$up, PAL$primary, PAL$down, PAL$muted), zone_lv)
     p_gsmm <- ggplot2::ggplot(dd, ggplot2::aes(x = mm, y = gs, colour = zone)) +
       ggplot2::geom_hline(yintercept = GS_CUT, linetype = "dashed",
                           colour = PAL$muted, linewidth = 0.3) +
       ggplot2::geom_vline(xintercept = MM_CUT, linetype = "dashed",
                           colour = PAL$muted, linewidth = 0.3) +
       ggplot2::geom_point(size = 0.8, alpha = 0.55) +
-      ggplot2::scale_colour_manual(values = stats::setNames(
-        c(PAL$up, PAL$primary, PAL$down, PAL$muted),
-        c("hub candidate (MM>0.8 & GS>0.2)", "high MM only",
-          "high GS only", "neither")), name = NULL) +
+      ggplot2::scale_colour_manual(values = zone_cols, drop = FALSE, name = NULL,
+                                   labels = c(
+                                     "hub candidate" = sprintf("hub candidate (MM>%.1f & GS>%.1f)", MM_CUT, GS_CUT),
+                                     "high MM only" = "high MM only",
+                                     "high GS only" = "high GS only",
+                                     "neither" = "neither")) +
       ggplot2::labs(
         title = sprintf("GS vs MM - trait %s, module %s", t, best_m),
         subtitle = wrap_subtitle(sprintf(paste0(
