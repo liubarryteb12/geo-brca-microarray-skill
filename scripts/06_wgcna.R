@@ -396,6 +396,38 @@ run_06_wgcna <- function(cfg) {
     verbose = 0)
 
   module_label <- net$colors
+
+  # **图4：基因聚类树 + 模块颜色条**（WGCNA 清单图4，文献核心图）：
+  DYNAMIC_FIG_BASES_DECL = '05:3'
+  DEND_BASE <- paste0(as.character(1), "-06-05-unit")
+  # 树的每个叶子 = 一个基因，颜色条 = 模块归属。blockwiseModules 多 block
+  # 时返回 dendrograms 列表（每 block 一棵），此处样本 5000 基因通常单 block。
+  tryCatch({
+    n_blocks <- length(net$dendrograms)
+    for (bi in seq_len(n_blocks)) {
+      dend <- net$dendrograms[[bi]]
+      block_b <- net$blockGenes[[bi]]
+      cols_b <- WGCNA::labels2colors(module_label[block_b])
+      ui <- bi  # 单 block 时 unit1；多 block 时 unit 递增
+      png(file.path(res, paste0(DEND_BASE, ui, "-gene-dendrogram.png")),
+          width = W_DOUBLE, height = mm(90), units = "in", res = 300)
+      WGCNA::plotDendroAndColors(dend, cols_b, "Module",
+                                 dendroLabels = FALSE, hang = 0.03,
+                                 addGuide = TRUE, guideHang = 0.05,
+                                 main = sprintf("Gene dendrogram and module colours (block %d)", bi),
+                                 cex.labels = 0.3)
+      dev.off()
+      pdf(file.path(res, paste0(DEND_BASE, ui, "-gene-dendrogram.pdf")),
+          width = W_DOUBLE, height = mm(90))
+      WGCNA::plotDendroAndColors(dend, cols_b, "Module",
+                                 dendroLabels = FALSE, hang = 0.03,
+                                 addGuide = TRUE, guideHang = 0.05,
+                                 main = sprintf("Gene dendrogram and module colours (block %d)", bi),
+                                 cex.labels = 0.3)
+      dev.off()
+    }
+    log_info(sprintf("WGCNA: 基因聚类树+模块色条已生成（%d 个 block）", n_blocks))
+  }, error = function(e) log_warn(sprintf("图4 基因聚类树失败: %s", conditionMessage(e))))
   mod_names <- WGCNA::labels2colors(module_label)
   status$n_modules <- length(unique(module_label))
   status$n_modules_nongrey <- sum(unique(module_label) != 0L)
@@ -461,6 +493,42 @@ run_06_wgcna <- function(cfg) {
   gsm_plots <- 0L
   # grey 模块是"未分配"，它的特征基因没有生物学含义，不参与关联
   me <- me[, colnames(me) != "ME0", drop = FALSE]
+
+  # **图7：模块 eigengene 聚类树 + 相关性热图**（WGCNA 清单图7）：
+  # 模块间相似性 —— 高相关的模块本该被 mergeCutHeight 合并。
+  tryCatch({
+    me_h <- 1 - stats::cor(me, use = "pairwise.complete.obs")
+    me_tree <- stats::hclust(as.dist(me_h), method = "average")
+    par_old <- par(no.readonly = TRUE)
+    png(file.path(res, paste0(as.character(1), "-06-06-unit1-eigengene-dendro.png")),
+        width = W_ONE_HALF, height = mm(72), units = "in", res = 300)
+    layout(matrix(c(1, 2), 2, 1), heights = c(0.4, 0.6))
+    plot(me_tree, main = "Module eigengene dendrogram",
+         sub = paste0("height = 1 - cor; mergeCutHeight = 0.25"),
+         xlab = "", sub = "")
+    stats::abline(h = 0.25, col = PAL$up, lty = "dashed")
+    im_ok <- requireNamespace("pheatmap", quietly = TRUE)
+    if (im_ok) {
+      pheatmap::pheatmap(stats::cor(me, use = "pairwise.complete.obs"),
+                         cluster_rows = me_tree, cluster_cols = me_tree,
+                         main = "Module eigengene correlations", silent = TRUE)
+    }
+    dev.off()
+    par(par_old)
+    pdf(file.path(res, paste0(as.character(1), "-06-06-unit1-eigengene-dendro.pdf")),
+        width = W_ONE_HALF, height = mm(72))
+    layout(matrix(c(1, 2), 2, 1), heights = c(0.4, 0.6))
+    plot(me_tree, main = "Module eigengene dendrogram", xlab = "", sub = "")
+    stats::abline(h = 0.25, col = PAL$up, lty = "dashed")
+    if (im_ok) {
+      pheatmap::pheatmap(stats::cor(me, use = "pairwise.complete.obs"),
+                         cluster_rows = me_tree, cluster_cols = me_tree,
+                         main = "Module eigengene correlations", silent = TRUE)
+    }
+    dev.off()
+    par(par_old)
+    log_info("WGCNA: eigengene 树+热图已生成（图7）")
+  }, error = function(e) log_warn(sprintf("图7 eigengene 失败: %s", conditionMessage(e))))
   if (ncol(me) == 0L) {
     status$module_trait <- "skipped: 只有 grey 模块"
     write_json(file.path(res, "wgcna_status.json"), status)
@@ -553,6 +621,35 @@ run_06_wgcna <- function(cfg) {
              print(p_gsmm), width = W_ONE_HALF, height = mm(72))
     gsmm_plots <- gsmm_plots + 1L
   }  # 闭 for
+
+  # **图13：最相关模块的基因表达热图**（WGCNA 清单图13）：
+  # 取 |cor| 最高的模块-性状对的模块，行 z-score、列=肿瘤样本。
+  tryCatch({
+    top_row <- cor_df[order(-abs(cor_df$cor)), ][1L, ]
+    top_m <- paste0("ME", top_row$module)
+    if (top_m %in% colnames(kme)) {
+      genes_m <- mod_df$gene[mod_df$module == top_row$module]
+      m_expr <- t(scale(t(datExpr[, genes_m, drop = FALSE])))
+      # 行名换基因名；样本列按 ME 排序（结构可见）
+      rownames(m_expr) <- genes_m
+      ord <- order(kme[rownames(m_expr), top_m])
+      m_expr <- m_expr[ord, , drop = FALSE]
+      ph13 <- pheatmap::pheatmap(m_expr, cluster_rows = FALSE, cluster_cols = FALSE,
+                                 scale = "none", border_color = NA, fontsize = 5,
+                                 labels_col = rep("", ncol(m_expr)), silent = TRUE,
+                                 main = sprintf("Module %s expression (top trait: %s, r=%.2f)",
+                                                top_row$module, top_row$trait, top_row$cor))
+      save_pdf(file.path(res, paste0(as.character(1), "-06-07-unit1-module-heatmap.pdf")),
+               grid::grid.draw(ph13$gtable), width = W_DOUBLE, height = mm(120))
+      log_info("WGCNA: 图13 模块表达热图已生成")
+      # 图15 的输入：top 模块基因落盘（GO 富集在 04 里统一做，那里有 clusterProfiler）
+      utils::write.csv(data.frame(gene = genes_m, module = top_row$module,
+                                  trait = top_row$trait, cor = top_row$cor),
+                       file.path(res, "wgcna_top_module_genes.csv"), row.names = FALSE)
+      status$module_go_hint <- paste0("top 模块基因表已落盘 wgcna_top_module_genes.csv；",
+                                      "模块级 GO 富集属 04 的职责（富集基建在那里）")
+    }
+  }, error = function(e) log_warn(sprintf("图13 模块热图失败: %s", conditionMessage(e))))
   log_info(sprintf("[WGCNA] GS-MM 循环结束: gsmm_plots=%d, gsmm_error=%s",
                    gsmm_plots, if (is.null(status$gsmm_error)) "none" else status$gsmm_error))
   NULL
