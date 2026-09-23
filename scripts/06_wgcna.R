@@ -636,6 +636,8 @@ run_06_wgcna <- function(cfg) {
       mm_vals <- kme[rownames(m_expr), top_m]
       ord <- order(ifelse(is.na(mm_vals), -Inf, mm_vals))
       m_expr <- m_expr[ord, , drop = FALSE]
+      log_info(sprintf("[FIG13] dim=%dx%d top_m=%s genes_m=%d",
+                       nrow(m_expr), ncol(m_expr), top_m, length(genes_m)))
       ph13 <- pheatmap::pheatmap(m_expr, cluster_rows = FALSE, cluster_cols = FALSE,
                                  scale = "none", border_color = NA, fontsize = 5,
                                  labels_col = rep("", ncol(m_expr)), silent = TRUE,
