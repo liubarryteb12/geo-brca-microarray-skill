@@ -719,23 +719,25 @@ GSE64790 244s / GSE42568 400s，暖缓存整轮 6m10s / 8m49s。
   **每加一处例外都要问：这是"包内部按名字找东西"吗？** 是，才允许。
   只是"写全名太麻烦"不是理由。
 
-## 31. 图例一律图框外右上角（用户约定，2026-09-21）
+## 31. 图例一律图框外**右侧**、纵向排列（用户约定 v2，2026-09-23）
 
-**图例不能画在图框（panel）里面。** 框内图例会压住数据点，读者分不清哪块是
-数据、哪块是说明；一律移到**图框外、右上角**。
+**图例不能画在图框（panel）里面，也不能放在顶部。** 两条实测教训：
 
-- **ggplot（R）**：`legend.position` 只有 `"top"` / `"bottom"` / `"left"` /
-  `"right"` 四个**框外**取值；传坐标 `c(x, y)` 是**框内**（实测 v1 用
-  `c(0.98, 0.98)` 就是框内，被判不合格）。框外右上 =
-  `legend.position = "top"` + `legend.justification = c(1, 0.5)`（顶部右对齐）。
-- **matplotlib（Python）**：`loc="outside upper right"` **只对 `fig.legend()`
-  有效** —— 传给 `ax.legend()` 直接报
+1. **框内图例**压住数据点，读者分不清哪块是数据、哪块是说明；
+2. **顶部图例会把主图压扁变形** —— 校准图 / KM / UMAP 实测被压得很扁。
+**约定 v2：一律图框外、右侧、纵向单列排列；多图例纵向堆叠，不横排。**
+
+- **ggplot（R）**：`legend.position = "right"`（框外右侧，多图例默认纵向堆叠）。
+  **不要**传坐标 `c(x, y)`（那是框内，实测 v1 被判不合格），
+  也**不要**用 `"top"`（会压扁主图，实测 v2 被判不合格）。
+- **matplotlib（Python）**：`fig.legend(loc="outside right center", ncol=1)`。
+  **`loc="outside ..."` 只对 `fig.legend()` 有效** —— 传给 `ax.legend()` 直接报
   `ValueError: 'outside' option ... only works for figure legends`（实测
   spatial run 35749568552 因此崩了整个 job，scrna 因此段错误）。
   所以所有 axes 级图例必须改成 `fig.legend(...)`；constrained layout 会
-  自动为框外图例让出空间。
+  自动为框外图例让出空间。**`ncol=1` 强制纵向单列**。
 
-> 改完要亲读：图例在框外不代表它没被裁掉 —— 画布高度不够时框外图例仍会
+> 改完要亲读：图例在框外不代表它没被裁掉 —— 画布宽度不够时框外图例仍会
 > 顶出画布（`savefig.bbox: standard` 下静默裁），见规则 13 / 17 的同类问题。
 
 ## 32. `wgcna_sample_cap` 是验证开关，不是分析参数
