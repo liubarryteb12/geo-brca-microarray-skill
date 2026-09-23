@@ -399,7 +399,7 @@ run_06_wgcna <- function(cfg) {
 
   # **图4：基因聚类树 + 模块颜色条**（WGCNA 清单图4，文献核心图）：
   DYNAMIC_FIG_BASES_DECL = '05:3'
-  DEND_BASE <- paste0(as.character(1), "-06-05-unit")
+  DEND_BASE <- paste0("0", as.character(1), "-06-05-unit")
   # 树的每个叶子 = 一个基因，颜色条 = 模块归属。blockwiseModules 多 block
   # 时返回 dendrograms 列表（每 block 一棵），此处样本 5000 基因通常单 block。
   tryCatch({
@@ -503,14 +503,14 @@ run_06_wgcna <- function(cfg) {
   tryCatch({
     me_h <- 1 - stats::cor(me, use = "pairwise.complete.obs")
     me_tree <- stats::hclust(as.dist(me_h), method = "average")
-    png(file.path(res, paste0(as.character(1), "-06-06-unit1-eigengene-dendro.png")),
+    png(file.path(res, paste0("0", as.character(1), "-06-06-unit1-eigengene-dendro.png")),
         width = W_ONE_HALF, height = mm(64), units = "in", res = 300)
     par(mar = c(4, 4, 2, 0.5))
     plot(me_tree, main = "Module eigengene dendrogram", xlab = "",
          sub = "height = 1 - cor; dashed = mergeCutHeight 0.25")
     graphics::abline(h = 0.25, col = PAL$up, lty = "dashed")
     dev.off()
-    pdf(file.path(res, paste0(as.character(1), "-06-06-unit1-eigengene-dendro.pdf")),
+    pdf(file.path(res, paste0("0", as.character(1), "-06-06-unit1-eigengene-dendro.pdf")),
         width = W_ONE_HALF, height = mm(64))
     par(mar = c(4, 4, 2, 0.5))
     plot(me_tree, main = "Module eigengene dendrogram", xlab = "",
@@ -523,7 +523,7 @@ run_06_wgcna <- function(cfg) {
                                 silent = TRUE,
                                 main = "Module eigengene correlations")
       if (!is.null(ph7) && !is.null(ph7$gtable)) {
-        save_pdf(file.path(res, paste0(as.character(1), "-06-06-unit2-eigengene-corr.pdf")),
+        save_pdf(file.path(res, paste0("0", as.character(1), "-06-06-unit2-eigengene-corr.pdf")),
                  grid::grid.draw(ph7$gtable), width = W_ONE_HALF, height = mm(64))
       }
     }
@@ -582,7 +582,7 @@ run_06_wgcna <- function(cfg) {
   # 每个 trait 选 |cor| 最高的 module，画 GS vs MM 散点，
   # hub 候选（top2% both）标基因名；Spearman rho 标在图上。
   DYNAMIC_FIG_BASES_DECL = '04:8'
-  GSMM_BASE <- paste0(as.character(1), "-06-04-unit")
+  GSMM_BASE <- paste0("0", as.character(1), "-06-04-unit")
   for (t in colnames(bt$traits)) {
     sub <- cor_df[cor_df$trait == t & is.finite(cor_df$cor), , drop = FALSE]
     if (nrow(sub) == 0L) next
@@ -644,7 +644,7 @@ run_06_wgcna <- function(cfg) {
       # 改用零依赖绘制 —— 红蓝发散色、样本列按 ME 排序、无行列树（结构由 CSV 供）。
       brk <- seq(-3, 3, length.out = 101)
       pal <- colorRampPalette(c(PAL$down, "white", PAL$up))(100)
-      png(file.path(res, paste0(as.character(1), "-06-07-unit1-module-heatmap.png")),
+      png(file.path(res, paste0("0", as.character(1), "-06-07-unit1-module-heatmap.png")),
           width = W_DOUBLE, height = mm(110), units = "in", res = 300)
       par(mar = c(2, 8, 3, 1))
       image(x = seq_len(ncol(m_expr)), y = seq_len(nrow(m_expr)),
