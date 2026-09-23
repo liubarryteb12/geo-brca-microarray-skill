@@ -503,9 +503,8 @@ run_06_wgcna <- function(cfg) {
     png(file.path(res, paste0(as.character(1), "-06-06-unit1-eigengene-dendro.png")),
         width = W_ONE_HALF, height = mm(72), units = "in", res = 300)
     layout(matrix(c(1, 2), 2, 1), heights = c(0.4, 0.6))
-    plot(me_tree, main = "Module eigengene dendrogram",
-         sub = paste0("height = 1 - cor; mergeCutHeight = 0.25"),
-         xlab = "", sub = "")
+    plot(me_tree, main = "Module eigengene dendrogram", xlab = "",
+         sub = "height = 1 - cor; dashed = mergeCutHeight 0.25")
     stats::abline(h = 0.25, col = PAL$up, lty = "dashed")
     im_ok <- requireNamespace("pheatmap", quietly = TRUE)
     if (im_ok) {
