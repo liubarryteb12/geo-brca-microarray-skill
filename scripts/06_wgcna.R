@@ -651,9 +651,12 @@ run_06_wgcna <- function(cfg) {
       n_row <- nrow(m_expr)
       row_lab_ok <- fits_labels(n_row, height_in = mm(110) / 25.4, fontsize = 4,
                                 panel_frac = 0.72, min_gap = 0.6)
+      # **色标用 layout 单独开一栏**（不是 add=TRUE 叠画）—— 叠画会因超出 xlim
+      # 被静默裁掉（实测 v3：色标整条不见）。layout 是可靠的定宽做法。
       png(file.path(res, paste0("0", as.character(1), "-06-07-unit1-module-heatmap.png")),
           width = W_DOUBLE, height = mm(110), units = "in", res = 300)
-      par(mar = c(3.5, if (row_lab_ok) 7 else 1.5, 3.5, 4.5))
+      layout(matrix(c(1, 2), 1, 2), widths = c(1, 0.045))
+      par(mar = c(4.5, if (row_lab_ok) 7 else 1.5, 3.5, 1))
       image(x = seq_len(ncol(m_expr)), y = seq_len(n_row),
             z = t(as.matrix(m_expr)), useRaster = TRUE,
             col = pal, breaks = brk,
@@ -668,14 +671,13 @@ run_06_wgcna <- function(cfg) {
       } else {
         log_info(sprintf("图13: %d 行放不下行名（预算不足）—— 整张不标，基因身份见 CSV", n_row))
       }
-      # **色标必须给**（AGENTS 规则 24 的精神：定量面板没有色标读者不知道红蓝含义）
-      graphics::image(x = ncol(m_expr) + 1.6, y = seq_len(n_row),
-                      z = matrix(seq(-3, 3, length.out = n_row), ncol = 1),
-                      col = pal, breaks = brk, add = TRUE)
-      graphics::axis(4, at = seq(1, n_row, length.out = 5),
-                     labels = sprintf("%.1f", seq(-3, 3, length.out = 5)),
-                     las = 1, cex.axis = 0.6)
-      graphics::mtext("z-scored expression", side = 4, line = 2.2, cex = 0.6)
+      # 第二栏：色标（与主图同高，刻度在右侧）
+      par(mar = c(4.5, 0.3, 3.5, 3.2))
+      image(x = 1, y = seq(-3, 3, length.out = 100),
+            z = matrix(seq(-3, 3, length.out = 100), ncol = 1),
+            col = pal, breaks = brk, axes = FALSE, xlab = "", ylab = "")
+      graphics::axis(4, at = seq(-3, 3, by = 1), las = 1, cex.axis = 0.55)
+      graphics::mtext("z-scored expression", side = 4, line = 2.0, cex = 0.55)
       dev.off()
       log_info("WGCNA: 图13 模块表达热图已生成")
       # 图15 的输入：top 模块基因落盘（GO 富集在 04 里统一做，那里有 clusterProfiler）
