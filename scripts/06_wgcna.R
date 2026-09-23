@@ -625,8 +625,10 @@ run_06_wgcna <- function(cfg) {
   # **图13：最相关模块的基因表达热图**（WGCNA 清单图13）：
   # 取 |cor| 最高的模块-性状对的模块，行 z-score、列=肿瘤样本。
   tryCatch({
+    log_info("[FIG13-A] tryCatch entered")
     top_row <- cor_df[order(-abs(cor_df$cor)), ][1L, ]
     top_m <- paste0("ME", top_row$module)
+    log_info(sprintf("[FIG13-B] top module=%s nrow(cor_df)=%d", top_row$module, nrow(cor_df)))
     if (top_m %in% colnames(kme)) {
       genes_m <- mod_df$gene[mod_df$module_num == as.character(top_row$module)]
       m_raw <- datExpr[, genes_m, drop = FALSE]
