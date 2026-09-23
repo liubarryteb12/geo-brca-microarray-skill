@@ -827,12 +827,15 @@ run_06_wgcna <- function(cfg) {
       # 被静默裁掉（实测 v3：色标整条不见）。layout 是可靠的定宽做法。
       png(file.path(res, paste0("0", as.character(1), "-06-07-unit1-module-heatmap.png")),
           width = W_DOUBLE, height = fig13_h, units = "in", res = 300)
-      # **边距用绝对英寸（mai）而不是行高（mar）** —— 实测 v4/v5：
-      # `mar` 的单位是"文本行高"，行数多时字号被压小、但行高**按字符尺寸算**，
-      # 在 200 mm 高的画布上 4+6+3 行的合计仍会超出 → `figure margins too large`。
-      # `mai` 直接给英寸，与画布尺寸无关，不会再溢出。
-      layout(matrix(c(1, 2), 1, 2), widths = c(1, 0.06))
-      par(mai = c(0.55, if (row_lab_ok) 1.15 else 0.25, 0.35, 0.08))
+      # **用 par(fig=) 手工分区，不用 layout** —— 实测 v4/v5/v6：
+      # `layout(widths=c(1, 0.06))` 在 183 mm 宽下给色标栏仅 ~10 mm，
+      # 减去色标自身的边距后**剩负数** → `figure margins too large`（报错在 dev.off 前，
+      # 整图失败）。`par(fig=)` 用**画布比例**直接指定两个面板的矩形，
+      # 色标栏固定占右侧 3.5%（约 6.4 mm），主栏占左侧 96%，边距用 mai（绝对英寸）。
+      op <- par(no.readonly = TRUE)
+      on.exit(par(op), add = TRUE)
+      par(fig = c(0.005, 0.955, 0.005, 0.945),
+          mai = c(0.55, if (row_lab_ok) 1.15 else 0.25, 0.35, 0.05))
       image(x = seq_len(ncol(m_expr)), y = seq_len(n_row),
             z = t(as.matrix(m_expr)), useRaster = TRUE,
             col = pal, breaks = brk,
@@ -847,8 +850,9 @@ run_06_wgcna <- function(cfg) {
       } else {
         log_info(sprintf("图13: %d 行放不下行名（预算不足）—— 整张不标，基因身份见 CSV", n_row))
       }
-      # 第二栏：色标（与主图同高，刻度在右侧）
-      par(mai = c(0.55, 0.05, 0.35, 0.75))
+      # 第二栏：色标（右侧 3.5% 宽，与主图同高，刻度在右侧）
+      par(fig = c(0.962, 0.978, 0.005, 0.945), mai = c(0.55, 0.02, 0.35, 0.30),
+          new = TRUE)
       image(x = 1, y = seq(-3, 3, length.out = 100),
             z = matrix(seq(-3, 3, length.out = 100), ncol = 1),
             col = pal, breaks = brk, axes = FALSE, xlab = "", ylab = "")
