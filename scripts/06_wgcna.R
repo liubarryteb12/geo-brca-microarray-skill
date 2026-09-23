@@ -524,19 +524,6 @@ run_06_wgcna <- function(cfg) {
       }
     }
     log_info("WGCNA: eigengene 树 + 相关性热图已生成（图7，拆两张单图）")
-    pdf(file.path(res, paste0(as.character(1), "-06-06-unit1-eigengene-dendro.pdf")),
-        width = W_ONE_HALF, height = mm(72))
-    layout(matrix(c(1, 2), 2, 1), heights = c(0.4, 0.6))
-    plot(me_tree, main = "Module eigengene dendrogram", xlab = "", sub = "")
-    graphics::abline(h = 0.25, col = PAL$up, lty = "dashed")
-    if (im_ok) {
-      pheatmap::pheatmap(stats::cor(me, use = "pairwise.complete.obs"),
-                         cluster_rows = me_tree, cluster_cols = me_tree,
-                         main = "Module eigengene correlations", silent = TRUE)
-    }
-    dev.off()
-    par(par_old)
-    log_info("WGCNA: eigengene 树+热图已生成（图7）")
   }, error = function(e) log_warn(sprintf("图7 eigengene 失败: %s", conditionMessage(e))))
   if (ncol(me) == 0L) {
     status$module_trait <- "skipped: 只有 grey 模块"
