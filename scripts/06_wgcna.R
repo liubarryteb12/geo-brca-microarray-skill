@@ -633,7 +633,6 @@ run_06_wgcna <- function(cfg) {
       keep_v <- apply(m_raw, 2L, stats::var) > 0
       m_expr <- t(scale(t(m_raw[, keep_v, drop = FALSE])))
       # 行名换基因名；样本列按 ME 排序（结构可见）
-      rownames(m_expr) <- genes_m
       mm_vals <- kme[rownames(m_expr), top_m]
       ord <- order(ifelse(is.na(mm_vals), -Inf, mm_vals))
       m_expr <- m_expr[ord, , drop = FALSE]
