@@ -783,8 +783,12 @@ run_06_wgcna <- function(cfg) {
       # 被静默裁掉（实测 v3：色标整条不见）。layout 是可靠的定宽做法。
       png(file.path(res, paste0("0", as.character(1), "-06-07-unit1-module-heatmap.png")),
           width = W_DOUBLE, height = fig13_h, units = "in", res = 300)
-      layout(matrix(c(1, 2), 1, 2), widths = c(1, 0.045))
-      par(mar = c(4.5, if (row_lab_ok) 7 else 1.5, 3.5, 1))
+      # **边距按行数缩放**（实测 v4：图幅变大后固定 mar 触发 figure margins too large）。
+      # mar 的单位是"文本行高"，行数多时同一行高占的绝对尺寸不变，但 layout 第二栏
+      # （色标）太窄会把主栏挤到边距以下。修法：色标栏按画布比例给宽 + mar 收紧。
+      cex_row <- if (row_lab_ok) min(0.3, 6 / max(n_row, 1)) else 0.3
+      layout(matrix(c(1, 2), 1, 2), widths = c(1, 0.06))
+      par(mar = c(4, if (row_lab_ok) 6 else 1.2, 3, 0.5))
       image(x = seq_len(ncol(m_expr)), y = seq_len(n_row),
             z = t(as.matrix(m_expr)), useRaster = TRUE,
             col = pal, breaks = brk,
@@ -800,7 +804,7 @@ run_06_wgcna <- function(cfg) {
         log_info(sprintf("图13: %d 行放不下行名（预算不足）—— 整张不标，基因身份见 CSV", n_row))
       }
       # 第二栏：色标（与主图同高，刻度在右侧）
-      par(mar = c(4.5, 0.3, 3.5, 3.2))
+      par(mar = c(4, 0.3, 3, 2.8))
       image(x = 1, y = seq(-3, 3, length.out = 100),
             z = matrix(seq(-3, 3, length.out = 100), ncol = 1),
             col = pal, breaks = brk, axes = FALSE, xlab = "", ylab = "")

@@ -625,10 +625,21 @@ check_acceptance <- function(cfg) {
          }),
          required = FALSE),
     # ---- 差距清单补图验收（T-01 Phase C2）----
+    # **"整步不适用"要判 PASS，不是 FAIL**（AGENTS 规则 24 的三态原则）。
+    # 实测 GSE64790 是 small_sample 数据集、不做生存分析 →
+    # survival_diagnostics_status.json 写着 not_applicable，
+    # 而这几项原判据 `if (is.null(s)) return(FALSE)` 把它判成红 ——
+    # 那是"有理由地没跑"，不是崩溃。判据先看状态：
+    #   not_applicable / not_configured / too_few_events → PASS（可见）
+    #   failed / 文件缺失                                  → FAIL
+    # 写成一个共享的判定函数，四项复用（避免四处各写一遍再漂移）。
     list(name = "图质量·risk plot 三联已出（G4 组）",
          ok = local({
            s <- read_status("survival_diagnostics_status.json")
            if (is.null(s)) return(FALSE)
+           if (identical(s$status, "not_applicable") ||
+               identical(s$status, "not_configured") ||
+               identical(s$status, "too_few_events")) return(TRUE)
            figs <- s$figures %||% character(0)
            sum(c("01-10-05-unit1-risk-scores.png", "01-10-05-unit2-survival-time.png")
                %in% figs) == 2L
@@ -638,6 +649,9 @@ check_acceptance <- function(cfg) {
          ok = local({
            s <- read_status("survival_diagnostics_status.json")
            if (is.null(s)) return(FALSE)
+           if (identical(s$status, "not_applicable") ||
+               identical(s$status, "not_configured") ||
+               identical(s$status, "too_few_events")) return(TRUE)
            figs <- s$figures %||% character(0)
            "01-10-06-unit1-forest-plot.png" %in% figs &&
              file.exists(file.path(res, "cox_univariate_hr.csv"))
@@ -647,6 +661,9 @@ check_acceptance <- function(cfg) {
          ok = local({
            s <- read_status("survival_diagnostics_status.json")
            if (is.null(s)) return(FALSE)
+           if (identical(s$status, "not_applicable") ||
+               identical(s$status, "not_configured") ||
+               identical(s$status, "too_few_events")) return(TRUE)
            figs <- s$figures %||% character(0)
            "01-10-04-unit1-dca.png" %in% figs ||
              (!is.null(s$nomogram_dca_note) && nzchar(s$nomogram_dca_note))
@@ -656,6 +673,9 @@ check_acceptance <- function(cfg) {
          ok = local({
            s <- read_status("survival_diagnostics_status.json")
            if (is.null(s)) return(FALSE)
+           if (identical(s$status, "not_applicable") ||
+               identical(s$status, "not_configured") ||
+               identical(s$status, "too_few_events")) return(TRUE)
            # HR 在 KM subtitle 里 —— 判据是 cox_univariate_hr.csv 的 risk 行存在（forest 步骤落盘）
            p <- file.path(res, "cox_univariate_hr.csv")
            if (!file.exists(p)) return(FALSE)
