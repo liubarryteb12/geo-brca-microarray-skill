@@ -497,7 +497,13 @@ run_06_wgcna <- function(cfg) {
 
   # **图4：基因聚类树 + 模块颜色条**（WGCNA 清单图4，文献核心图）：
   DYNAMIC_FIG_BASES_DECL = '05:3'
-  DEND_BASE <- paste0("0", as.character(1), "-06-05-unit")
+  # 前缀是**字面量**，不是靠 as.character(1) 拼出来的（错误台账 E-05）：
+  # 原写法 `paste0("0", as.character(1), "-06-05-unit")` 的前导零来自外层 "0"，
+  # 数字转字符串永远产不出前导零 —— 阶段号一改就静默退化成 `1-06-05-...`。
+  # 拆成两段字面量是**故意的**：collectLiterals 只认以 `01-` 开头的整串字面量，
+  # 写成完整串会被当成"图名缺 unit 号与 slug"而判红。这里拼出来的是
+  # `01-06-05-unit<N>-<slug>`，单元号与名称由循环动态补上。
+  DEND_BASE <- paste0("01", "-06-05-unit")
   # 树的每个叶子 = 一个基因，颜色条 = 模块归属。blockwiseModules 多 block
   # 时返回 dendrograms 列表（每 block 一棵），此处样本 5000 基因通常单 block。
   tryCatch({
@@ -601,14 +607,14 @@ run_06_wgcna <- function(cfg) {
   tryCatch({
     me_h <- 1 - stats::cor(me, use = "pairwise.complete.obs")
     me_tree <- stats::hclust(as.dist(me_h), method = "average")
-    png(file.path(res, paste0("0", as.character(1), "-06-06-unit1-eigengene-dendro.png")),
+    png(file.path(res, "01-06-06-unit1-eigengene-dendro.png"),
         width = W_ONE_HALF, height = mm(64), units = "in", res = 300)
     par(mar = c(4, 4, 2, 0.5))
     plot(me_tree, main = "Module eigengene dendrogram", xlab = "",
          sub = "height = 1 - cor; dashed = mergeCutHeight 0.25")
     graphics::abline(h = 0.25, col = PAL$up, lty = "dashed")
     dev.off()
-    pdf(file.path(res, paste0("0", as.character(1), "-06-06-unit1-eigengene-dendro.pdf")),
+    pdf(file.path(res, "01-06-06-unit1-eigengene-dendro.pdf"),
         width = W_ONE_HALF, height = mm(64))
     par(mar = c(4, 4, 2, 0.5))
     plot(me_tree, main = "Module eigengene dendrogram", xlab = "",
@@ -621,7 +627,7 @@ run_06_wgcna <- function(cfg) {
                                 silent = TRUE,
                                 main = "Module eigengene correlations")
       if (!is.null(ph7) && !is.null(ph7$gtable)) {
-        save_pdf(file.path(res, paste0("0", as.character(1), "-06-06-unit2-eigengene-corr.pdf")),
+        save_pdf(file.path(res, "01-06-06-unit2-eigengene-corr.pdf"),
                  grid::grid.draw(ph7$gtable), width = W_ONE_HALF, height = mm(64))
       }
     }
@@ -680,7 +686,7 @@ run_06_wgcna <- function(cfg) {
   # 每个 trait 选 |cor| 最高的 module，画 GS vs MM 散点，
   # hub 候选（top2% both）标基因名；Spearman rho 标在图上。
   DYNAMIC_FIG_BASES_DECL = '04:12'
-  GSMM_BASE <- paste0("0", as.character(1), "-06-04-unit")
+  GSMM_BASE <- paste0("01", "-06-04-unit")   # 两段字面量，理由同 DEND_BASE（E-05）
   for (t in colnames(bt$traits)) {
     sub <- cor_df[cor_df$trait == t & is.finite(cor_df$cor), , drop = FALSE]
     if (nrow(sub) == 0L) next
@@ -753,7 +759,7 @@ run_06_wgcna <- function(cfg) {
     gsmm_plots <- gsmm_plots + 1L
   }  # 闭 for
   DYNAMIC_FIG_BASES_DECL = '08:12'
-  MS_BASE <- paste0("0", as.character(1), "-06-08-unit")
+  MS_BASE <- paste0("01", "-06-08-unit")     # 两段字面量，理由同 DEND_BASE（E-05）
 
   # **图8b：Module significance（MS）柱状图**（用户反馈"缺 MS-GS 图"）：
   # MS = 模块内全部基因 |GS| 的均值 —— 回答"哪个模块对该性状整体最重要"。
@@ -864,7 +870,7 @@ run_06_wgcna <- function(cfg) {
           axis.text.y = if (row_lab_ok) ggplot2::element_text(size = 3) else ggplot2::element_blank(),
           axis.ticks.y = ggplot2::element_blank(),
           legend.position = "right")
-      save_pdf(file.path(res, paste0("0", as.character(1), "-06-07-unit1-module-heatmap.pdf")),
+      save_pdf(file.path(res, "01-06-07-unit1-module-heatmap.pdf"),
                print(p13), width = W_DOUBLE, height = fig13_h)
       log_info("WGCNA: 图13 模块表达热图已生成（ggplot 版）")
       # 图15 的输入：top 模块基因落盘（GO 富集在 04 里统一做，那里有 clusterProfiler）

@@ -161,6 +161,35 @@ for (const f of scripts) {
   const lits = collectLiterals(src);
   const calls = collectCalls(src);
   nCallsTotal += calls.length;
+
+  // **动态图名前缀的 F-05 检查必须在 `calls.length === 0` 的提前返回之前跑。**
+  // 前缀赋值与出图调用**不在同一处**：脚本可能先建好 BASE、再交给辅助函数出图，
+  // 甚至本脚本一处 save_* 都没有（名字传给别的模块）。放在提前返回之后就等于
+  // 只检查"既有调用又写了坏前缀"的子集 —— 而那正是最少见的一种组合。
+  // 实测：把检查放在后面时，探针脚本被判"通过"。
+  {
+    // 判据：拼接表达式里不得出现 `as.character(<数字>)`，**且**同一表达式里含有
+    // 图名片段（`-NN-NN-unit` 形态）。数字转字符串永远产不出前导零 —— 凡是靠它
+    // 拼前缀的地方，前导零一定来自别处，就是脆的。
+    //
+    // 注意判据**不能要求整串 `NN-NN-NN`**：安全写法正是把前缀拆成
+    // `paste0("01", "-06-05-unit")`（拆开是为了不被 collectLiterals 当成完整图名），
+    // 此时单独看 `"-06-05-unit"` 没有前导 `NN-`。所以只认 `-NN-NN-unit` 这个片段。
+    const dynBases = src.matchAll(
+      /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*<-\s*(paste0|paste|sprintf)\s*\([^\n]*\)/gm
+    );
+    for (const m of dynBases) {
+      const expr = m[0];
+      if (!/as\.character\s*\(\s*\d+\s*\)/.test(expr)) continue;
+      if (!/-\d{2}-\d{2}-unit/.test(expr)) continue;
+      problems.push(
+        `${f}: 图名前缀 "${m[1]}" 用了 as.character(<数字>) 拼接（${expr.trim()}）—— ` +
+          `数字转字符串产不出前导零，前导零来自外层字面量，阶段号一改就会静默变成 ` +
+          `"1-06-…"。前缀请直接写完整字面量，如 paste0("01", "-06-05-unit")（错误台账 E-05）`
+      );
+    }
+  }
+
   if (calls.length === 0) continue;
 
   // **同一个名字在脚本里出现多次是正常的** —— `figs_written` /
@@ -233,6 +262,8 @@ for (const f of scripts) {
       notes.push(`${f}: ${deficit} 个动态图名（DYNAMIC_FIG_BASES_DECL 声明豁免）`);
     }
   }
+
+  // （E-05 的动态图名前缀检查已上移到 `calls.length === 0` 提前返回之前，见上。）
   for (const c of calls) {
     if (!c.name) {
       notes.push(`${f}:${c.line} 出图调用的实参不是字面量（经辅助函数传名，字面量在别处）`);
@@ -240,14 +271,30 @@ for (const f of scripts) {
   }
 
   // 图号从 01 起连续
-  const figNos = [...new Set(figs.map((x) => x.fig))].sort((a, b) => a - b);
+  //
+  // **必须把 DYNAMIC_FIG_BASES_DECL 声明的图号算进来**（2026-09-24 修）。
+  // 动态拼名的图号（如 `paste0("01", "-06-04-unit")` 的 04）在字面量里看不见，
+  // 只看字面量会把 04 当成"缺号"，报出"06 不连续（应为 04）"这种**假阳性** ——
+  // 图其实出了，只是名字是拼的。
+  // 反过来，若某图号既没有字面量、也没被声明，那才是真的缺号。
+  const dynFigNos = new Set();
+  for (const d of dynDecl) {
+    const m = d.match(/'([^']*)'/);
+    if (!m) continue;
+    for (const part of m[1].split(',')) {
+      const kv = part.split(':');
+      if (kv.length === 2 && /^\d{2}$/.test(kv[0].trim())) dynFigNos.add(Number(kv[0].trim()));
+    }
+  }
+  const figNos = [...new Set([...figs.map((x) => x.fig), ...dynFigNos])].sort((a, b) => a - b);
   figNos.forEach((n, i) => {
     if (n !== i + 1) {
       problems.push(`${f}: 图号 ${String(n).padStart(2, "0")} 不连续（应为 ${String(i + 1).padStart(2, "0")}）`);
     }
   });
-  // 同一图号下 unit 从 1 起连续
+  // 同一图号下 unit 从 1 起连续（动态图号的 unit 号运行时才知道，跳过静态判定）
   for (const n of figNos) {
+    if (dynFigNos.has(n)) continue;
     const units = figs.filter((x) => x.fig === n).map((x) => x.unit).sort((a, b) => a - b);
     units.forEach((u, i) => {
       if (u !== i + 1) {
