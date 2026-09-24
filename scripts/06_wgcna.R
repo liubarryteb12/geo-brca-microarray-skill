@@ -801,6 +801,14 @@ run_06_wgcna <- function(cfg) {
                                      "high MM only" = "high MM only",
                                      "high GS only" = "high GS only",
                                      "neither" = "neither")) +
+      # **图例键必须 override.aes 强制不透明、放大。** 图例键继承图层美学 ——
+      # 这里继承了 `size = 0.8, alpha = 0.55`，于是四个键都只有约 2px 且半透明：
+      # 深色（up 红 / down 蓝 / muted 灰）勉强可辨，**orange 在白底上打 55% 透明
+      # 后几乎消失**（用户反馈"high MM only 的图例无图标"）。实测探针 9 张
+      # 01-06-04 系列全部同样问题 —— 同一段代码，同一段病。
+      # 与规则 20（PPI size 图例隐形）同源：**图例键不继承图层透明度**。
+      ggplot2::guides(colour = ggplot2::guide_legend(
+        override.aes = list(size = 2.6, alpha = 1), ncol = 1)) +
       ggplot2::labs(
         title = sprintf("GS vs MM - trait %s, module %s", t, best_m),
         subtitle = wrap_subtitle(sprintf(paste0(
