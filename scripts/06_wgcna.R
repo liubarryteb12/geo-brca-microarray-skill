@@ -394,8 +394,17 @@ run_06_wgcna <- function(cfg) {
   #      6 个性状都是 `0=灰, 1=蓝`，重复 6 遍没有信息量）；
   #   ③ 分组 = 每个水平一色（最要紧，列在最前）。
   # 这样从 10 行压到 3 行，且每行都有独立信息。
-  cont_traits <- names(trait_rows)[vapply(trait_rows, function(x)
-    length(unique(x)) > 2L, logical(1))]
+  # **分类必须按"当时怎么编码的"，不能按"颜色去重后剩几种"。**
+  # 实测（run 35981905807）：`grade` 是**连续**性状（走 4 分位分箱），但它的
+  # 分位数恰好只切出 2 个不同颜色，于是被按"颜色种数"误判成二分类，
+  # 图例里写成了 `Binary traits (4): ...` —— **而它实际是连续色阶**。
+  # 判据改为读**编码时写下的 `trait_legend` 文本前缀**（"continuous:" /
+  # "0=...1=..."），那是编码那一刻的事实，不是事后从结果反推的。
+  is_cont <- vapply(names(trait_rows), function(nm) {
+    lg <- trait_legend[[nm]]
+    length(lg) > 0L && !is.na(lg[1]) && grepl("^continuous:", lg[1])
+  }, logical(1))
+  cont_traits <- names(trait_rows)[is_cont]
   bin_traits <- setdiff(names(trait_rows), cont_traits)
   # 二分类的"值→色"映射去重（本数据里 6 个性状共用同一套，只写一次）
   bin_keys <- unique(unlist(trait_legend[bin_traits]))
