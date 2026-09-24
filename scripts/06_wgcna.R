@@ -378,52 +378,73 @@ run_06_wgcna <- function(cfg) {
     }
   }
   group_labels_row <- c("Group", names(trait_rows))
-  # 图例文字（画在图下方，用 base legend —— plotDendroAndColors 自己不带图例）
-  legend_txt <- c(sprintf("Group: %s", paste(sprintf("%s=%s", grp_lv,
-                                                     unname(grp_pal[grp_lv])), collapse = "; ")),
-                  unlist(trait_legend))
+  # ---------------------------------------------------------------------------
+  # 图例：**只留"重要元素"**（用户 2026-09-24 指示："放弃不重要元素，
+  # 保留重要元素即可"）。
+  #
+  # 原写法逐行输出 10 条，其中 **6 条是同模板的
+  # `continuous: white->red over <范围> (quartile bins)`** —— 读者从图上
+  # 根本分不出哪个范围属于哪个性状（行名在图左侧、图例在下方，位置对不上），
+  # 而这条模板文字本身不提供任何"怎么读图"的信息。
+  #
+  # 改成**按编码类型归纳**（这是读者真正需要的）：
+  #   ① 连续性状 = 白→红分位分箱（一条通用说明，范围写进落盘的
+  #      `wgcna_status.json`，需要精确值时去查）；
+  #   ② 二分类性状 = 灰/蓝（只列**实际出现过**的水平，且**去重** ——
+  #      6 个性状都是 `0=灰, 1=蓝`，重复 6 遍没有信息量）；
+  #   ③ 分组 = 每个水平一色（最要紧，列在最前）。
+  # 这样从 10 行压到 3 行，且每行都有独立信息。
+  cont_traits <- names(trait_rows)[vapply(trait_rows, function(x)
+    length(unique(x)) > 2L, logical(1))]
+  bin_traits <- setdiff(names(trait_rows), cont_traits)
+  # 二分类的"值→色"映射去重（本数据里 6 个性状共用同一套，只写一次）
+  bin_keys <- unique(unlist(trait_legend[bin_traits]))
+  legend_txt <- c(
+    sprintf("Group: %s", paste(sprintf("%s=%s", grp_lv,
+                                       unname(grp_pal[grp_lv])), collapse = "; ")),
+    if (length(bin_keys) > 0L)
+      sprintf("Binary traits (%s): %s", paste(bin_traits, collapse = ", "),
+              paste(bin_keys, collapse = "; ")),
+    if (length(cont_traits) > 0L)
+      sprintf("Continuous traits (%s): white -> red, quartile bins (ranges in wgcna_status.json)",
+              paste(cont_traits, collapse = ", "))
+  )
+  legend_txt <- legend_txt[!is.na(legend_txt) & nzchar(legend_txt)]
+
   draw_sample_dendro <- function() {
-    # **图例与树用 `par(fig=)` 上下分区，不能用 `layout()`。**
+    # **图例画在底部外边距里，用 `mtext()` —— 不能用 `layout()` 也不能用
+    # `par(fig=)`。** 两条都是实测踩出来的：
     #
-    # 实测（2026-09-24，run 35967591398）：`WGCNA::plotDendroAndColors`
-    # **内部自己调用 `layout()`** —— 它要按"树 1 行 + N 个颜色条"分配行高。
-    # 外层先 `layout(matrix(c(1,2), 2, 1), ...)` 会被它**整个覆盖**，
-    # 于是树被画进它自己的分区、而随后的 `plot.new()` 拿到**整块画布**，
-    # 最终图里**只剩图例文字，树和性状条全部消失**。
+    # ① `layout()`：`WGCNA::plotDendroAndColors` **内部自己调用 `layout()`**
+    #    来分配"树 + N 个颜色条"的行高，外层 layout 被**整个覆盖**。
+    #    实测（run 35967591398）后果是树消失、只剩图例文字 —— 而且
+    #    **不报错**（status ok、CI 全绿、check_figures 也报"有墨迹"）。
+    # ② `par(fig=)`：在 `layout()` 生效期间**被忽略**（实测 run 35974071689
+    #    仍是重叠），所以它也不是出路。
     #
-    # 危险之处：这一步**不报错** —— `wgcna_status.json` 里 `status: ok`、
-    # 无 `figure_error`、CI 全绿、`check_figures` 也报"有墨迹"，
-    # 只有打开图才发现是空的。所以判据不能只靠"有没有报错"。
-    #
-    # `par(fig=)` 是**设备级**的视口设置，`layout()` 不会重置它 ——
-    # 这正是它能与 `plotDendroAndColors` 共存的原因。
-    # 旧版（图正常）之所以没问题，是因为它**根本没做上下分区**（图例直接用
-    # `plotDendroAndColors` 自带的 groupLabels）。这里要保留分区，所以改 fig。
+    # `mtext()` 写在**外边距**（mai 的底部那一档）里，与 plot 区互不干涉，
+    # 也不会被 `layout()` 重置 —— 这是唯一稳的做法。
+    # 代价：行数受画布高度限制，所以上面才要把图例压到 3 行。
     n_leg <- length(legend_txt)
-    # 上区 78%：树 + 性状条（左边留宽给行名）
-    graphics::par(fig = c(0, 1, 0.22, 1), mai = c(0.08, 1.5, 0.5, 0.15), new = FALSE)
+    # 底部留够 n_leg 行文字 + 一点余量（每行约 0.85 行高）
+    graphics::par(mai = c(0.55 + 0.30 * n_leg, 1.5, 0.5, 0.15))
     WGCNA::plotDendroAndColors(sample_tree, color_mat, groupLabels = group_labels_row,
                                dendroLabels = FALSE, hang = 0.03,
                                addGuide = TRUE, guideHang = 0.05,
                                main = "Sample dendrogram with trait annotation (outlier check)",
                                cex.labels = 0.4)
-    # 下区 22%：纯文字图例（无坐标轴），逐行写，不与行名抢位置
-    graphics::par(fig = c(0, 1, 0, 0.22), mai = c(0.02, 1.5, 0.02, 0.15), new = TRUE)
-    graphics::plot.new()
-    graphics::plot.window(xlim = c(0, 1), ylim = c(0, n_leg))
+    # line = 从下往上数第几行；最上面一条给最大的 line
     for (k in seq_along(legend_txt)) {
-      graphics::text(0, n_leg - k + 0.5, legend_txt[k],
-                     adj = c(0, 0.5), cex = 0.5, col = PAL$ink)
+      graphics::mtext(legend_txt[k], side = 1, line = n_leg - k + 0.4,
+                      adj = 0, cex = 0.55, col = PAL$ink)
     }
-    # **画完必须复位**，否则下一个图（本设备已关闭，但同设备复用时会串）
-    graphics::par(fig = c(0, 1, 0, 1), new = FALSE)
   }
   png(file.path(res, "01-06-03-unit1-sample-dendrogram.png"),
-      width = W_DOUBLE, height = mm(120), units = "in", res = 300)
+      width = W_DOUBLE, height = mm(130), units = "in", res = 300)
   draw_sample_dendro()
   dev.off()
   pdf(file.path(res, "01-06-03-unit1-sample-dendrogram.pdf"),
-      width = W_DOUBLE, height = mm(120))
+      width = W_DOUBLE, height = mm(130))
   draw_sample_dendro()
   dev.off()
   status$sample_dendrogram$trait_rows <- group_labels_row
