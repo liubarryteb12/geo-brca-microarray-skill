@@ -402,15 +402,17 @@ run_06_wgcna <- function(cfg) {
   # **每行都控制在约 110 字符内**：图例写在设备外边距里、宽度就是画布宽度
   # （183 mm），太长会**横向顶出画布**（`savefig.bbox: standard` 下静默裁）。
   # 实测第一版把 6 个连续性状名全列出来，一行 150+ 字符被裁掉尾巴。
+  # **不枚举性状名。** 每一条性状条的名字已经写在图左侧（`groupLabels`），
+  # 图例再列一遍是重复的 —— 而且第一版就是因为把 5 个连续性状名全列出来，
+  # 一行 150+ 字符被横向裁掉。图例只讲**编码方式**，这是图上没有的信息。
   legend_txt <- c(
     sprintf("Group: %s", paste(sprintf("%s=%s", grp_lv,
                                        unname(grp_pal[grp_lv])), collapse = "; ")),
     if (length(bin_keys) > 0L)
-      sprintf("Binary traits (%d: %s): %s", length(bin_traits),
-              paste(bin_traits, collapse = ", "), paste(bin_keys, collapse = "; ")),
+      sprintf("Binary traits (%d): %s", length(bin_traits),
+              paste(bin_keys, collapse = "; ")),
     if (length(cont_traits) > 0L)
-      sprintf("Continuous traits (%d: %s): white -> red, quartile bins",
-              length(cont_traits), paste(cont_traits, collapse = ", "))
+      sprintf("Continuous traits (%d): white -> red, quartile bins", length(cont_traits))
   )
   legend_txt <- legend_txt[!is.na(legend_txt) & nzchar(legend_txt)]
 
@@ -432,16 +434,24 @@ run_06_wgcna <- function(cfg) {
     # `oma` 是**设备级**外边际，`layout()` **不重置它**；`outer = TRUE` 让
     # `mtext` 写进那一圈。这是唯一同时满足"不被覆盖"与"不压绘图区"的组合。
     n_leg <- length(legend_txt)
-    # 底部外边际按行数留白（每行约 0.62 行高 + 0.9 行余量）
-    graphics::par(oma = c(0.9 + 0.62 * n_leg, 0, 0, 0))
+    # **`oma` 的行数按 `cex = 0.55` 的实际行高算。**
+    # `line` 的单位是**行高**（默认 `cex = 1` 时的行高），而我们把文字缩到
+    # 0.55 倍 —— 所以一行文字只占约 0.55 个 line 单位。
+    # 第一版按 0.62 算余量，实测**最后一行（Group）被裁出画布**
+    # （run 35979149859）—— 因为 `line = 0` 那一行本身就压在边际内缘上。
+    # 现在按 0.55 行高 + 1.5 行余量（含 `line = 0` 自身占位）留白。
+    graphics::par(oma = c(1.5 + 0.55 * n_leg, 0, 0, 0))
     WGCNA::plotDendroAndColors(sample_tree, color_mat, groupLabels = group_labels_row,
                                dendroLabels = FALSE, hang = 0.03,
                                addGuide = TRUE, guideHang = 0.05,
                                main = "Sample dendrogram with trait annotation (outlier check)",
                                cex.labels = 0.4)
-    # line 从外边际下缘往上数；最上面一条给最大的 line
+    # **line 从 0 往上数，且 0 是贴着边际内缘的那一行。**
+    # 想让第一条（Group）在最上面，就得给它最大的 line；
+    # 起点取 `n_leg - k`（k=1 时最大）而不是 `n_leg - k + 0.2` —— 实测那个
+    # +0.2 会让最上面一条顶出边际、被裁。
     for (k in seq_along(legend_txt)) {
-      graphics::mtext(legend_txt[k], side = 1, line = n_leg - k + 0.2,
+      graphics::mtext(legend_txt[k], side = 1, line = n_leg - k,
                       outer = TRUE, adj = 0, cex = 0.55, col = PAL$ink)
     }
   }
