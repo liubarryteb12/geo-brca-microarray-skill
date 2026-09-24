@@ -801,14 +801,26 @@ run_06_wgcna <- function(cfg) {
                                      "high MM only" = "high MM only",
                                      "high GS only" = "high GS only",
                                      "neither" = "neither")) +
-      # **图例键必须 override.aes 强制不透明、放大。** 图例键继承图层美学 ——
-      # 这里继承了 `size = 0.8, alpha = 0.55`，于是四个键都只有约 2px 且半透明：
-      # 深色（up 红 / down 蓝 / muted 灰）勉强可辨，**orange 在白底上打 55% 透明
-      # 后几乎消失**（用户反馈"high MM only 的图例无图标"）。实测探针 9 张
+      # **图例键必须 override.aes 强制不透明、放大，且显式钉色。**
+      # 图例键继承图层美学 —— 这里继承了 `size = 0.8, alpha = 0.55`：
+      # 图标只有约 2px 且半透明，深色勉强可辨、orange 打 55% 透明后白底上
+      # 几乎消失（用户反馈"high MM only 的图例无图标"）。实测探针 9 张
       # 01-06-04 系列全部同样问题 —— 同一段代码，同一段病。
       # 与规则 20（PPI size 图例隐形）同源：**图例键不继承图层透明度**。
+      #
+      # **第二轮（用户复检仍未好）：`alpha=1` 后其余三个键出来了，
+      # 但 `high MM only` 的键依旧空白 —— 说明它不是"太淡"，是"没颜色"。
+      # 根因是 `drop = FALSE`：该水平在本数据集里**一个点都没有**（ME5 的
+      # kME > 0.8 的基因全部同时 GS > 0.2，全落进 hub candidate），没有数据
+      # 的水平其键按 `na.value`（默认灰、且 alpha 叠加后近白）渲染 ——
+      # 看起来就是"没有图标"。** 所以光调 size/alpha 不够，必须把四个键的
+      # **颜色也显式钉进 override.aes**，让键不再依赖"这个水平有没有数据"。
+      # 这也顺带修掉了语义矛盾：图例声称有这个分区、图上却一个点都没有，
+      # 读者会以为图错了 —— 现在键有颜色，且图例与数据的对应关系可核对。
       ggplot2::guides(colour = ggplot2::guide_legend(
-        override.aes = list(size = 2.6, alpha = 1), ncol = 1)) +
+        override.aes = list(size = 2.6, alpha = 1,
+                            colour = unname(zone_cols)),
+        ncol = 1)) +
       ggplot2::labs(
         title = sprintf("GS vs MM - trait %s, module %s", t, best_m),
         subtitle = wrap_subtitle(sprintf(paste0(
