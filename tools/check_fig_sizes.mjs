@@ -211,6 +211,39 @@ if (arWarn.length > 0) {
   console.log('  "比例美不美观"是审美判断，需人工终审 —— 见 16 号文档 §5 待判定 2。')
 }
 
+// ---- WARN 落盘（2026-09-24 审计 P1-9 裁决：WARN 必须有稳定消费入口，否则等于噪声）----
+// 写 results/<GSE>/warn_report.json：谁在什么时机消费？
+//   ① 人工亲读图**之前**先看它（selfcheck 第 10 项会汇总提示）；
+//   ② CI 里作为 artifact 一并上传，跨轮对比"WARN 集合是否稳定"——
+//      稳定不变 = 已知审美取舍；**新出现** = 真要看的回归信号。
+if (arWarn.length > 0 || over.length > 0) {
+  const report = {
+    generatedAt: new Date().toISOString(),
+    tool: 'check_fig_sizes.mjs',
+    gates: {
+      widthMaxMM: W_DOUBLE_MM,
+      arFailBand: [AR_FAIL_MIN, AR_FAIL_MAX],
+      arWarnBand: [AR_WARN_MIN, AR_WARN_MAX],
+    },
+    summary: { total: rows.length, widthOver: over.length, arFail: arFail.length, arWarn: arWarn.length },
+    // WARN 只给"人工终审队列"，FAIL 是硬错误（FAIL 时 CI 已红，无需在此重复）
+    items: arWarn.map((r) => ({
+      figure: r.name,
+      kind: 'aspect-ratio-warn',
+      value: Number(r.ar.toFixed(3)),
+      band: [AR_WARN_MIN, AR_WARN_MAX],
+      hint: '长宽比超出常见范围——多为合理构图（热图偏竖/KM 偏扁），交人工终审',
+    })),
+  }
+  const outPath = process.argv[3] || path.join(path.dirname(process.argv[2] || '.'), 'warn_report.json')
+  try {
+    fs.writeFileSync(outPath, JSON.stringify(report, null, 2), 'utf8')
+    console.log(`\n[WARN 报告] 已写出 ${outPath}（${arWarn.length} 条）—— 亲读图前先看这个`)
+  } catch (e) {
+    console.log(`\n[WARN 报告] 写出失败（不阻断）：${e.message}`)
+  }
+}
+
 if (failed) process.exit(1)
 
 console.log('')
