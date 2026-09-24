@@ -399,44 +399,50 @@ run_06_wgcna <- function(cfg) {
   bin_traits <- setdiff(names(trait_rows), cont_traits)
   # 二分类的"值→色"映射去重（本数据里 6 个性状共用同一套，只写一次）
   bin_keys <- unique(unlist(trait_legend[bin_traits]))
+  # **每行都控制在约 110 字符内**：图例写在设备外边距里、宽度就是画布宽度
+  # （183 mm），太长会**横向顶出画布**（`savefig.bbox: standard` 下静默裁）。
+  # 实测第一版把 6 个连续性状名全列出来，一行 150+ 字符被裁掉尾巴。
   legend_txt <- c(
     sprintf("Group: %s", paste(sprintf("%s=%s", grp_lv,
                                        unname(grp_pal[grp_lv])), collapse = "; ")),
     if (length(bin_keys) > 0L)
-      sprintf("Binary traits (%s): %s", paste(bin_traits, collapse = ", "),
-              paste(bin_keys, collapse = "; ")),
+      sprintf("Binary traits (%d: %s): %s", length(bin_traits),
+              paste(bin_traits, collapse = ", "), paste(bin_keys, collapse = "; ")),
     if (length(cont_traits) > 0L)
-      sprintf("Continuous traits (%s): white -> red, quartile bins (ranges in wgcna_status.json)",
-              paste(cont_traits, collapse = ", "))
+      sprintf("Continuous traits (%d: %s): white -> red, quartile bins",
+              length(cont_traits), paste(cont_traits, collapse = ", "))
   )
   legend_txt <- legend_txt[!is.na(legend_txt) & nzchar(legend_txt)]
 
   draw_sample_dendro <- function() {
-    # **图例画在底部外边距里，用 `mtext()` —— 不能用 `layout()` 也不能用
-    # `par(fig=)`。** 两条都是实测踩出来的：
+    # **图例写进 `oma`（设备外边际）里的 `mtext(outer = TRUE)`。**
     #
-    # ① `layout()`：`WGCNA::plotDendroAndColors` **内部自己调用 `layout()`**
-    #    来分配"树 + N 个颜色条"的行高，外层 layout 被**整个覆盖**。
-    #    实测（run 35967591398）后果是树消失、只剩图例文字 —— 而且
-    #    **不报错**（status ok、CI 全绿、check_figures 也报"有墨迹"）。
-    # ② `par(fig=)`：在 `layout()` 生效期间**被忽略**（实测 run 35974071689
-    #    仍是重叠），所以它也不是出路。
+    # 这是第三次尝试，前两次都失败了 —— 记下来免得后人再试：
     #
-    # `mtext()` 写在**外边距**（mai 的底部那一档）里，与 plot 区互不干涉，
-    # 也不会被 `layout()` 重置 —— 这是唯一稳的做法。
-    # 代价：行数受画布高度限制，所以上面才要把图例压到 3 行。
+    # ① **`layout()` 不行**：`WGCNA::plotDendroAndColors` **内部自己调用
+    #    `layout()`** 来分配"树 + N 个颜色条"的行高，外层 layout 被**整个覆盖**。
+    #    实测（run 35967591398）后果是树消失、只剩图例文字 —— 而且**不报错**
+    #    （status ok、CI 全绿、`check_figures` 也报"有墨迹"）。
+    # ② **`par(fig=)` 不行**：`layout()` 生效期间它被忽略（实测 run 35974071689
+    #    仍是重叠）。
+    # ③ **`mai` + `mtext(outer = FALSE)` 也不行**：`layout()` 会**重置 `mar`**
+    #    （每图区各自的边距），于是文字落进绘图区、压在性状条上
+    #    （实测 run 35976839298）。
+    #
+    # `oma` 是**设备级**外边际，`layout()` **不重置它**；`outer = TRUE` 让
+    # `mtext` 写进那一圈。这是唯一同时满足"不被覆盖"与"不压绘图区"的组合。
     n_leg <- length(legend_txt)
-    # 底部留够 n_leg 行文字 + 一点余量（每行约 0.85 行高）
-    graphics::par(mai = c(0.55 + 0.30 * n_leg, 1.5, 0.5, 0.15))
+    # 底部外边际按行数留白（每行约 0.62 行高 + 0.9 行余量）
+    graphics::par(oma = c(0.9 + 0.62 * n_leg, 0, 0, 0))
     WGCNA::plotDendroAndColors(sample_tree, color_mat, groupLabels = group_labels_row,
                                dendroLabels = FALSE, hang = 0.03,
                                addGuide = TRUE, guideHang = 0.05,
                                main = "Sample dendrogram with trait annotation (outlier check)",
                                cex.labels = 0.4)
-    # line = 从下往上数第几行；最上面一条给最大的 line
+    # line 从外边际下缘往上数；最上面一条给最大的 line
     for (k in seq_along(legend_txt)) {
-      graphics::mtext(legend_txt[k], side = 1, line = n_leg - k + 0.4,
-                      adj = 0, cex = 0.55, col = PAL$ink)
+      graphics::mtext(legend_txt[k], side = 1, line = n_leg - k + 0.2,
+                      outer = TRUE, adj = 0, cex = 0.55, col = PAL$ink)
     }
   }
   png(file.path(res, "01-06-03-unit1-sample-dendrogram.png"),
