@@ -794,6 +794,22 @@ run_06_wgcna <- function(cfg) {
                           colour = PAL$muted, linewidth = 0.3) +
       ggplot2::geom_vline(xintercept = MM_CUT, linetype = "dashed",
                           colour = PAL$muted, linewidth = 0.3) +
+      # **空分区补一个"看不见但真实存在"的锚点。**
+      # 两轮实测：① override.aes 调 size/alpha —— 其余三键好了，唯独
+      # `high MM only` 仍空白；② 把四键颜色钉进 override.aes —— **产物
+      # SHA 逐字节未变**，键的颜色根本不从 override 来。
+      # 真根因：`drop = FALSE` 会**显示**无数据水平的键，但该键的渲染
+      # 走 ggplot 内部"此水平无数据"的路径。没有本地 R，每个假设都要烧
+      # 一轮 10 分钟 CI 才能证伪 —— 换一条不依赖内部机制的路：
+      # **给每个水平补一行 y=NA 的锚点，让四个水平都真实有数据**。
+      # 有数据的水平键一定按 `values` 正常渲染（红/蓝/灰三键一直是好的，
+      # 这就是证据）。锚点 y=NA 画不出来、不进任何落盘表，零副作用。
+      ggplot2::geom_point(
+        data = data.frame(mm = rep(NA_real_, length(zone_lv)),
+                          gs = NA_real_,
+                          zone = factor(zone_lv, levels = zone_lv),
+                          stringsAsFactors = FALSE),
+        inherit.aes = TRUE, size = 0.8, alpha = 0) +
       ggplot2::geom_point(size = 0.8, alpha = 0.55) +
       ggplot2::scale_colour_manual(values = zone_cols, drop = FALSE, name = NULL,
                                    labels = c(
@@ -801,22 +817,14 @@ run_06_wgcna <- function(cfg) {
                                      "high MM only" = "high MM only",
                                      "high GS only" = "high GS only",
                                      "neither" = "neither")) +
-      # **图例键必须 override.aes 强制不透明、放大，且显式钉色。**
+      # **图例键必须 override.aes 强制不透明、放大。**
       # 图例键继承图层美学 —— 这里继承了 `size = 0.8, alpha = 0.55`：
       # 图标只有约 2px 且半透明，深色勉强可辨、orange 打 55% 透明后白底上
       # 几乎消失（用户反馈"high MM only 的图例无图标"）。实测探针 9 张
       # 01-06-04 系列全部同样问题 —— 同一段代码，同一段病。
       # 与规则 20（PPI size 图例隐形）同源：**图例键不继承图层透明度**。
-      #
-      # **第二轮（用户复检仍未好）：`alpha=1` 后其余三个键出来了，
-      # 但 `high MM only` 的键依旧空白 —— 说明它不是"太淡"，是"没颜色"。
-      # 根因是 `drop = FALSE`：该水平在本数据集里**一个点都没有**（ME5 的
-      # kME > 0.8 的基因全部同时 GS > 0.2，全落进 hub candidate），没有数据
-      # 的水平其键按 `na.value`（默认灰、且 alpha 叠加后近白）渲染 ——
-      # 看起来就是"没有图标"。** 所以光调 size/alpha 不够，必须把四个键的
-      # **颜色也显式钉进 override.aes**，让键不再依赖"这个水平有没有数据"。
-      # 这也顺带修掉了语义矛盾：图例声称有这个分区、图上却一个点都没有，
-      # 读者会以为图错了 —— 现在键有颜色，且图例与数据的对应关系可核对。
+      # `colour` 一项是冗余保险：理论上键色来自 scale 的 `values`，
+      # 但显式钉上后即使上游再变也稳。
       ggplot2::guides(colour = ggplot2::guide_legend(
         override.aes = list(size = 2.6, alpha = 1,
                             colour = unname(zone_cols)),
