@@ -51,6 +51,34 @@ const W_ONE_HALF_MM = 136
 const W_DOUBLE_MM = 183
 const TOLERANCE_MM = 0.5
 
+// —— 长宽比（S2-2，2026-09-24 新增）——
+//
+// **为什么阈值不是 [1.2, 2.5]：** `16_PROJECT_REVIEW_REPORT.md` §6 最初把
+// S2-2 写成"长宽比超出 [1.2, 2.5] 判红"，但那个区间**从未对照过真实图**。
+// 2026-09-24 对图库实测 161 张，发现它会**误判 29 张（18%）**：
+//
+//   实测分布（w/h）：min 0.82 / p05 1.11 / 中位 1.53 / p95 2.62 / max 3.34
+//   低于 1.2 的 17 张 —— 全是**本来就该竖长**的图：
+//     热图（01-04-01 top50）、火山图、GSEA dotplot、ORA dotplot（0.82）
+//   高于 2.5 的 12 张 —— 全是**本来就该扁平**的图：
+//     KM 曲线、风险评分条带（01-10-05，3.34）、拟时序分布、HVG 选择
+//
+// 把这些判红等于让三仓 CI **每次必红**，而门禁一旦常年红就会被绕过 ——
+// 那才是真的没有门禁。所以这里改成**按实测标定**的两档：
+//
+//   FAIL  band [0.7, 4.0]：只拦"结构性画错"（如把 mm 当英寸导致图幅
+//                          畸变、或面板数算错把画布拉成细条）
+//   WARN  band [0.9, 3.0]：列出"超出常见范围"的图**仅供人看**，不判红 ——
+//                          "比例美不美观"是审美判断，属用户终审
+//                          （`16` §5 待判定 2 明确说"需要你指认具体图名"）
+//
+// **实测校准**：FAIL band 下当前 161 张**零误判**（最窄 0.82 / 最宽 3.34，
+// 两侧各留 ≥15% 余量）。新增图若落进 WARN，日志会列出来但 CI 仍绿。
+const AR_FAIL_MIN = 0.7
+const AR_FAIL_MAX = 4.0
+const AR_WARN_MIN = 0.9
+const AR_WARN_MAX = 3.0
+
 const target = process.argv[2]
 
 if (!target) {
@@ -101,10 +129,15 @@ for (const name of pdfs) {
     unreadable.push(name)
     continue
   }
-  rows.push({ name, ...mm })
+  rows.push({ name, ...mm, ar: mm.widthMM / mm.heightMM })
 }
 
 const over = rows.filter((r) => r.widthMM > W_DOUBLE_MM + TOLERANCE_MM)
+const arFail = rows.filter((r) => r.ar < AR_FAIL_MIN || r.ar > AR_FAIL_MAX)
+const arWarn = rows.filter(
+  (r) => !(r.ar < AR_FAIL_MIN || r.ar > AR_FAIL_MAX)
+    && (r.ar < AR_WARN_MIN || r.ar > AR_WARN_MAX),
+)
 
 // —— 报告 ——
 console.log(`图幅检查：${target}`)
@@ -112,7 +145,7 @@ console.log(`  读到一个 ${pdfs.length} 个 PDF`)
 console.log('')
 for (const r of rows.sort((a, b) => b.widthMM - a.widthMM)) {
   const mark = r.widthMM > W_DOUBLE_MM + TOLERANCE_MM ? '[FAIL]' : '[OK]  '
-  console.log(`  ${mark} ${r.name.padEnd(40)} ${r.widthMM.toFixed(1)} x ${r.heightMM.toFixed(1)} mm`)
+  console.log(`  ${mark} ${r.name.padEnd(40)} ${r.widthMM.toFixed(1)} x ${r.heightMM.toFixed(1)} mm  比例 ${r.ar.toFixed(2)}`)
 }
 
 // 分布：让日志里能直接看出图幅都落在哪一档
@@ -154,7 +187,31 @@ if (over.length > 0) {
   failed = true
 }
 
+// 长宽比：只拦结构性畸变；"好不好看"留给用户终审（见文件头说明）
+if (arFail.length > 0) {
+  console.error('')
+  console.error(`[FAIL] ${arFail.length} 张图长宽比超出 [${AR_FAIL_MIN}, ${AR_FAIL_MAX}]（结构性畸变）：`)
+  for (const r of arFail) {
+    console.error(`    ${r.name}  ${r.widthMM.toFixed(1)} x ${r.heightMM.toFixed(1)} mm  比例 ${r.ar.toFixed(2)}`)
+  }
+  console.error('')
+  console.error('  常见成因：① 画布尺寸公式把英寸当毫米（图幅会畸变）；')
+  console.error('           ② 面板数/条目数算错，把画布拉成细条或竖条。')
+  console.error(`  注：常见范围是 [${AR_WARN_MIN}, ${AR_WARN_MAX}]，超出它但仍在 FAIL 带内只 WARN 不判红。`)
+  failed = true
+}
+
+if (arWarn.length > 0) {
+  console.log('')
+  console.log(`[WARN] ${arWarn.length} 张图长宽比超出常见范围 [${AR_WARN_MIN}, ${AR_WARN_MAX}] —— 仅提示，不判红：`)
+  for (const r of arWarn) {
+    console.log(`    ${r.name}  比例 ${r.ar.toFixed(2)}`)
+  }
+  console.log('  这些图各有合理理由（热图/火山图偏竖、KM/风险条带偏扁）。')
+  console.log('  "比例美不美观"是审美判断，需人工终审 —— 见 16 号文档 §5 待判定 2。')
+}
+
 if (failed) process.exit(1)
 
 console.log('')
-console.log(`全部 ${rows.length} 张图都在 ${W_DOUBLE_MM} mm 以内`)
+console.log(`全部 ${rows.length} 张图都在 ${W_DOUBLE_MM} mm 以内，长宽比无结构性畸变`)

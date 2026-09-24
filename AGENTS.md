@@ -634,7 +634,14 @@ node tools/check_sample_structure.mjs GSE42568
 node tools/check_clinical_endpoints.mjs GSE42568
 
 # 图不是空白的（独立解码 PNG 像素）；参数是**数据集目录**
+# 双向检查：空白（<0.2%）与糊死（>96%）都判红（S2-3，2026-09-24）
 node tools/check_figures.mjs results/GSE42568
+
+# 图幅宽度 <= 183 mm，且长宽比无结构性畸变（S2-2，2026-09-24）
+node tools/check_fig_sizes.mjs results/GSE42568
+
+# 图例一律框外右侧、纵向（S2-1，2026-09-24）
+node tools/check_legend_convention.mjs
 
 # 出图名与代码阶段对应（`<阶段>-<模块>-<图>-unit<单元>-<名称>`）
 node tools/check_fig_names.mjs
@@ -739,6 +746,17 @@ GSE64790 244s / GSE42568 400s，暖缓存整轮 6m10s / 8m49s。
 
 > 改完要亲读：图例在框外不代表它没被裁掉 —— 画布宽度不够时框外图例仍会
 > 顶出画布（`savefig.bbox: standard` 下静默裁），见规则 13 / 17 的同类问题。
+
+**门禁**：`node tools/check_legend_convention.mjs`
+（三仓同一份，静态扫源码；CI 里在 `check_palette.mjs` 之后跑）。
+它抓"有人就地覆盖了 `theme_paper()` 的默认值"：`legend.position` 写成
+`"top"` / `"bottom"` / `c(x, y)`（框内）即判红。
+
+> **为什么需要门禁而不是靠记：** `check_r_syntax.mjs` 只查括号配平与名字拼写，
+> 看不见图例位置。一张图例压在数据点上的图，在
+> "文件存在 / 有墨迹 / 图名合规 / 配色合规 / 图幅合规"眼里**全都是合格的** ——
+> 这正是工作区治理层错误台账（`governance/15_ERROR_LEDGER.md`，**不在本仓库内**）
+> E-06「门禁本身有盲区」的又一例。
 
 ## 32. `wgcna_sample_cap` 是验证开关，不是分析参数
 

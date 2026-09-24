@@ -216,6 +216,13 @@ jobs:
       - name: Check the palette is still one-colour-one-meaning
         run: node tools/check_palette.mjs
 
+      # 图例必须在图框外右侧、纵向排列（规则 31，用户约定 v2）。
+      # **既有门禁全都看不见图例位置** —— 一张图例压在数据点上的图，
+      # 在"文件存在 / 有墨迹 / 图名合规 / 配色合规 / 图幅合规"眼里都是合格的。
+      # 这是纯静态检查（扫源码），放在这里是为了让结果与上面几项并排可见。
+      - name: Check legend convention (outside right, vertical)
+        run: node tools/check_legend_convention.mjs
+
       # 验收查的是 **runner 的工作目录**，artifact 的 path 是**另一份清单**。
       # 两者不一致时验收全绿而下载到的产物缺文件 —— 实测踩过：
       # batch_assessment.json 验收 PASS 但没进 artifact，另外还漏了
