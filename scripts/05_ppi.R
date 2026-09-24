@@ -67,6 +67,10 @@ fetch_string_links <- function(version, threshold, cache_dir) {
       sprintf("https://stringdb-downloads.org/download/protein.links.v%s/%s", version, fname)
     }
     log_info(sprintf("下载 STRING links 文件: %s", url))
+    # `_download_allow`：**仅 CI 执行**的取数（R1 禁的是"本地跑分析"，
+    # 不是"代码里有下载"）。本脚本末尾有 `if (!GEO_ORCHESTRATED())` 自执行
+    # 守卫，本地 `source()` 不会跑这一步；CI 上取 STRING 文件是 AGENTS
+    # 规则 27 点名允许的 base R 路径（不引新依赖）。
     utils::download.file(url, path, mode = "wb", quiet = TRUE)
   }
   con <- gzfile(path, "rt")
@@ -551,10 +555,11 @@ write_ppi_outputs <- function(cfg, g, edges, method, status) {
           b[b >= min(vdf$degree) & b <= max(vdf$degree)]
         }),
         guide = ggplot2::guide_legend(
-          # **强制单行**（评审 3.10：degree 图例拆成两行、标题夹在中间）。
-          # 6 个断点横排一张 183mm 的图放得下；不指定 nrow 时 ggplot 按
-          # 可用宽度自行折行，就出现"5/15/25 一行、10/20/30 一行"。
-          nrow = 1,
+          # **纵向单列**（约定 v2：图例一律框外右侧、纵向）。
+          # 这里原写 `nrow = 1` —— 那是**强行横排**，与 v2 正好相反
+          # （用户 2026-09-24 反馈"图例没改对"）。改 `ncol = 1`：6 个断点竖排
+          # 一列，宽度不再随断点数增长，右侧留得下。
+          ncol = 1,
           override.aes = list(fill = PAL$muted, colour = "white", stroke = 0.5))) +
       ggrepel::geom_text_repel(
         data = lab, ggplot2::aes(x = x, y = y, label = name),

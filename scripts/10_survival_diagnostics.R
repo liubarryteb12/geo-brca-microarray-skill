@@ -615,11 +615,15 @@ run_10_survival_diagnostics <- function(cfg) {
         # **图例分区处理**（评审 3.8 的歧义只在**队列颜色**那一块：
         # 2×3 网格是 size 图例的，n=30..80 是连续刻度、横排读没有歧义；
         # 队列只有 2 项，歧义出在它和 size 图例混在一张网格里）。
-        # 对策：colour 图例单列放**右侧**（队列名长，竖排不挤画布）；
-        # size 图例保持底部横排 3 列。第一版把两个都改成底部单列，
-        # 8 行图例把 80mm 高的画布压得只剩一条缝 —— 已回退。
-        ggplot2::guides(colour = ggplot2::guide_legend(order = 1),
-                        size = ggplot2::guide_legend(nrow = 1, order = 2)) +
+        # **两个图例都必须纵向单列**（约定 v2）。原写法 size 用 `nrow = 1`
+        # 强行横排 —— 用户 2026-09-24 反馈"图例横着排布、示例横向而非纵向"。
+        # 当初横排的理由是"怕 8 行图例压扁画布"，但那是**把图例放在框内**才会
+        # 有的问题；现在 `legend.position = "right"` 是框外，画布高度不受图例行数
+        # 影响（constrained 由 ggplot 自己让位）。所以改回 ncol = 1 是安全的。
+        # 若日后真出现纵向放不下，正确做法是**加宽画布**（W_ONE_HALF -> W_DOUBLE），
+        # 而不是把图例横过来。
+        ggplot2::guides(colour = ggplot2::guide_legend(order = 1, ncol = 1),
+                        size = ggplot2::guide_legend(order = 2, ncol = 1)) +
         ggplot2::theme(legend.box = "vertical",
                        legend.position = "right")
       save_pdf(file.path(fig, "01-10-02-unit1-calibration.pdf"), print(p),

@@ -383,26 +383,40 @@ run_06_wgcna <- function(cfg) {
                                                      unname(grp_pal[grp_lv])), collapse = "; ")),
                   unlist(trait_legend))
   draw_sample_dendro <- function() {
-    # **颜色图例放在图的最下方，用 layout 单独给一块区域** ——
-    # 实测 v1：用 mtext 写在行名同一侧，9 行图例文字与 9 个行名**完全重叠**，
-    # 两边都读不了。正确做法是 layout 上下分区：上面画树、下面留给图例。
+    # **图例与树用 `par(fig=)` 上下分区，不能用 `layout()`。**
+    #
+    # 实测（2026-09-24，run 35967591398）：`WGCNA::plotDendroAndColors`
+    # **内部自己调用 `layout()`** —— 它要按"树 1 行 + N 个颜色条"分配行高。
+    # 外层先 `layout(matrix(c(1,2), 2, 1), ...)` 会被它**整个覆盖**，
+    # 于是树被画进它自己的分区、而随后的 `plot.new()` 拿到**整块画布**，
+    # 最终图里**只剩图例文字，树和性状条全部消失**。
+    #
+    # 危险之处：这一步**不报错** —— `wgcna_status.json` 里 `status: ok`、
+    # 无 `figure_error`、CI 全绿、`check_figures` 也报"有墨迹"，
+    # 只有打开图才发现是空的。所以判据不能只靠"有没有报错"。
+    #
+    # `par(fig=)` 是**设备级**的视口设置，`layout()` 不会重置它 ——
+    # 这正是它能与 `plotDendroAndColors` 共存的原因。
+    # 旧版（图正常）之所以没问题，是因为它**根本没做上下分区**（图例直接用
+    # `plotDendroAndColors` 自带的 groupLabels）。这里要保留分区，所以改 fig。
     n_leg <- length(legend_txt)
-    graphics::layout(matrix(c(1, 2), 2, 1), heights = c(0.78, 0.22))
-    # 上区：树 + 性状条（左边留宽给行名，下边不留）
-    graphics::par(mai = c(0.08, 1.5, 0.5, 0.15))
+    # 上区 78%：树 + 性状条（左边留宽给行名）
+    graphics::par(fig = c(0, 1, 0.22, 1), mai = c(0.08, 1.5, 0.5, 0.15), new = FALSE)
     WGCNA::plotDendroAndColors(sample_tree, color_mat, groupLabels = group_labels_row,
                                dendroLabels = FALSE, hang = 0.03,
                                addGuide = TRUE, guideHang = 0.05,
                                main = "Sample dendrogram with trait annotation (outlier check)",
                                cex.labels = 0.4)
-    # 下区：纯文字图例（无坐标轴），逐行写，不再与行名抢位置
-    graphics::par(mai = c(0.02, 1.5, 0.02, 0.15))
+    # 下区 22%：纯文字图例（无坐标轴），逐行写，不与行名抢位置
+    graphics::par(fig = c(0, 1, 0, 0.22), mai = c(0.02, 1.5, 0.02, 0.15), new = TRUE)
     graphics::plot.new()
     graphics::plot.window(xlim = c(0, 1), ylim = c(0, n_leg))
     for (k in seq_along(legend_txt)) {
       graphics::text(0, n_leg - k + 0.5, legend_txt[k],
                      adj = c(0, 0.5), cex = 0.5, col = PAL$ink)
     }
+    # **画完必须复位**，否则下一个图（本设备已关闭，但同设备复用时会串）
+    graphics::par(fig = c(0, 1, 0, 1), new = FALSE)
   }
   png(file.path(res, "01-06-03-unit1-sample-dendrogram.png"),
       width = W_DOUBLE, height = mm(120), units = "in", res = 300)
@@ -607,15 +621,19 @@ run_06_wgcna <- function(cfg) {
   tryCatch({
     me_h <- 1 - stats::cor(me, use = "pairwise.complete.obs")
     me_tree <- stats::hclust(as.dist(me_h), method = "average")
+    # **图幅改为 4:3 左右**（用户反馈"图丑、过于紧凑"）：
+    # 原 W_ONE_HALF(136mm) × 64mm = 2.13:1 —— 14 个叶节点挤在扁带里，
+    # 树高被压扁、合并高度读不出来。改 136 × 96mm ≈ 1.42:1（接近 4:3），
+    # 纵向留得下树的层级。
     png(file.path(res, "01-06-06-unit1-eigengene-dendro.png"),
-        width = W_ONE_HALF, height = mm(64), units = "in", res = 300)
+        width = W_ONE_HALF, height = mm(96), units = "in", res = 300)
     par(mar = c(4, 4, 2, 0.5))
     plot(me_tree, main = "Module eigengene dendrogram", xlab = "",
          sub = "height = 1 - cor; dashed = mergeCutHeight 0.25")
     graphics::abline(h = 0.25, col = PAL$up, lty = "dashed")
     dev.off()
     pdf(file.path(res, "01-06-06-unit1-eigengene-dendro.pdf"),
-        width = W_ONE_HALF, height = mm(64))
+        width = W_ONE_HALF, height = mm(96))
     par(mar = c(4, 4, 2, 0.5))
     plot(me_tree, main = "Module eigengene dendrogram", xlab = "",
          sub = "height = 1 - cor; dashed = mergeCutHeight 0.25")
@@ -623,12 +641,16 @@ run_06_wgcna <- function(cfg) {
     dev.off()
     # eigengene 相关性热图（独立单图，符合单图原则——原 layout 双面板在 72mm 放不下）
     if (requireNamespace("pheatmap", quietly = TRUE)) {
+      # **树高必须显式压住**（用户反馈"树状图过长、排布占用过多图幅、疑似重叠"）：
+      # pheatmap 默认 treeheight 按画布比例给，热图本体反而被挤到角落。
+      # 固定 14 行的树高（每行约 5mm），热图主体拿回主要图幅。
       ph7 <- pheatmap::pheatmap(stats::cor(me, use = "pairwise.complete.obs"),
                                 silent = TRUE,
+                                treeheight_row = 14, treeheight_col = 14,
                                 main = "Module eigengene correlations")
       if (!is.null(ph7) && !is.null(ph7$gtable)) {
         save_pdf(file.path(res, "01-06-06-unit2-eigengene-corr.pdf"),
-                 grid::grid.draw(ph7$gtable), width = W_ONE_HALF, height = mm(64))
+                 grid::grid.draw(ph7$gtable), width = W_ONE_HALF, height = mm(96))
       }
     }
     log_info("WGCNA: eigengene 树 + 相关性热图已生成（图7，拆两张单图）")
@@ -717,7 +739,10 @@ run_06_wgcna <- function(cfg) {
     # vector [3]` —— 整图失败）。用 factor + levels 显式锁定 4 类，再按 levels 配色。
     zone_lv <- c("hub candidate", "high MM only", "high GS only", "neither")
     dd$zone <- factor(dd$zone, levels = zone_lv)
-    zone_cols <- stats::setNames(c(PAL$up, PAL$primary, PAL$down, PAL$muted), zone_lv)
+    # **同类之间色相必须 ≥15°**（规则 13）。原写法把 high MM 配 primary、
+    # high GS 配 down —— 实测两者色相只差 8.6°，读者分不清。high MM 改用
+    # PAL$orange（与其余各色距离 42–169°，实测合规）。
+    zone_cols <- stats::setNames(c(PAL$up, PAL$orange, PAL$down, PAL$muted), zone_lv)
     p_gsmm <- ggplot2::ggplot(dd, ggplot2::aes(x = mm, y = gs, colour = zone)) +
       ggplot2::geom_hline(yintercept = GS_CUT, linetype = "dashed",
                           colour = PAL$muted, linewidth = 0.3) +
@@ -797,6 +822,10 @@ run_06_wgcna <- function(cfg) {
               "MS answers module-level importance, GS-MM scatter answers per-gene."),
               fig_width = W_ONE_HALF),
             x = "module (WGCNA colour label)", y = "module significance (mean |GS|)") +
+          # **柱顶标注要有净空**（用户反馈"标注贴近/与边界重叠"）：
+          # ggplot 默认 y 轴只留 5% 余量，最高的柱子 + vjust=-0.4 的 n 标注会顶出画布。
+          # 按标注字号实测留出 ~12% 上方余量（mult 的第二个值）。
+          ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0.02, 0.12))) +
           ggplot2::geom_text(ggplot2::aes(label = n_genes), vjust = -0.4,
                              size = 2.0, colour = PAL$ink) +
           theme_paper(9)

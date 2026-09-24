@@ -699,18 +699,23 @@ run_07_lasso <- function(cfg) {
   # **两页的 PDF**，而 PNG 只留得下其中一页 —— 读者拿到 PDF 看到两张、
   # 拿到 PNG 只看到一张，而两边的文件名是同一个。
   # 拆成单图之后两边一致（这也是仓库出图约定里"尽量出单图"的一条）。
+  #
+  # **图幅按 16:9**（用户 2026-09-24 反馈"图太扁"）：原 W_DOUBLE(183mm) × 70mm
+  # = 2.61:1，KM 曲线被压成一条扁带、风险人数表挤在底部。
+  # 183mm 宽配 16:9 → 高度 103mm（= mm(103)）。KM 图在期刊里多为 16:9 或 4:3，
+  # 这里取 16:9：横向留得下"随访时间轴"，纵向留得下下方的人数表。
   save_pdf(file.path(res, "01-07-01-unit1-lasso-km-training.pdf"), {
     print(make_km_plot(risk_df[risk_df$set == "training", , drop = FALSE], cutoff,
                        sprintf("LASSO-Cox risk groups (training) - %s", cfg$dataset_id), cfg,
                        time_unit = "days"))
-  }, width = W_DOUBLE, height = mm(70))
+  }, width = W_DOUBLE, height = mm(103))
   if (any(risk_df$set != "training")) {
     vset <- unique(risk_df$set[risk_df$set != "training"])[1L]
     save_pdf(file.path(res, "01-07-01-unit2-lasso-km-validation.pdf"), {
       print(make_km_plot(risk_df[risk_df$set == vset, , drop = FALSE], cutoff,
                          sprintf("LASSO-Cox risk groups (external validation: %s)", vset), cfg,
                          time_unit = "years"))
-    }, width = W_DOUBLE, height = mm(70))
+    }, width = W_DOUBLE, height = mm(103))
   }
 
   # ---- 8. 推荐哪一个签名 --------------------------------------------------

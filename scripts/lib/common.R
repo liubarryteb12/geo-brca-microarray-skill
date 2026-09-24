@@ -566,6 +566,12 @@ PAL <- list(
   # 颜色数比名字数少一个，报 `'names' attribute [N] must be the same length...`，
   # 整图/整步失败。值取 Okabe-Ito 蓝（与 Python 侧一致）。
   primary  = "#0072B2",
+  # **GS-MM 散点四分区专用色**（2026-09-24 补）：原先 `high MM only` 用 primary
+  # (#0072B2, h≈202) 而 `high GS only` 用 down (#2166AC, h≈252) —— 两者**色相只差
+  # 8.6°**，低于规则 13 的 15° 判据，读者分不清这两类（用户反馈"图例颜色有问题"）。
+  # 换 Okabe-Ito orange：与 up/down/primary/muted/ns 的色相距离实测 49 / 169 /
+  # 160 / 42 / 42 度，均 ≥15°；白底对比度 2.25:1（≥2.0）。
+  orange   = "#E69F00",
   mid      = "#F7F7F7",   # 发散色中点（RdBu 的中性色）
   ink      = "#1A1A1A",   # 文字 / 参考线（白底 17.4:1）
   muted    = "#666666",   # 副标题 / 次要说明
