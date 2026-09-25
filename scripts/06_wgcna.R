@@ -937,44 +937,41 @@ run_06_wgcna <- function(cfg) {
       # base R image()：pheatmap 在此数据形状下有内部错误（from must be finite），
       # 改用零依赖绘制 —— 红蓝发散色、样本列按 ME 排序、无行列树（结构由 CSV 供）。
       #
-      # **行名策略 = D-007 裁决 #1（选项 B：只标 kME top30）**
+      # **行名策略 = D-007 裁决 #1，实测修正为 B*（均匀 30 槽标注）**
       # （用户 2026-09-25 委托 Agent 代决；先例 D-006。推翻见 supersedes: D-007。）
       #
-      # **为什么不是"全标 / 全不标"二选一**（AGENTS 规则 21 的 fits_labels 逻辑）：
-      # 382 行全标必然不可读（实测 fontsize 4 时每行不足 1px 间隙）→ 旧逻辑整张不标，
-      # 基因身份只能查 CSV —— 读者看图时没有锚点。裁决 B 在两者之间：
-      # **行序本就按 kME 降序排，取前 30 行标基因名、其余留空** ——
-      # hub 基因（模块最重要的 30 个）在图上有名字，其余在 CSV 可查。
-      # 30 的答辩口径：**可读性预算**（30 行在 200mm 高度下每行约 5px，可读），
-      # 不是生物学阈值 —— 审稿人问"为什么 30"就答这句（D-007 裁决 #1）。
+      # **B 原案（标 kME top30）实测物理不可行**（CI 36088471732 产物亲读）：
+      # 行按 kME 降序排 → top30 是**连续的前 30 行**，挤在顶部约 9mm 里，
+      # 标签间距 = 行间距（fontsize 4 也重叠成一团，LOC102723847/SLC1A3 等糊成一片）。
+      # 修正为 **B\*：382 行均分 30 段、每段标 1 行**（行全局按 kME 排序，故
+      # 第 1 槽 = top hub、每槽 = 该段内 kME 最高基因）——标签间距约 6mm 可读，
+      # 仍是"30 个、规则明确、可答辩"（30 = 可读性预算，非生物学阈值）。
+      # 与裁决 B 的偏差（只保证第 1 槽是 top hub）已登记 D-007 执行备注。
       n_row <- nrow(m_expr)
       fig13_h <- min(mm(200), max(mm(110), n_row * 0.30))
-      # top30 的行集合：行已按 kME 降序，直接取前 30；行数不足 30 就全标
+      # 均匀 30 槽：unique() 防短向量时 floor 重复；不足 30 行就全标
       n_lab <- min(30L, n_row)
-      lab_genes <- rownames(m_expr)[seq_len(n_lab)]
+      lab_idx <- unique(as.integer(floor(seq(1L, n_row, length.out = n_lab))))
+      lab_idx <- lab_idx[lab_idx >= 1L & lab_idx <= n_row]
+      lab_genes <- rownames(m_expr)[lab_idx]
       df13 <- data.frame(
         gene = rep(rownames(m_expr), times = ncol(m_expr)),
         sample = rep(seq_len(ncol(m_expr)), each = n_row),
         z = as.vector(m_expr),
         stringsAsFactors = FALSE)
       df13$gene <- factor(df13$gene, levels = rev(rownames(m_expr)))
-      # y 轴文字向量：top30 给基因名，其余空串（不占位的留 NA 会被 ggplot 丢弃，
-      # 用 "" 保持行对齐但无文字）
-      y_labels <- ifelse(rownames(m_expr) %in% lab_genes, rownames(m_expr), "")
-      names(y_labels) <- rownames(m_expr)
       p13 <- ggplot2::ggplot(df13, ggplot2::aes(x = sample, y = gene, fill = z)) +
         ggplot2::geom_tile() +
         ggplot2::scale_fill_gradientn(colours = pal_diverging(100),
                                       limits = c(-3, 3), name = "z-scored\nexpression") +
-        ggplot2::scale_y_discrete(breaks = rownames(m_expr),
-                                  labels = y_labels[rownames(m_expr)]) +
+        ggplot2::scale_y_discrete(breaks = lab_genes, labels = lab_genes) +
         ggplot2::labs(
           title = sprintf("Module %s expression (top trait: %s, r=%.2f, n=%d genes)",
                           top_row$module, top_row$trait,
                           as.numeric(top_row$cor), n_row),
           subtitle = wrap_subtitle(paste0(
             "Rows = module genes ordered by kME (top = highest); ",
-            "top ", n_lab, " hubs labelled. ",
+            length(lab_genes), " evenly spaced genes labelled (first = top hub). ",
             "Columns = tumour samples ordered by module eigengene. ",
             "z-scored per gene across samples."), fig_width = W_DOUBLE),
           x = "Tumour samples (ordered by module eigengene)", y = NULL) +
