@@ -1,6 +1,8 @@
 # 运行产物
-results/
-data/
+# **前导 **/ 递归匹配** —— 只写 `data/` 不覆盖子目录下的 `data/`
+# （scrna 侧实测漏了一个 24 MB 缓存 h5ad，2026-09-25 打包时发现）
+**/results/
+**/data/
 
 # R 运行时
 .Rhistory
