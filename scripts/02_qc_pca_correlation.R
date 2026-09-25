@@ -221,7 +221,7 @@ run_02_qc_pca_correlation <- function(cfg) {
   # **不标**；GSE64790 只有 6 个样本 -> 照常标注。
   pt_fs <- 2.4
   pt_per_label <- max(nchar(as.character(pca_df$sample))) * 0.5 * pt_fs
-  show_pt <- decide_rownames(nrow(pca_df), mm(165), pt_per_label, "PCA 样本名",
+  show_pt <- decide_rownames(nrow(pca_df), W_ONE_HALF, pt_per_label, "PCA 样本名",
                              panel_frac = 0.85, min_gap = 2.5,
                              figure = "01-02-03-unit1-pca-plot")
   log_info(sprintf("PCA 散点标签：%d 个样本、字号 %gpt、最长标签 %d 字符 -> %s",
@@ -264,11 +264,11 @@ run_02_qc_pca_correlation <- function(cfg) {
            else sprintf(paste0("Sample accessions are NOT labelled: %d labels ",
                                "cannot be placed legibly in this panel width."),
                         nrow(pca_df))),
-           fig_width = mm(165)),
+           fig_width = W_ONE_HALF),
          x = sprintf("PC1 (%.1f%% variance)", var_explained[1L]),
          y = sprintf("PC2 (%.1f%% variance)", var_explained[2L])) +
     theme_paper(10)
-  save_pdf(file.path(res, "01-02-03-unit1-pca-plot.pdf"), print(p_pca), width = mm(165), height = mm(152))
+  save_pdf(file.path(res, "01-02-03-unit1-pca-plot.pdf"), print(p_pca), width = W_ONE_HALF, height = mm(152))
   log_info(sprintf("已生成 01-02-03-unit1-pca-plot.pdf（PC1=%.1f%%, PC2=%.1f%%）",
                    var_explained[1L], var_explained[2L]))
 

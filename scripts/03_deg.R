@@ -302,10 +302,10 @@ run_03_deg <- function(cfg) {
         if (length(pv) && min(pv) < 1e-3)
           sprintf("%.0f genes at P < 0.001 (real signal below the null)", sum(pv < 1e-3))
         else "no gene below P < 0.001"),
-        fig_width = mm(165)),
+        fig_width = W_ONE_HALF),
       x = "raw P value", y = "gene count") +
     theme_paper(10)
-  save_pdf(file.path(res, "01-03-02-unit1-pvalue-histogram.pdf"), print(p_hist), width = mm(165), height = mm(127))
+  save_pdf(file.path(res, "01-03-02-unit1-pvalue-histogram.pdf"), print(p_hist), width = W_ONE_HALF, height = mm(127))
 
   # 诊断结论：把"功效不足"和"设计有问题"分开
   n_below_001 <- sum(pv < 0.001)

@@ -201,6 +201,8 @@ load_trrust_regulons <- function(cfg) {
   } else {
     dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
     ok <- tryCatch({
+      # _download_allow 仅 CI 执行：TRRUST 数据取数只发生在 CI runner 上
+      # （R1 本地零执行），本地从未运行过这条路径；有缓存后也不会再下载。
       # mode = "wb" 是必须的：默认 "w" 在 Windows 上会把行尾改写，
       # 而哈希是用来核对"这份文件有没有变"的 —— 改写会让哈希失去意义。
       utils::download.file(url, cache_path, quiet = TRUE, mode = "wb")
@@ -606,7 +608,7 @@ run_08_tf_regulation <- function(cfg) {
       # 传 NULL 给 dpi 会报 "`dpi` must be a single number or string"，
       # 被下面的 tryCatch 接住，于是图静默消失、status 里 figure_written=false。
       save_pdf(file.path(res, "01-08-01-unit1-tf-regulon-enrichment.pdf"),
-               print(p1), width = mm(178), height = mm(152))
+               print(p1), width = W_DOUBLE, height = mm(152))
       figs_written <- c(figs_written, "01-08-01-unit1-tf-regulon-enrichment.pdf")
       if (!is.null(act_test) && nrow(act_test) >= 2L) {
         tt <- utils::head(act_test[order(-abs(act_test$cohens_d)), ], 20L)
@@ -646,7 +648,7 @@ run_08_tf_regulation <- function(cfg) {
             x = NULL, y = "Cohen's d", fill = NULL) +
           theme_paper()
         save_pdf(file.path(res, "01-08-02-unit1-tf-activity-group-difference.pdf"),
-                 print(p2), width = mm(178), height = mm(152))
+                 print(p2), width = W_DOUBLE, height = mm(152))
         figs_written <- c(figs_written, "01-08-02-unit1-tf-activity-group-difference.pdf")
       }
       TRUE
