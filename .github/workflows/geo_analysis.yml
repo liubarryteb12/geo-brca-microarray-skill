@@ -223,6 +223,14 @@ jobs:
       - name: Check legend convention (outside right, vertical)
         run: node tools/check_legend_convention.mjs
 
+      # 门禁自己的自检。**没有自检的门禁只能证明"它没报错"，不能证明
+      # "它检查了"。** E-62：本仓库的 Python 侧没抹注释，注释里一个
+      # `fig.legend(` 就让括号配平一路吞到文件尾，其后所有真调用一个都没查
+      # 而门禁照样打绿 —— 假阴性比假阳性危险得多。10 个用例里有 4 条
+      # 正是这类假阳性/假阴性的回归项。
+      - name: Self-test the legend gate itself
+        run: node tools/check_legend_convention.mjs --selftest
+
       # 验收查的是 **runner 的工作目录**，artifact 的 path 是**另一份清单**。
       # 两者不一致时验收全绿而下载到的产物缺文件 —— 实测踩过：
       # batch_assessment.json 验收 PASS 但没进 artifact，另外还漏了
